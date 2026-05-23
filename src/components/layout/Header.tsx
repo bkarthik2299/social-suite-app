@@ -1,9 +1,12 @@
-import { ChevronRight, Search, Command } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { ChevronRight } from 'lucide-react';
+import { GlobalCommand } from '@/components/shared/GlobalCommand';
+import { MicroToolsMenu } from '@/components/layout/MicroToolsMenu';
+import { Link } from 'react-router-dom';
 
 interface Breadcrumb {
   label: string;
   path: string;
+  onClick?: () => void;
 }
 
 interface HeaderProps {
@@ -11,8 +14,6 @@ interface HeaderProps {
 }
 
 export function Header({ breadcrumbs = [] }: HeaderProps) {
-  const location = useLocation();
-
   const defaultBreadcrumbs: Breadcrumb[] = [
     { label: 'App', path: '/' },
   ];
@@ -21,13 +22,14 @@ export function Header({ breadcrumbs = [] }: HeaderProps) {
 
   return (
     <header className="h-16 bg-background border-b border-border flex items-center justify-between px-6">
-      {/* Breadcrumbs */}
-      <nav className="flex items-center gap-2 text-sm">
+      {/* Breadcrumbs (Left) */}
+      <nav className="flex items-center gap-2 text-sm min-w-[200px]">
         {allBreadcrumbs.map((crumb, index) => (
-          <div key={crumb.path} className="flex items-center gap-2">
+          <div key={`${crumb.path}-${crumb.label}-${index}`} className="flex items-center gap-2">
             {index > 0 && <ChevronRight className="w-4 h-4 text-muted-foreground" />}
             <Link
               to={crumb.path}
+              onClick={crumb.onClick}
               className={
                 index === allBreadcrumbs.length - 1
                   ? "font-medium text-foreground"
@@ -40,25 +42,20 @@ export function Header({ breadcrumbs = [] }: HeaderProps) {
         ))}
       </nav>
 
-      {/* Search & Logo */}
-      <div className="flex items-center gap-6">
-        <div className="relative">
-          <input
-            type="text"
-            placeholder="Search Campaigns.."
-            className="w-64 h-10 pl-4 pr-16 bg-muted/50 border border-border rounded-lg text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-          />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1">
-            <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs text-muted-foreground flex items-center gap-0.5">
-              <Command className="w-3 h-3" />
-              K
-            </kbd>
-          </div>
-        </div>
+      {/* Global Search (Center) */}
+      <div className="flex-1 flex justify-center max-w-2xl px-8">
+        <GlobalCommand />
+      </div>
 
-        <span className="text-xl font-semibold text-foreground tracking-tight">
-          socialsuite.
-        </span>
+      {/* Logo (Right) */}
+      <div className="flex items-center justify-end gap-3 min-w-[200px]">
+        <MicroToolsMenu />
+        <div className="flex items-center gap-2">
+          <img src="/favicon.jpg" alt="Logo" className="w-6 h-6 rounded-md object-cover" />
+          <span className="text-xl font-semibold text-foreground tracking-tight">
+            socialsuite.
+          </span>
+        </div>
       </div>
     </header>
   );

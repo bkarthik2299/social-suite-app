@@ -1,73 +1,53 @@
-# Welcome to your Lovable project
+# Social Suite
 
-## Project info
+A comprehensive SaaS platform designed to manage social media portfolios, integrate with micro tools, and provide an all-in-one suite for agency workflows.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Architecture
 
-## How can I edit this code?
+The project has recently migrated from an in-memory/IndexedDB client-side application to a robust full-stack architecture leveraging:
 
-There are several ways of editing your application.
+- **Frontend**: Vite, React, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend/DB**: Supabase (PostgreSQL)
+- **State/Data Fetching**: React Query (`@tanstack/react-query`)
+- **Authentication**: Supabase Auth (with Organization-based access control Row Level Security - RLS)
 
-**Use Lovable**
+### Database Structure
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+The database scales vertically with a modular architecture:
 
-Changes made via Lovable will be committed automatically to this repo.
+1. **Core / Global**: `organizations`, `org_members`
+2. **Content Engine**: `projects` → `folders` → `campaigns` → `content_items` (Polymorphic JSONB architecture).
+3. **Micro Tools**:
+   - `vault_credentials` (Password Vault)
+   - `feed_folders`, `feed_posts` (Feed Monitor)
+   - `portal_clients`, `portal_feeds`, `portal_review_posts` (Client Portal)
+4. **Extensibility**: `tool_registry`, `org_tools` (for adding new micro tools automatically without schema migrations).
 
-**Use your preferred IDE**
+## Getting Started
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### Prerequisites
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+Ensure you have Node.js and a valid `npm` environment installed.
 
-Follow these steps:
+### Installation
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+1. Install all dependencies:
+```bash
+npm install
 ```
 
-**Edit a file directly in GitHub**
+2. Setup your local Environment Variables. Note that API keys for Supabase exist in `src/lib/supabase.ts`. In a production setting, these should be placed into `.env`.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+### Running Locally
 
-**Use GitHub Codespaces**
+To start the Vite development server:
+```bash
+npm run dev
+```
+Navigate to `http://localhost:8080` (or whichever port Vite allocates) to view the application.
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Deployment & Setup
 
-## What technologies are used for this project?
+The database schema, triggers, and Row Level Security policies have been provided in `supabase_schema.sql` and deployed to the `socialsuite-db` Supabase project.
 
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+This ensures proper tenant isolation (using `org_id` restrictions across the board) and sets a solid foundation for adding additional micro tools or campaign item subtypes later via the JSONB `content_items` mapping.

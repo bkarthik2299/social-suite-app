@@ -1,27 +1,134 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { calendarEvents } from '@/data/mockData';
-import { ChevronLeft, ChevronRight, FileText, Megaphone, Search as SearchIcon } from 'lucide-react';
+import { ContentItem, useAllCampaigns, useAllContentItems, useAllFolders, useProjects } from '@/hooks/useDatabase';
+import { ChevronLeft, ChevronRight, FileText, Megaphone, Share2, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, addMonths, subMonths } from 'date-fns';
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, isSameMonth, isSameDay, addMonths, subMonths, parseISO, isValid } from 'date-fns';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { campaignPath } from '@/lib/routes';
+import { CampaignType } from '@/types';
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  date: Date;
+  type: 'socials' | 'google-ad' | 'meta-ad' | 'blogs';
+  projectId?: string;
+  campaignId: string;
+  folderId?: string;
+  contentType: CampaignType;
+}
 
 const typeIcons: Record<string, typeof FileText> = {
   'blogs': FileText,
+  'google-ad': Megaphone,
   'meta-ad': Megaphone,
-  'google-ad': SearchIcon,
-  'socials': FileText,
+  'socials': Share2,
 };
 
 const typeColors: Record<string, string> = {
   'blogs': 'bg-badge-blogs-bg text-badge-blogs border-badge-blogs/20',
-  'meta-ad': 'bg-badge-meta-bg text-badge-meta border-badge-meta/20',
   'google-ad': 'bg-badge-google-bg text-badge-google border-badge-google/20',
+  'meta-ad': 'bg-badge-meta-bg text-badge-meta border-badge-meta/20',
   'socials': 'bg-badge-socials-bg text-badge-socials border-badge-socials/20',
 };
 
 export default function Calendar() {
-  const [currentDate, setCurrentDate] = useState(new Date(2025, 5, 18)); // June 2025
+  const navigate = useNavigate();
+  const { data: projects = [] } = useProjects();
+  const { data: folders = [] } = useAllFolders();
+  const { data: campaigns = [] } = useAllCampaigns();
+  const { data: contentItems = [] } = useAllContentItems();
+  
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+
+  // Build events from actual content data
+  const allEvents = useMemo((): CalendarEvent[] => {
+    const events: CalendarEvent[] = [];
+
+    contentItems.forEach((item: ContentItem) => {
+      const payload = item.payload || {};
+      let dateStr = null;
+      let type = item.type;
+      
+      if (item.type === 'socials' || item.type === 'post') {
+          dateStr = payload.scheduledDate || payload.scheduled_date;
+          type = 'socials';
+      } else if (item.type === 'meta-ad' || item.type === 'ad') {
+          dateStr = payload.scheduledDate || payload.scheduled_date;
+          type = 'meta-ad';
+      } else if (item.type === 'google-ad') {
+          dateStr = payload.startDate || payload.start_date;
+          type = 'google-ad';
+      } else if (item.type === 'blogs' || item.type === 'blog') {
+          dateStr = payload.publishDate || payload.publish_date || item.created_at;
+          type = 'blogs';
+      } else {
+          dateStr = payload.scheduledDate || payload.startDate || payload.publishDate || item.created_at;
+      }
+
+      if (dateStr) {
+          const date = parseISO(dateStr);
+          if (isValid(date)) {
+              // Extract joined fields
+              const folderId = item.campaigns?.folder_id;
+              const projectId = item.campaigns?.folders?.project_id;
+              
+              events.push({
+                  id: item.id,
+                  title: item.name || (typeof payload.caption === 'string' ? payload.caption.slice(0, 30) : '') || (typeof payload.headline === 'string' ? payload.headline : '') || 'Content',
+                  date,
+                  type: type as CampaignType,
+                  projectId,
+                  folderId,
+                  campaignId: item.campaignId,
+                  contentType: type as CampaignType,
+              });
+          }
+      }
+    });
+
+    return events;
+  }, [contentItems]);
+
+  // Filter events by selected projects (multi-select)
+  const filteredEvents = useMemo(() => {
+    if (selectedProjectIds.length === 0) return allEvents;
+    return allEvents.filter(event => event.projectId && selectedProjectIds.includes(event.projectId));
+  }, [allEvents, selectedProjectIds]);
+
+  // Navigate to content
+  const handleEventClick = (event: CalendarEvent) => {
+    const campaign = campaigns.find(c => c.id === event.campaignId);
+    const folder = folders.find(f => f.id === event.folderId);
+    const project = projects.find(p => p.id === event.projectId);
+    if (!campaign || !event.folderId || !event.projectId) return;
+    if (!folder || !project) return;
+
+    navigate(
+      campaignPath(
+        project,
+        folder,
+        campaign,
+        projects,
+        folders.filter((item) => item.projectId === project.id),
+        campaigns.filter((item) => item.folderId === folder.id),
+      ),
+      { state: { type: event.contentType || campaign.type } }
+    );
+  };
+
+  // Toggle project selection
+  const toggleProject = (projectId: string) => {
+    setSelectedProjectIds(prev =>
+      prev.includes(projectId)
+        ? prev.filter(id => id !== projectId)
+        : [...prev, projectId]
+    );
+  };
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -34,12 +141,13 @@ export default function Calendar() {
 
   while (day <= endDate) {
     for (let i = 0; i < 7; i++) {
-      const dayEvents = calendarEvents.filter(event => 
-        isSameDay(new Date(event.date), day)
+      const currentDay = day;
+      const dayEvents = filteredEvents.filter(event =>
+        isSameDay(event.date, currentDay)
       );
       const formattedDate = format(day, 'd');
       const isCurrentMonth = isSameMonth(day, monthStart);
-      const isToday = isSameDay(day, new Date(2025, 5, 18));
+      const isToday = isSameDay(day, new Date());
 
       days.push(
         <div
@@ -60,7 +168,37 @@ export default function Calendar() {
               {formattedDate}
             </span>
             {dayEvents.length > 2 && (
-              <span className="text-xs text-primary font-medium">+{dayEvents.length - 2} more</span>
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button className="text-xs text-primary font-medium hover:underline cursor-pointer">
+                    +{dayEvents.length - 2} more
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-3" align="end">
+                  <div className="text-sm font-semibold mb-3 text-slate-700">
+                    {format(currentDay, 'MMMM d, yyyy')}
+                  </div>
+                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                    {dayEvents.map((event) => {
+                      const Icon = typeIcons[event.type] || FileText;
+                      return (
+                        <div
+                          key={event.id}
+                          onClick={() => handleEventClick(event)}
+                          className={cn(
+                            "flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity",
+                            typeColors[event.type]
+                          )}
+                        >
+                          <Icon className="w-3 h-3" />
+                          <span className="truncate">{event.title}</span>
+                          <ChevronRight className="w-3 h-3 ml-auto flex-shrink-0" />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
             )}
           </div>
           <div className="mt-1 space-y-1">
@@ -69,6 +207,7 @@ export default function Calendar() {
               return (
                 <div
                   key={event.id}
+                  onClick={() => handleEventClick(event)}
                   className={cn(
                     "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity",
                     typeColors[event.type]
@@ -93,8 +232,6 @@ export default function Calendar() {
     days = [];
   }
 
-  const upcomingEvents = calendarEvents.slice(0, 4);
-
   return (
     <AppLayout breadcrumbs={[{ label: 'Calendar', path: '/calendar' }]}>
       <div className="animate-fade-in">
@@ -107,41 +244,56 @@ export default function Calendar() {
             </div>
             <h1 className="text-3xl font-bold text-foreground">{format(currentDate, 'MMMM yyyy')}</h1>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}>
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
-            <span className="text-sm font-medium">{format(currentDate, 'MMM yyyy')}</span>
-            <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}>
-              <ChevronRight className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Upcoming Events */}
-        <div className="flex gap-4 mb-6 overflow-x-auto pb-2">
-          {upcomingEvents.map((event) => (
-            <div
-              key={event.id}
-              className="flex-shrink-0 w-56 p-4 bg-card border border-border rounded-xl hover:shadow-md transition-shadow"
-            >
-              <h3 className="font-semibold text-foreground mb-1">{event.title}</h3>
-              <p className="text-xs text-muted-foreground mb-3">Today, 9AM - 10PM</p>
-              <div
-                className={cn(
-                  "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border",
-                  typeColors[event.type]
-                )}
-              >
-                {event.type === 'meta-ad' && <Megaphone className="w-3 h-3" />}
-                {event.type === 'google-ad' && <SearchIcon className="w-3 h-3" />}
-                {event.type === 'socials' && <FileText className="w-3 h-3" />}
-                {event.type === 'blogs' && <FileText className="w-3 h-3" />}
-                <span className="capitalize">{event.type.replace('-', ' ')}</span>
-                <ChevronRight className="w-3 h-3 ml-auto" />
-              </div>
+          <div className="flex items-center gap-4">
+            {/* Multi-Select Project Filter */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-48 justify-between">
+                  {selectedProjectIds.length === 0
+                    ? 'All Projects'
+                    : `${selectedProjectIds.length} project${selectedProjectIds.length > 1 ? 's' : ''}`}
+                  <ChevronRight className="w-4 h-4 ml-auto rotate-90" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-48 p-2" align="end">
+                <div className="space-y-1">
+                  <div
+                    className={cn(
+                      "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-muted text-sm",
+                      selectedProjectIds.length === 0 && "bg-muted"
+                    )}
+                    onClick={() => setSelectedProjectIds([])}
+                  >
+                    {selectedProjectIds.length === 0 && <Check className="w-4 h-4" />}
+                    <span className={selectedProjectIds.length === 0 ? "" : "ml-6"}>All Projects</span>
+                  </div>
+                  {projects.map(project => (
+                    <div
+                      key={project.id}
+                      className={cn(
+                        "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-muted text-sm",
+                        selectedProjectIds.includes(project.id) && "bg-muted"
+                      )}
+                      onClick={() => toggleProject(project.id)}
+                    >
+                      {selectedProjectIds.includes(project.id) && <Check className="w-4 h-4" />}
+                      <span className={selectedProjectIds.includes(project.id) ? "" : "ml-6"}>{project.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+            {/* Month Navigation */}
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}>
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+              <span className="text-sm font-medium min-w-[100px] text-center">{format(currentDate, 'MMM yyyy')}</span>
+              <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}>
+                <ChevronRight className="w-4 h-4" />
+              </Button>
             </div>
-          ))}
+          </div>
         </div>
 
         {/* Calendar Grid */}
