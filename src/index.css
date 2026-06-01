@@ -132,3 +132,28 @@
     @apply bg-badge-blogs-bg text-badge-blogs;
   }
 }
+
+@layer utilities {
+  .ai-history-scrollbar {
+    scrollbar-color: hsl(var(--muted-foreground) / 0.28) transparent;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+
+  .ai-history-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .ai-history-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .ai-history-scrollbar::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    background-color: hsl(var(--muted-foreground) / 0.24);
+  }
+
+  .ai-history-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.42);
+  }
+}

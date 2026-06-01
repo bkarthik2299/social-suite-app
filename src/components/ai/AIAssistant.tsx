@@ -5,6 +5,7 @@ import {
   Bot,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Circle,
@@ -1260,25 +1261,48 @@ function RunActivityTrail({
   events,
   totalCount,
   emptyStateLabel = 'Waiting for first event',
+  defaultCollapsed = false,
+  resetKey,
 }: {
   title: string;
   emptyText: string;
   events: AiRunEvent[];
   totalCount: number;
   emptyStateLabel?: string;
+  defaultCollapsed?: boolean;
+  resetKey?: string;
 }) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  useEffect(() => {
+    setCollapsed(defaultCollapsed);
+  }, [defaultCollapsed, resetKey]);
+
   return (
     <div className="w-full min-w-0 max-w-full space-y-3 overflow-hidden">
-      <div className="flex items-center justify-between gap-3">
-        <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
-        <span className="text-xs text-slate-500">{events.length ? `${totalCount} events` : emptyStateLabel}</span>
-      </div>
-      {events.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
-          {emptyText}
-        </div>
-      ) : (
-        events.map((event) => <RunEventRow key={event.id} event={event} />)
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        className={cn(
+          'flex w-full items-center justify-between gap-3 rounded-lg text-left transition-colors hover:text-primary',
+          collapsed ? 'border border-slate-200 bg-white px-4 py-3 shadow-sm' : 'px-0 py-0.5',
+        )}
+        onClick={() => setCollapsed((value) => !value)}
+      >
+        <span className="text-sm font-semibold text-slate-900">{title}</span>
+        <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500">
+          {events.length ? `${totalCount} events` : emptyStateLabel}
+          <ChevronDown className={cn('h-4 w-4 transition-transform', !collapsed && 'rotate-180')} />
+        </span>
+      </button>
+      {!collapsed && (
+        events.length === 0 ? (
+          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+            {emptyText}
+          </div>
+        ) : (
+          events.map((event) => <RunEventRow key={event.id} event={event} />)
+        )
       )}
     </div>
   );
@@ -1481,11 +1505,14 @@ function ArtifactPreview({
       </div>
 
       <RunActivityTrail
+        key={`activity-${artifact.id}`}
         title="Activity Trail"
         emptyText="No backend events were recorded for this run."
         events={recentEvents}
         totalCount={events.length}
         emptyStateLabel="No events"
+        defaultCollapsed
+        resetKey={artifact.id}
       />
 
       <Tabs defaultValue="strategy" className="space-y-4">

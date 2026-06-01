@@ -70,7 +70,7 @@ export function Sidebar() {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">AI History</p>
             <span className="text-[11px] text-muted-foreground">{aiRuns.length}</span>
           </div>
-          <div className={cn('space-y-1', historyExpanded && 'max-h-72 overflow-y-auto pr-1 custom-scrollbar')}>
+          <div className={cn('space-y-1', historyExpanded && 'ai-history-scrollbar max-h-72 overflow-y-auto pr-1')}>
             {aiRuns.map((run) => (
               <button
                 key={run.id}
