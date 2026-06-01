@@ -75,6 +75,24 @@ describe('normalizeBriefToCampaignArtifact', () => {
     expect((pack.calendar?.[0].date || '') >= today).toBe(true);
     expect((pack.calendar?.[1].date || '') >= today).toBe(true);
   });
+
+  it('keeps social content useful when a model returns common alternate copy keys', () => {
+    const pack = normalizeBriefToCampaignArtifact({
+      socialPosts: [
+        { name: 'Awareness Post', headline: 'Know your options', post_copy: 'Know your options. Ask questions and stay informed.', platform: 'Instagram' },
+      ],
+      socialAds: [
+        { name: 'Engagement Ad', primary_copy: 'Learn the signs and start a conversation.', hook: 'Breast health awareness', platform: 'Meta' },
+      ],
+    });
+
+    expect(pack.socialPosts?.[0].caption).toBe('Know your options. Ask questions and stay informed.');
+    expect(pack.socialAds?.[0]).toMatchObject({
+      primaryText: 'Learn the signs and start a conversation.',
+      headline: 'Breast health awareness',
+      platform: 'facebook',
+    });
+  });
 });
 
 function localDateString(date: Date): string {

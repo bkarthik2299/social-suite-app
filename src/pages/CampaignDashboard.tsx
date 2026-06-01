@@ -139,6 +139,14 @@ const normalizeSocialAdCta = (value: unknown): SocialAdCta => {
     return 'learn_more';
 };
 
+const payloadString = (payload: Record<string, unknown>, keys: string[], fallback = '') => {
+    for (const key of keys) {
+        const value = payload[key];
+        if (typeof value === 'string' && value.trim()) return value.trim();
+    }
+    return fallback;
+};
+
 // --- Platform Icons ---
 const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: string, active?: boolean, onClick?: () => void, size?: "sm" | "md" | "lg" }) => {
     const icons = {
@@ -516,7 +524,14 @@ const SocialPreview = ({ post }: { post: Partial<SocialPost> }) => {
 
 const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
-    const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
+    const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({
+        id: i.id,
+        campaignId: i.campaignId,
+        name: i.name,
+        status: i.status,
+        ...i.payload,
+        caption: payloadString(i.payload, ['caption', 'body', 'copy', 'text', 'content', 'post_copy', 'postCopy', 'primary_text', 'primaryText'], i.name || 'Social post draft'),
+    }));
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
 
@@ -1548,6 +1563,8 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         ...i.payload,
         platform: normalizeSocialPlatform(i.payload.platform),
         cta: normalizeSocialAdCta(i.payload.cta),
+        primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
+        headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
     }));
     const campaignAds = socialAds.filter(ad => ad.campaignId === campaignId);
 

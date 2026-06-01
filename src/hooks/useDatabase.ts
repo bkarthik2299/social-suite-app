@@ -252,10 +252,13 @@ export function useProjects() {
 
     const addProject = useMutation({
         mutationFn: async (name: string) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('projects')
-                .insert({ name, org_id: orgId });
+                .insert({ name, org_id: orgId })
+                .select()
+                .single();
             if (error) throw error;
+            return mapProject(data);
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects(orgId) }),
     });
@@ -317,12 +320,18 @@ export function useFolders(projectId: string) {
 
     const addFolder = useMutation({
         mutationFn: async (name: string) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('folders')
-                .insert({ name, project_id: projectId });
+                .insert({ name, project_id: projectId })
+                .select()
+                .single();
             if (error) throw error;
+            return mapFolder(data);
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.folders(projectId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.folders(projectId) });
+            qc.invalidateQueries({ queryKey: ['all_folders'] });
+        },
     });
 
     const updateFolder = useMutation({
@@ -373,7 +382,10 @@ export function useCampaigns(folderId: string) {
             if (error) throw error;
             return mapCampaign(data);
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.campaigns(folderId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.campaigns(folderId) });
+            qc.invalidateQueries({ queryKey: ['all_campaigns'] });
+        },
     });
 
     const updateCampaign = useMutation({

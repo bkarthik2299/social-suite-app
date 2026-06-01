@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { AiArtifact, AiRun, AiRunEvent, AiRunStep, BrandKnowledgeDocument } from '@/types/ai';
+import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
 
 const db = supabase as unknown as SupabaseClient;
+export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
 
 const isMissingTableError = (error: unknown) => {
   const code = (error as { code?: string })?.code;
@@ -86,21 +87,270 @@ export function useAIMission() {
       brandKnowledgeDocumentId?: string | null;
       context?: Record<string, unknown>;
     }) => invokeOrThrow<{ run: AiRun; artifact?: AiArtifact | null }>('ai-start-run', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_runs', orgId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
+    },
   });
 
   const commitRun = useMutation({
-    mutationFn: async ({ runId, artifactId }: { runId: string; artifactId?: string }) =>
-      invokeOrThrow<{ inserted: { contentCount: number; calendarCount: number; campaignIds: Record<string, string> } }>('ai-commit-run', { runId, artifactId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_runs', orgId] }),
+    mutationFn: async ({ runId, artifactId, selection }: { runId: string; artifactId?: string; selection?: AiDraftSelection }) =>
+      invokeOrThrow<{ inserted: { contentCount: number; calendarCount: number; campaignIds: Record<string, string> } }>('ai-commit-run', { runId, artifactId, selection }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
+    },
   });
 
   const cancelRun = useMutation({
     mutationFn: async (runId: string) => invokeOrThrow<{ run: AiRun }>('ai-cancel-run', { runId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_runs', orgId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
+    },
   });
 
   return { startRun, commitRun, cancelRun };
+}
+
+export function useAiRuns(limit = 5) {
+  const { organization } = useAuth();
+  const orgId = organization?.id || '';
+
+  return useQuery({
+    queryKey: ['ai_runs', orgId, limit],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from('ai_runs')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }
+      return data as AiRun[];
+    },
+    enabled: !!orgId,
+  });
+}
+
+export function useAiAgents() {
+  const qc = useQueryClient();
+  const { organization, user } = useAuth();
+  const orgId = organization?.id || '';
+
+  const query = useQuery({
+    queryKey: ['ai_agents', orgId],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from('ai_agents')
+        .select('*')
+        .or(`org_id.is.null,org_id.eq.${orgId}`)
+        .eq('is_enabled', true)
+        .order('name');
+      if (error) {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }
+
+      const agents = new Map<string, AiAgent>();
+      for (const agent of data as AiAgent[]) {
+        if (!agent.org_id && agents.has(agent.slug)) continue;
+        agents.set(agent.slug, agent);
+      }
+      return Array.from(agents.values()).sort((left, right) => left.name.localeCompare(right.name));
+    },
+    enabled: !!orgId,
+  });
+
+  const saveSkill = useMutation({
+    mutationFn: async ({ agent, skillMd }: { agent: AiAgent; skillMd: string }) => {
+      const cleanSkill = skillMd.trim();
+      if (!cleanSkill) throw new Error('Skill markdown cannot be empty.');
+
+      let savedAgent: AiAgent;
+      if (agent.org_id === orgId) {
+        const { data, error } = await db
+          .from('ai_agents')
+          .update({ skill_md: cleanSkill })
+          .eq('id', agent.id)
+          .select()
+          .single();
+        if (error) throw error;
+        savedAgent = data as AiAgent;
+      } else {
+        const { data: existing, error: lookupError } = await db
+          .from('ai_agents')
+          .select('*')
+          .eq('org_id', orgId)
+          .eq('slug', agent.slug)
+          .maybeSingle();
+        if (lookupError) throw lookupError;
+
+        if (existing) {
+          const { data, error } = await db
+            .from('ai_agents')
+            .update({ skill_md: cleanSkill })
+            .eq('id', existing.id)
+            .select()
+            .single();
+          if (error) throw error;
+          savedAgent = data as AiAgent;
+        } else {
+          const { data, error } = await db
+            .from('ai_agents')
+            .insert({
+              org_id: orgId,
+              slug: agent.slug,
+              name: agent.name,
+              description: agent.description,
+              skill_md: cleanSkill,
+              tools: agent.tools,
+              output_schema: agent.output_schema,
+              permissions: agent.permissions,
+              is_default: false,
+              is_enabled: true,
+              created_by: user?.id || null,
+            })
+            .select()
+            .single();
+          if (error) throw error;
+          savedAgent = data as AiAgent;
+        }
+      }
+
+      await db.from('ai_agent_versions').insert({
+        agent_id: savedAgent.id,
+        skill_md: cleanSkill,
+        change_note: 'Updated from Social Suite Customize Agent.',
+        created_by: user?.id || null,
+      });
+
+      return savedAgent;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_agents', orgId] }),
+  });
+
+  const createAgent = useMutation({
+    mutationFn: async ({ name, description, skillMd }: { name: string; description: string; skillMd: string }) => {
+      const cleanName = name.trim();
+      const cleanSkill = skillMd.trim();
+      if (!cleanName) throw new Error('Agent name is required.');
+      if (!cleanSkill) throw new Error('Skill markdown cannot be empty.');
+
+      const slug = `${slugifyAgentName(cleanName)}-${crypto.randomUUID().slice(0, 6)}`;
+      const { data, error } = await db
+        .from('ai_agents')
+        .insert({
+          org_id: orgId,
+          slug,
+          name: cleanName,
+          description: description.trim() || 'Workspace agent with a custom Social Suite skill.',
+          skill_md: cleanSkill,
+          tools: [],
+          output_schema: 'workspace_skill',
+          permissions: { can_write: false },
+          is_default: false,
+          is_enabled: true,
+          created_by: user?.id || null,
+        })
+        .select()
+        .single();
+      if (error) throw error;
+
+      const savedAgent = data as AiAgent;
+      const { error: versionError } = await db.from('ai_agent_versions').insert({
+        agent_id: savedAgent.id,
+        skill_md: cleanSkill,
+        change_note: 'Created from Social Suite Customize Agent.',
+        created_by: user?.id || null,
+      });
+      if (versionError) throw versionError;
+      return savedAgent;
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_agents', orgId] }),
+  });
+
+  const deleteAgent = useMutation({
+    mutationFn: async (agent: AiAgent) => {
+      if (agent.org_id !== orgId || agent.is_default) throw new Error('Built-in agents cannot be deleted.');
+      const { error: workflowError } = await db
+        .from('ai_agent_workflow_steps')
+        .delete()
+        .eq('org_id', orgId)
+        .eq('agent_slug', agent.slug);
+      if (workflowError && !isMissingTableError(workflowError)) throw workflowError;
+
+      const { error } = await db.from('ai_agents').delete().eq('id', agent.id).eq('org_id', orgId);
+      if (error) throw error;
+      return agent.slug;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ai_agents', orgId] });
+      void qc.invalidateQueries({ queryKey: ['ai_agent_workflow', orgId] });
+    },
+  });
+
+  return { ...query, saveSkill, createAgent, deleteAgent };
+}
+
+export function useAiWorkflow() {
+  const qc = useQueryClient();
+  const { organization, user } = useAuth();
+  const orgId = organization?.id || '';
+
+  const query = useQuery({
+    queryKey: ['ai_agent_workflow', orgId],
+    queryFn: async () => {
+      const { data, error } = await db
+        .from('ai_agent_workflow_steps')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('sort_order');
+      if (error) {
+        if (isMissingTableError(error)) return [];
+        throw error;
+      }
+      return data as AiWorkflowStep[];
+    },
+    enabled: !!orgId,
+  });
+
+  const saveWorkflow = useMutation({
+    mutationFn: async (agentSlugs: string[]) => {
+      const uniqueSlugs = Array.from(new Set(agentSlugs.filter(Boolean)));
+      if (!uniqueSlugs.length) throw new Error('The workflow needs at least one agent.');
+
+      const { error: deleteError } = await db
+        .from('ai_agent_workflow_steps')
+        .delete()
+        .eq('org_id', orgId);
+      if (deleteError) throw deleteError;
+
+      const { data, error } = await db
+        .from('ai_agent_workflow_steps')
+        .insert(uniqueSlugs.map((agentSlug, index) => ({
+          org_id: orgId,
+          agent_slug: agentSlug,
+          sort_order: index,
+          created_by: user?.id || null,
+        })))
+        .select()
+        .order('sort_order');
+      if (error) throw error;
+      return data as AiWorkflowStep[];
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai_agent_workflow', orgId] }),
+  });
+
+  return { ...query, saveWorkflow };
+}
+
+function slugifyAgentName(name: string) {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 42) || 'custom-agent';
 }
 
 export function useAiRunDetails(runId: string | null) {

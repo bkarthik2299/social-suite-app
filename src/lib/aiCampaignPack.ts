@@ -20,7 +20,7 @@ export function normalizeBriefToCampaignArtifact(input: unknown): BriefToCampaig
     googleAds: normalizeGoogleAds(source.googleAds ?? source.google_ads),
     socialAds: normalizeSocialAds(source.socialAds ?? source.social_ads ?? source.paidSocialAds ?? source.paid_social_ads),
     blogOutlines: normalizeBlogOutlines(source.blogOutlines ?? source.blog_outlines ?? source.blogs),
-    calendar: normalizeCalendar(source.calendar ?? source.contentCalendar ?? source.content_calendar ?? source.schedule),
+    calendar: normalizeCalendar(source.calendar ?? source.contentCalendar ?? source.content_calendar ?? source.schedule).slice(0, 30),
   };
 }
 
@@ -44,7 +44,7 @@ function unwrapCampaignPack(input: unknown): JsonRecord {
 function normalizeStrategy(source: JsonRecord): BriefToCampaignArtifact['strategy'] {
   const strategy = asRecord(source.strategy ?? source.campaign_strategy ?? source.plan);
   const title = stringValue(strategy.title ?? strategy.name ?? source.campaign_name) || 'Campaign Strategy';
-  const summary = stringValue(strategy.summary)
+  const summary = stringValue(strategy.summary ?? strategy.description ?? strategy.overview)
     || joinText([
       strategy.objective,
       strategy.key_message,
@@ -64,15 +64,32 @@ function normalizeStrategy(source: JsonRecord): BriefToCampaignArtifact['strateg
 function normalizeSocialPosts(input: unknown): SocialPostDraft[] {
   return recordArray(input).map((item, index) => {
     const platforms = normalizePlatforms(item.platforms ?? item.platform ?? item.channel);
-    const headline = stringValue(item.headline ?? item.title ?? item.name);
-    const body = stringValue(item.caption ?? item.body ?? item.copy ?? item.text);
+    const headline = stringValue(item.headline ?? item.title);
+    const name = stringValue(item.name) || headline || `Social Post ${index + 1}`;
+    const topic = stringValue(item.topic ?? item.post_type ?? item.format) || headline || name || `Social post ${index + 1}`;
+    const body = stringValue(
+      item.caption
+      ?? item.body
+      ?? item.copy
+      ?? item.text
+      ?? item.content
+      ?? item.post_copy
+      ?? item.postCopy
+      ?? item.primary_text
+      ?? item.primaryText,
+    ) || headline || topic;
     const cta = stringValue(item.cta);
-    const hashtags = stringValue(item.hashtags);
+    const hashtags = stringArray(item.hashtags).join(' ');
 
     return {
-      name: stringValue(item.name) || headline || `Social Post ${index + 1}`,
-      topic: stringValue(item.topic ?? item.post_type ?? item.format) || headline || `Social post ${index + 1}`,
-      caption: joinText([headline, body, cta ? `CTA: ${cta}` : '', hashtags]),
+      name,
+      topic,
+      caption: joinText(uniqueStrings([
+        headline && !body.toLowerCase().startsWith(headline.toLowerCase()) ? headline : '',
+        body,
+        cta ? `CTA: ${cta}` : '',
+        hashtags,
+      ])),
       platforms,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
       creativeBrief: stringValue(item.creativeBrief ?? item.creative_brief ?? item.visual_description ?? item.visual) || undefined,
@@ -112,17 +129,36 @@ function normalizeGoogleAds(input: unknown): GoogleAdDraft[] {
 }
 
 function normalizeSocialAds(input: unknown): SocialAdDraft[] {
-  return recordArray(input).map((item, index) => ({
-    name: stringValue(item.name ?? item.ad_name ?? item.ad_type) || `Paid Social Ad ${index + 1}`,
-    topic: stringValue(item.topic ?? item.ad_type) || 'Paid social concept',
-    platform: normalizeSocialAdPlatform(item.platform ?? item.channel),
-    primaryText: stringValue(item.primaryText ?? item.primary_text ?? item.body ?? item.copy ?? item.text),
-    headline: stringValue(item.headline ?? item.title) || `Paid Social Ad ${index + 1}`,
-    description: stringValue(item.description ?? item.visual_description) || undefined,
-    cta: normalizeSocialAdCta(item.cta),
-    destinationUrl: stringValue(item.destinationUrl ?? item.destination_url ?? item.final_url ?? item.link) || undefined,
-    scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
-  }));
+  return recordArray(input).map((item, index) => {
+    const name = stringValue(item.name ?? item.ad_name ?? item.ad_type) || `Paid Social Ad ${index + 1}`;
+    const topic = stringValue(item.topic ?? item.ad_type) || 'Paid social concept';
+    const headline = stringValue(item.headline ?? item.title ?? item.hook) || name;
+    const primaryText = stringValue(
+      item.primaryText
+      ?? item.primary_text
+      ?? item.primaryCopy
+      ?? item.primary_copy
+      ?? item.adCopy
+      ?? item.ad_copy
+      ?? item.body
+      ?? item.copy
+      ?? item.text
+      ?? item.content
+      ?? item.caption,
+    ) || headline || topic;
+
+    return {
+      name,
+      topic,
+      platform: normalizeSocialAdPlatform(item.platform ?? item.channel),
+      primaryText,
+      headline,
+      description: stringValue(item.description ?? item.visual_description ?? item.supporting_text) || undefined,
+      cta: normalizeSocialAdCta(item.cta),
+      destinationUrl: stringValue(item.destinationUrl ?? item.destination_url ?? item.final_url ?? item.link) || undefined,
+      scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
+    };
+  });
 }
 
 function normalizeBlogOutlines(input: unknown): BlogOutlineDraft[] {
