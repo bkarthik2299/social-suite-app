@@ -29,3 +29,4 @@ qa-screenshots/
 *.njsproj
 *.sln
 *.sw?
+.vercel
