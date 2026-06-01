@@ -282,10 +282,10 @@ export default function ClientPortal() {
                     const campaignPosts = contentItems.filter(p => p.campaignId === campaign.id);
                     const postNodes: TreeItem[] = campaignPosts.map(post => {
                         let name = post.name || 'Untitled';
-                        if (post.type === 'post' || post.type === 'socials') name = getString(post.payload.caption).slice(0, 40) || name;
+                        if (post.type === 'social-post') name = getString(post.payload.caption).slice(0, 40) || name;
                         else if (post.type === 'google-ad') name = getFirstString(post.payload.headlines) || name;
-                        else if (post.type === 'meta-ad' || post.type === 'social-ad') name = getString(post.payload.primaryText) || name;
-                        else if (post.type === 'blog' || post.type === 'blogs') name = getString(post.payload.title) || name;
+                        else if (post.type === 'social-ad') name = getString(post.payload.primaryText) || name;
+                        else if (post.type === 'blog') name = getString(post.payload.title) || name;
 
                         return {
                             id: post.id,

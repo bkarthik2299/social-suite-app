@@ -31,10 +31,10 @@ export function GlobalCommand() {
     const { data: contentItems = [] } = useAllContentItems();
     
     // Map existing groups using contentItems
-    const blogs = contentItems.filter(i => i.type === 'blog' || i.type === 'blogs');
-    const socialPosts = contentItems.filter(i => i.type === 'post' || i.type === 'socials');
+    const blogs = contentItems.filter(i => i.type === 'blog');
+    const socialPosts = contentItems.filter(i => i.type === 'social-post');
     const googleAds = contentItems.filter(i => i.type === 'google-ad');
-    const socialAds = contentItems.filter(i => i.type === 'social-ad' || i.type === 'meta-ad');
+    const socialAds = contentItems.filter(i => i.type === 'social-ad');
 
     const getFolderPeers = (projectId: string) => folders.filter((folder) => folder.projectId === projectId);
     const getCampaignPeers = (folderId: string) => campaigns.filter((campaign) => campaign.folderId === folderId);

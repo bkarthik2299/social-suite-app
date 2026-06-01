@@ -21,7 +21,9 @@ The database scales vertically with a modular architecture:
    - `vault_credentials` (Password Vault)
    - `feed_folders`, `feed_posts` (Feed Monitor)
    - `portal_clients`, `portal_feeds`, `portal_review_posts` (Client Portal)
+   - `brand_guides`, `brand_knowledge_documents` (Brand Guide + compiled AI context)
 4. **Extensibility**: `tool_registry`, `org_tools` (for adding new micro tools automatically without schema migrations).
+5. **Agentic AI Layer**: `ai_agents`, `ai_runs`, `ai_run_steps`, `ai_artifacts`, and `ai_run_approvals` power approval-gated Brief to Campaign missions.
 
 ## Getting Started
 
@@ -36,7 +38,12 @@ Ensure you have Node.js and a valid `npm` environment installed.
 npm install
 ```
 
-2. Setup your local Environment Variables. Note that API keys for Supabase exist in `src/lib/supabase.ts`. In a production setting, these should be placed into `.env`.
+2. Set up local environment variables:
+```bash
+cp .env.example .env.local
+```
+
+Only `VITE_*` values are browser-exposed. Provider keys such as OpenRouter, Tavily, Supadata, and Trigger must stay in Supabase Edge Function secrets, never in Vercel public environment variables.
 
 ### Running Locally
 
@@ -48,6 +55,34 @@ Navigate to `http://localhost:8080` (or whichever port Vite allocates) to view t
 
 ## Deployment & Setup
 
-The database schema, triggers, and Row Level Security policies have been provided in `supabase_schema.sql` and deployed to the `socialsuite-db` Supabase project.
+Database schema changes live in `supabase/migrations`. Deploy migrations to Supabase before deploying AI Edge Functions.
 
 This ensures proper tenant isolation (using `org_id` restrictions across the board) and sets a solid foundation for adding additional micro tools or campaign item subtypes later via the JSONB `content_items` mapping.
+
+### Vercel Environment Variables
+
+Set these in Vercel:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_APP_ENV=production`
+- `VITE_VAULT_ENCRYPTION_KEY` only if the current Password Vault remains enabled
+
+Do not set AI/provider/server secrets with a `VITE_` prefix. The vault key is browser-exposed and should be treated as a temporary compatibility setting, not a true server secret.
+
+### Supabase Edge Function Secrets
+
+Set these in the Supabase dashboard or with `supabase secrets set`:
+
+- `OPENROUTER_API_KEY`
+- `TAVILY_API_KEY`
+- `SUPADATA_API_KEY`
+- `TRIGGER_SECRET_KEY` (reserved for the durable workflow phase)
+- `AI_DEFAULT_MODEL`
+- `AI_FAST_MODEL`
+- `AI_DEEP_MODEL`
+- `AI_RESEARCH_MODEL`
+
+Use `AI_FAST_MODEL=deepseek/deepseek-chat-v3-0324` for Instant mode and `AI_DEEP_MODEL=qwen/qwen3-coder-30b-a3b-instruct` for the more deliberate Deep Work route. `AI_DEFAULT_MODEL` remains the general server-side fallback. Keep higher-end models for final production QA or premium tiers.
+
+Supabase provides `SUPABASE_URL` and project API keys to Edge Functions. This code supports both the legacy `SUPABASE_ANON_KEY` secret and the newer `SUPABASE_PUBLISHABLE_KEYS` secret shape.

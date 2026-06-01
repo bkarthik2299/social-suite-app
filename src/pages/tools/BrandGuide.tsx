@@ -4,12 +4,16 @@ import {
     Copy,
     Download,
     ExternalLink,
+    FileText,
     Image as ImageIcon,
     Link2,
     Mic2,
     Palette,
     Plus,
+    RefreshCw,
+    Save,
     Shapes,
+    Sparkles,
     Trash2,
     Type,
 } from 'lucide-react';
@@ -54,6 +58,7 @@ import {
     useBrandGuide,
     useProjects,
 } from '@/hooks/useDatabase';
+import { useBrandKnowledge } from '@/hooks/useAI';
 import { cn } from '@/lib/utils';
 
 type ToneSpectrum = {
@@ -79,6 +84,7 @@ type DeleteConfirm = {
 
 const sections = [
     { id: 'identity', label: 'Brand Identity', icon: BadgeInfo },
+    { id: 'knowledge', label: 'Knowledge Base', icon: FileText },
     { id: 'social', label: 'Social Links', icon: Link2 },
     { id: 'logos', label: 'Logos', icon: Shapes },
     { id: 'colors', label: 'Colors', icon: Palette },
@@ -186,6 +192,7 @@ export default function BrandGuidePage() {
     } = useBrandGuide(selectedGuideId);
 
     const [draft, setDraft] = useState<Partial<BrandGuide>>({});
+    const [knowledgeDraft, setKnowledgeDraft] = useState('');
     const [moodOpen, setMoodOpen] = useState(false);
 
     const [colorForm, setColorForm] = useState(emptyColorForm);
@@ -216,6 +223,16 @@ export default function BrandGuidePage() {
 
     const guideId = guide?.id || '';
     const hasGuide = !!guideId;
+    const {
+        document: brandKnowledgeDocument,
+        isLoading: knowledgeLoading,
+        compileKnowledge,
+        updateMarkdown,
+    } = useBrandKnowledge(guideId);
+
+    useEffect(() => {
+        setKnowledgeDraft(brandKnowledgeDocument?.markdown || '');
+    }, [brandKnowledgeDocument?.id, brandKnowledgeDocument?.markdown]);
 
     useEffect(() => {
         if (!hasGuide) return;
@@ -400,8 +417,41 @@ export default function BrandGuidePage() {
         toast({ title: 'Copied', description: `${label} copied to clipboard.` });
     };
 
+    const generateBrandKnowledge = async () => {
+        if (!guideId) return;
+        try {
+            const result = await compileKnowledge.mutateAsync();
+            setKnowledgeDraft(result.document.markdown || '');
+            toast({ title: 'Brand Knowledge generated', description: 'The canonical markdown guide is ready for AI runs.' });
+        } catch (error) {
+            toast({ title: 'Could not generate Brand Knowledge', description: errorMessage(error), variant: 'destructive' });
+        }
+    };
+
+    const saveBrandKnowledge = async () => {
+        if (!brandKnowledgeDocument?.id) return;
+        try {
+            await updateMarkdown.mutateAsync({ documentId: brandKnowledgeDocument.id, markdown: knowledgeDraft });
+            toast({ title: 'Brand Knowledge saved', description: 'Manual markdown edits were saved.' });
+        } catch (error) {
+            toast({ title: 'Could not save Brand Knowledge', description: errorMessage(error), variant: 'destructive' });
+        }
+    };
+
+    const downloadBrandKnowledge = () => {
+        const blob = new Blob([knowledgeDraft || ''], { type: 'text/markdown;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${slugifyFileName(guide?.brand_name || 'brand-knowledge')}.md`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
     const primaryFont = useMemo(() => fonts.find((font) => font.category === 'heading') || null, [fonts]);
     const bodyFont = useMemo(() => fonts.find((font) => font.category === 'body') || null, [fonts]);
+    const knowledgeStatus = brandKnowledgeDocument?.status || 'missing';
+    const knowledgeUpdatedAt = brandKnowledgeDocument?.generated_at || brandKnowledgeDocument?.updated_at || '';
 
     return (
         <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Brand Guide', path: '/tools/brand-guide' }]}>
@@ -506,6 +556,79 @@ export default function BrandGuidePage() {
                                             <GuideTextField label="About the Brand" value={stringValue(draft.elevator_pitch)} disabled={false} textarea placeholder="Describe the brand in plain language: what they do, who they serve, what makes them different, and anything a social media manager should know before creating content." onChange={(value) => updateDraft('elevator_pitch', value)} onBlur={() => commitGuideField('elevator_pitch')} />
                                         </div>
                                     </div>
+                                </AccordionContent>
+                            </AccordionItem>
+
+                            <AccordionItem value="knowledge" id="knowledge" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                                <SectionTrigger icon={FileText} title="Brand Knowledge Base" description="A single markdown source for Social Suite AI runs." />
+                                <AccordionContent className="space-y-5 pb-6 pt-2">
+                                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                            <div className="min-w-0 space-y-2">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <Badge variant={knowledgeStatus === 'ready' ? 'default' : 'secondary'} className="capitalize">
+                                                        {knowledgeStatus}
+                                                    </Badge>
+                                                    {brandKnowledgeDocument?.manual_edit && <Badge variant="outline">Manual edit</Badge>}
+                                                </div>
+                                                <p className="text-sm text-slate-500">
+                                                    {knowledgeUpdatedAt ? `Last updated ${new Date(knowledgeUpdatedAt).toLocaleString()}` : 'No compiled knowledge document yet.'}
+                                                </p>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                    className="h-10 gap-2 rounded-xl bg-primary px-4 font-medium text-white hover:bg-primary/90"
+                                                    onClick={generateBrandKnowledge}
+                                                    disabled={compileKnowledge.isPending || !guideId}
+                                                >
+                                                    {brandKnowledgeDocument ? <RefreshCw className={cn('h-4 w-4', compileKnowledge.isPending && 'animate-spin')} /> : <Sparkles className="h-4 w-4" />}
+                                                    {brandKnowledgeDocument ? 'Refresh' : 'Generate'}
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    className="h-10 gap-2 rounded-xl"
+                                                    onClick={saveBrandKnowledge}
+                                                    disabled={!brandKnowledgeDocument?.id || updateMarkdown.isPending}
+                                                >
+                                                    <Save className="h-4 w-4" />
+                                                    Save
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    className="h-10 gap-2 rounded-xl"
+                                                    onClick={() => copyValue(knowledgeDraft, 'Brand Knowledge')}
+                                                    disabled={!knowledgeDraft.trim()}
+                                                >
+                                                    <Copy className="h-4 w-4" />
+                                                    Copy
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    className="h-10 gap-2 rounded-xl"
+                                                    onClick={downloadBrandKnowledge}
+                                                    disabled={!knowledgeDraft.trim()}
+                                                >
+                                                    <Download className="h-4 w-4" />
+                                                    Export
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="grid gap-2.5">
+                                        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Canonical Markdown</Label>
+                                        <Textarea
+                                            value={knowledgeDraft}
+                                            onChange={(event) => setKnowledgeDraft(event.target.value)}
+                                            className="min-h-[360px] rounded-xl bg-white px-4 py-3 font-mono text-sm leading-6"
+                                            placeholder="Generate the brand knowledge document after adding identity, links, colors, logo rules, and tone inputs."
+                                            disabled={knowledgeLoading || compileKnowledge.isPending}
+                                        />
+                                    </div>
+                                    {brandKnowledgeDocument?.error && (
+                                        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                            {brandKnowledgeDocument.error}
+                                        </div>
+                                    )}
                                 </AccordionContent>
                             </AccordionItem>
 
@@ -1647,6 +1770,14 @@ function linesToArray(value: string): string[] {
 
 function stringValue(value: unknown): string {
     return typeof value === 'string' ? value : '';
+}
+
+function slugifyFileName(value: string): string {
+    return value
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'brand-knowledge';
 }
 
 function normalizeHex(value: string): string {

@@ -35,6 +35,37 @@ const typeColors: Record<string, string> = {
   'socials': 'bg-badge-socials-bg text-badge-socials border-badge-socials/20',
 };
 
+const dateValue = (payload: ContentItem['payload'], ...keys: string[]) => {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) return value;
+    if (typeof value === 'number') return String(value);
+  }
+  return undefined;
+};
+
+const getCalendarPlacement = (item: ContentItem): { type: CampaignType; dateStr?: string } | null => {
+  const payload = item.payload || {};
+
+  if (item.type === 'social-post' || item.type === 'socials' || item.type === 'post') {
+    return { type: 'socials', dateStr: dateValue(payload, 'scheduledDate', 'scheduled_date') };
+  }
+
+  if (item.type === 'social-ad' || item.type === 'meta-ad' || item.type === 'ad') {
+    return { type: 'meta-ad', dateStr: dateValue(payload, 'scheduledDate', 'scheduled_date') };
+  }
+
+  if (item.type === 'google-ad') {
+    return { type: 'google-ad', dateStr: dateValue(payload, 'startDate', 'start_date') };
+  }
+
+  if (item.type === 'blog' || item.type === 'blogs') {
+    return { type: 'blogs', dateStr: dateValue(payload, 'publishDate', 'publish_date') };
+  }
+
+  return null;
+};
+
 export default function Calendar() {
   const navigate = useNavigate();
   const { data: projects = [] } = useProjects();
@@ -51,27 +82,11 @@ export default function Calendar() {
 
     contentItems.forEach((item: ContentItem) => {
       const payload = item.payload || {};
-      let dateStr = null;
-      let type = item.type;
-      
-      if (item.type === 'socials' || item.type === 'post') {
-          dateStr = payload.scheduledDate || payload.scheduled_date;
-          type = 'socials';
-      } else if (item.type === 'meta-ad' || item.type === 'ad') {
-          dateStr = payload.scheduledDate || payload.scheduled_date;
-          type = 'meta-ad';
-      } else if (item.type === 'google-ad') {
-          dateStr = payload.startDate || payload.start_date;
-          type = 'google-ad';
-      } else if (item.type === 'blogs' || item.type === 'blog') {
-          dateStr = payload.publishDate || payload.publish_date || item.created_at;
-          type = 'blogs';
-      } else {
-          dateStr = payload.scheduledDate || payload.startDate || payload.publishDate || item.created_at;
-      }
+      const placement = getCalendarPlacement(item);
+      if (!placement?.dateStr) return;
 
-      if (dateStr) {
-          const date = parseISO(dateStr);
+      if (placement.dateStr) {
+          const date = parseISO(placement.dateStr);
           if (isValid(date)) {
               // Extract joined fields
               const folderId = item.campaigns?.folder_id;
@@ -81,11 +96,11 @@ export default function Calendar() {
                   id: item.id,
                   title: item.name || (typeof payload.caption === 'string' ? payload.caption.slice(0, 30) : '') || (typeof payload.headline === 'string' ? payload.headline : '') || 'Content',
                   date,
-                  type: type as CampaignType,
+                  type: placement.type,
                   projectId,
                   folderId,
                   campaignId: item.campaignId,
-                  contentType: type as CampaignType,
+                  contentType: placement.type,
               });
           }
       }
