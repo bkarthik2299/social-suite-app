@@ -110,6 +110,35 @@ const formatDateLabel = (value: unknown, pattern: string, fallback: string) => {
     return date ? format(date, pattern) : fallback;
 };
 
+type SocialPlatform = 'linkedin' | 'twitter' | 'instagram' | 'facebook';
+type SocialAdCta = 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
+
+const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
+    const platform = String(value || '').toLowerCase();
+    if (platform.includes('linkedin')) return 'linkedin';
+    if (platform.includes('instagram')) return 'instagram';
+    if (platform.includes('facebook') || platform.includes('meta')) return 'facebook';
+    if (platform === 'x' || platform.includes('twitter')) return 'twitter';
+    return 'facebook';
+};
+
+const normalizeSocialAdCta = (value: unknown): SocialAdCta => {
+    const cta = String(value || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    if (['learn_more', 'sign_up', 'shop_now', 'contact_us', 'download'].includes(cta)) {
+        return cta as SocialAdCta;
+    }
+
+    if (cta.includes('sign')) return 'sign_up';
+    if (cta.includes('shop')) return 'shop_now';
+    if (cta.includes('download')) return 'download';
+    if (cta.includes('contact') || cta.includes('book') || cta.includes('appointment')) return 'contact_us';
+    return 'learn_more';
+};
+
 // --- Platform Icons ---
 const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: string, active?: boolean, onClick?: () => void, size?: "sm" | "md" | "lg" }) => {
     const icons = {
@@ -487,7 +516,7 @@ const SocialPreview = ({ post }: { post: Partial<SocialPost> }) => {
 
 const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
-    const socialPosts = (dbItems || []).filter(i => i.type === 'post' || i.type === 'socials').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
+    const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
 
@@ -548,7 +577,7 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
         if (editingPost) {
             updateContentItem.mutate({ id: editingPost.id, updates: { name, payload: postData } });
         } else {
-            addContentItem.mutate({ type: 'post', name, payload: postData });
+            addContentItem.mutate({ type: 'social-post', name, payload: postData });
         }
         setIsDialogOpen(false);
     };
@@ -1098,11 +1127,11 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setEditingAd(ad);
             setName(ad.name || 'New Search Ad');
             setStartDate(toValidDate(ad.startDate));
-            setFinalUrl(ad.finalUrl);
-            setPath1(ad.path1);
-            setPath2(ad.path2);
-            setHeadlines(ad.headlines.length ? ad.headlines : ['', '', '']);
-            setDescriptions(ad.descriptions.length ? ad.descriptions : ['', '']);
+            setFinalUrl(ad.finalUrl || '');
+            setPath1(ad.path1 || '');
+            setPath2(ad.path2 || '');
+            setHeadlines(ad.headlines?.length ? ad.headlines : ['', '', '']);
+            setDescriptions(ad.descriptions?.length ? ad.descriptions : ['', '']);
             setTopic(ad.topic || '');
         } else {
             setEditingAd(null);
@@ -1222,7 +1251,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                             <CardContent className="p-4">
                                 <div className="flex justify-between items-start mb-3">
                                     <Badge variant="outline" className="text-[10px] font-normal bg-blue-50 text-blue-600 border-blue-100">
-                                        {formatDateLabel(ad.createdAt, 'MMM d, yyyy', 'No date')}
+                                        {formatDateLabel(ad.startDate || ad.createdAt, 'MMM d, yyyy', 'No date')}
                                     </Badge>
                                     <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-[8px] border-2 border-white text-white" title="Active">
                                         G
@@ -1511,7 +1540,15 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
 
 const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
-    const socialAds = (dbItems || []).filter(i => i.type === 'social-ad' || i.type === 'ad' || i.type === 'meta-ad').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
+    const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => ({
+        id: i.id,
+        campaignId: i.campaignId,
+        name: i.name,
+        status: i.status,
+        ...i.payload,
+        platform: normalizeSocialPlatform(i.payload.platform),
+        cta: normalizeSocialAdCta(i.payload.cta),
+    }));
     const campaignAds = socialAds.filter(ad => ad.campaignId === campaignId);
 
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
@@ -1536,13 +1573,13 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         if (ad) {
             setEditingAd(ad);
             setName(ad.name || 'New Social Ad');
-            setPlatform(ad.platform);
-            setPrimaryText(ad.primaryText);
-            setHeadline(ad.headline);
+            setPlatform(normalizeSocialPlatform(ad.platform));
+            setPrimaryText(ad.primaryText || '');
+            setHeadline(ad.headline || '');
             setDescription(ad.description || '');
             setImage(ad.image || '');
-            setCta(ad.cta);
-            setDestinationUrl(ad.destinationUrl);
+            setCta(normalizeSocialAdCta(ad.cta));
+            setDestinationUrl(ad.destinationUrl || '');
             setScheduledDate(toValidDate(ad.scheduledDate));
             setTopic(ad.topic || '');
         } else {
@@ -1580,7 +1617,7 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         if (editingAd) {
             updateContentItem.mutate({ id: editingAd.id, updates: { name, payload: adData } });
         } else {
-            addContentItem.mutate({ type: 'meta-ad', name, payload: adData });
+            addContentItem.mutate({ type: 'social-ad', name, payload: adData });
         }
         setIsDialogOpen(false);
     };
@@ -2255,7 +2292,11 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-                    {campaignAds.map((ad) => (
+                    {campaignAds.map((ad) => {
+                        const adPlatform = normalizeSocialPlatform(ad.platform);
+                        const adPlatformSpec = platformSpecs[adPlatform];
+
+                        return (
                         <Card
                             key={ad.id}
                             className="overflow-hidden hover:shadow-md transition-all cursor-pointer group border-muted relative"
@@ -2286,8 +2327,8 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                         {formatDateLabel(ad.scheduledDate, 'MMM d', 'Unscheduled')}
                                     </Badge>
                                     <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] border-2 border-white text-white"
-                                        style={{ backgroundColor: platformSpecs[ad.platform].color }}>
-                                        {ad.platform.charAt(0).toUpperCase()}
+                                        style={{ backgroundColor: adPlatformSpec.color }}>
+                                        {adPlatform.charAt(0).toUpperCase()}
                                     </div>
                                 </div>
                                 <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
@@ -2295,7 +2336,8 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                 </h4>
                             </CardContent>
                         </Card>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>
@@ -2402,7 +2444,7 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
         if (editingBlog) {
             updateContentItem.mutate({ id: editingBlog.id, updates: { name, payload: blogData } });
         } else {
-            addContentItem.mutate({ type: 'blogs', name, payload: blogData });
+            addContentItem.mutate({ type: 'blog', name, payload: blogData });
         }
         setIsDialogOpen(false);
     };

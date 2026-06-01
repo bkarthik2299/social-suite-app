@@ -7,6 +7,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import type { Database, Json } from '@/types/supabase';
@@ -1109,7 +1110,7 @@ export function useBrandGuide(guideId: string) {
     const { organization } = useAuth();
     const qc = useQueryClient();
     const orgId = organization?.id ?? '';
-    const db = supabase as any;
+    const db = supabase as unknown as SupabaseClient;
 
     const guidesQuery = useQuery({
         queryKey: keys.brandGuides(orgId),

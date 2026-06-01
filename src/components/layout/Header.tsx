@@ -1,4 +1,5 @@
 import { ChevronRight } from 'lucide-react';
+import { AIAssistant } from '@/components/ai/AIAssistant';
 import { GlobalCommand } from '@/components/shared/GlobalCommand';
 import { MicroToolsMenu } from '@/components/layout/MicroToolsMenu';
 import { Link } from 'react-router-dom';
@@ -49,6 +50,7 @@ export function Header({ breadcrumbs = [] }: HeaderProps) {
 
       {/* Logo (Right) */}
       <div className="flex items-center justify-end gap-3 min-w-[200px]">
+        <AIAssistant />
         <MicroToolsMenu />
         <div className="flex items-center gap-2">
           <img src="/favicon.jpg" alt="Logo" className="w-6 h-6 rounded-md object-cover" />

@@ -1,10 +1,18 @@
 import CryptoJS from 'crypto-js';
 
-// IMPORTANT: In a production app, the MASTER_KEY should not be hardcoded in the primary bundle,
-// or it should be derived from a user's master password input that is never stored.
-// For this migration phase, we use an environment variable or a fallback string to implement the strategy.
-const MASTER_KEY = import.meta.env.VITE_VAULT_ENCRYPTION_KEY || 'social-suite-vault-secret-key-2024';
-const LEGACY_MASTER_KEYS = ['social-suite-hub-vault-secret-key-2024'];
+// Browser-side vault encryption is a compatibility layer. Production should move
+// to a per-user key or server-assisted envelope encryption before storing secrets.
+const configuredMasterKey = import.meta.env.VITE_VAULT_ENCRYPTION_KEY || '';
+const localDevelopmentKey = import.meta.env.DEV ? 'local-development-vault-key' : '';
+const LEGACY_MASTER_KEYS = ['social-suite-vault-secret-key-2024', 'social-suite-hub-vault-secret-key-2024'];
+
+const getMasterKey = () => {
+    const key = configuredMasterKey || localDevelopmentKey;
+    if (!key) {
+        throw new Error('VITE_VAULT_ENCRYPTION_KEY is required for Password Vault encryption.');
+    }
+    return key;
+};
 
 /**
  * Encrypts a plain text password (or any string) using AES.
@@ -12,10 +20,10 @@ const LEGACY_MASTER_KEYS = ['social-suite-hub-vault-secret-key-2024'];
 export const encryptString = (plainText: string): string => {
     if (!plainText) return '';
     try {
-        return CryptoJS.AES.encrypt(plainText, MASTER_KEY).toString();
+        return CryptoJS.AES.encrypt(plainText, getMasterKey()).toString();
     } catch (e) {
         console.error("Encryption failed:", e);
-        return plainText; // Fallback in case of failure, though in prod should throw.
+        throw new Error('Password Vault encryption failed.');
     }
 };
 
@@ -25,7 +33,8 @@ export const encryptString = (plainText: string): string => {
 export const decryptString = (encryptedText: string): string => {
     if (!encryptedText) return '';
     try {
-        const candidateKeys = [MASTER_KEY, ...LEGACY_MASTER_KEYS];
+        const activeKey = configuredMasterKey || localDevelopmentKey;
+        const candidateKeys = [activeKey, ...LEGACY_MASTER_KEYS].filter(Boolean);
 
         for (const key of candidateKeys) {
             const bytes = CryptoJS.AES.decrypt(encryptedText, key);
