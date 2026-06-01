@@ -4,6 +4,15 @@ import { normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pa
 type RequestBody = {
   runId: string;
   artifactId?: string;
+  selection?: DraftSelection;
+};
+
+type DraftSelection = {
+  socialPosts?: number[];
+  googleAds?: number[];
+  socialAds?: number[];
+  blogOutlines?: number[];
+  calendar?: number[];
 };
 
 Deno.serve(async (req) => {
@@ -13,7 +22,7 @@ Deno.serve(async (req) => {
   try {
     const supabase = getUserClient(req);
     const userId = await currentUserId(supabase);
-    const { runId, artifactId } = await readJson<RequestBody>(req);
+    const { runId, artifactId, selection } = await readJson<RequestBody>(req);
     if (!runId) return jsonResponse({ error: 'runId is required' }, 400);
 
     const { data: run, error: runError } = await supabase.from('ai_runs').select('*').eq('id', runId).single();
@@ -64,7 +73,8 @@ Deno.serve(async (req) => {
       : await artifactQuery.order('created_at', { ascending: false }).limit(1).single();
     if (artifactError) throw artifactError;
 
-    const pack = normalizeCampaignPack(artifact.content) as CampaignPack;
+    const pack = selectCampaignDrafts(normalizeCampaignPack(artifact.content) as CampaignPack, selection);
+    if (!hasSelectedDrafts(pack)) return jsonResponse({ error: 'Select at least one draft item before creating drafts' }, 400);
     const campaignIds: Record<string, string> = {};
 
     const ensureCampaign = async (type: 'socials' | 'google-ad' | 'meta-ad' | 'blogs', name: string) => {
@@ -100,10 +110,19 @@ Deno.serve(async (req) => {
       return data.id;
     };
 
-    const socialCampaignId = await ensureCampaign('socials', 'AI Social Posts');
-    const googleCampaignId = await ensureCampaign('google-ad', 'AI Google Ads');
-    const socialAdCampaignId = await ensureCampaign('meta-ad', 'AI Paid Social Ads');
-    const blogCampaignId = await ensureCampaign('blogs', 'AI Blog Outlines');
+    const calendarTypes = new Set(pack.calendar.map((item) => item.type));
+    const socialCampaignId = pack.socialPosts.length || calendarTypes.has('socials')
+      ? await ensureCampaign('socials', 'AI Social Posts')
+      : null;
+    const googleCampaignId = pack.googleAds.length || calendarTypes.has('google-ad')
+      ? await ensureCampaign('google-ad', 'AI Google Ads')
+      : null;
+    const socialAdCampaignId = pack.socialAds.length || calendarTypes.has('meta-ad')
+      ? await ensureCampaign('meta-ad', 'AI Paid Social Ads')
+      : null;
+    const blogCampaignId = pack.blogOutlines.length || calendarTypes.has('blogs')
+      ? await ensureCampaign('blogs', 'AI Blog Outlines')
+      : null;
 
     const aiMeta = {
       runId,
@@ -138,6 +157,7 @@ Deno.serve(async (req) => {
 
     const contentRows: Array<Record<string, unknown>> = [];
     for (const post of pack.socialPosts) {
+      if (!socialCampaignId) continue;
       const scheduledDate = post.scheduledDate || nextCalendarDate('socials');
       contentRows.push({
         campaign_id: socialCampaignId,
@@ -148,6 +168,7 @@ Deno.serve(async (req) => {
       });
     }
     for (const ad of pack.googleAds) {
+      if (!googleCampaignId) continue;
       const startDate = ad.startDate || nextCalendarDate('google-ad');
       contentRows.push({
         campaign_id: googleCampaignId,
@@ -158,6 +179,7 @@ Deno.serve(async (req) => {
       });
     }
     for (const ad of pack.socialAds) {
+      if (!socialAdCampaignId) continue;
       const scheduledDate = ad.scheduledDate || nextCalendarDate('meta-ad');
       contentRows.push({
         campaign_id: socialAdCampaignId,
@@ -168,6 +190,7 @@ Deno.serve(async (req) => {
       });
     }
     for (const blog of pack.blogOutlines) {
+      if (!blogCampaignId) continue;
       const publishDate = blog.publishDate || nextCalendarDate('blogs');
       contentRows.push({
         campaign_id: blogCampaignId,
@@ -193,7 +216,7 @@ Deno.serve(async (req) => {
     const calendarRows = pack.calendar.map((item) => {
       const type = item.type;
       return {
-        campaign_id: campaignIds[type] || socialCampaignId,
+        campaign_id: campaignIds[type],
         title: item.title || 'AI campaign touchpoint',
         event_date: item.date,
         type,
@@ -208,7 +231,7 @@ Deno.serve(async (req) => {
       .insert({
         run_id: runId,
         approved_by: userId,
-        approved_payload: { artifactId: artifact.id, contentCount: contentRows.length, calendarCount: calendarRows.length },
+        approved_payload: { artifactId: artifact.id, selection: selection || null, contentCount: contentRows.length, calendarCount: calendarRows.length },
       })
       .select()
       .single();
@@ -222,3 +245,29 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: error instanceof Error ? error.message : 'Unexpected error' }, 500);
   }
 });
+
+function selectCampaignDrafts(pack: CampaignPack, selection?: DraftSelection): CampaignPack {
+  if (!selection) return pack;
+  return {
+    ...pack,
+    socialPosts: selectItems(pack.socialPosts, selection.socialPosts),
+    googleAds: selectItems(pack.googleAds, selection.googleAds),
+    socialAds: selectItems(pack.socialAds, selection.socialAds),
+    blogOutlines: selectItems(pack.blogOutlines, selection.blogOutlines),
+    calendar: selectItems(pack.calendar, selection.calendar),
+  };
+}
+
+function selectItems<T>(items: T[], selectedIndices: number[] | undefined) {
+  if (!Array.isArray(selectedIndices)) return items;
+  const selected = new Set(selectedIndices.filter((index) => Number.isInteger(index) && index >= 0));
+  return items.filter((_, index) => selected.has(index));
+}
+
+function hasSelectedDrafts(pack: CampaignPack) {
+  return pack.socialPosts.length > 0
+    || pack.googleAds.length > 0
+    || pack.socialAds.length > 0
+    || pack.blogOutlines.length > 0
+    || pack.calendar.length > 0;
+}

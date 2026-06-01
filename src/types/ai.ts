@@ -16,6 +16,33 @@ export type BrandKnowledgeDocument = {
   updated_at: string | null;
 };
 
+export type AiAgent = {
+  id: string;
+  org_id: string | null;
+  slug: string;
+  name: string;
+  description: string | null;
+  skill_md: string;
+  tools: string[];
+  output_schema: string | null;
+  permissions: Record<string, unknown>;
+  is_default: boolean;
+  is_enabled: boolean;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type AiWorkflowStep = {
+  id: string;
+  org_id: string;
+  agent_slug: string;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
 export type AiRunStatus = 'queued' | 'running' | 'needs_approval' | 'completed' | 'failed' | 'canceled';
 export type AiStepStatus = 'queued' | 'working' | 'needs_approval' | 'done' | 'failed' | 'skipped';
 
@@ -128,6 +155,14 @@ export type BriefToCampaignArtifact = {
   socialAds?: SocialAdDraft[];
   blogOutlines?: BlogOutlineDraft[];
   calendar?: CalendarDraft[];
+};
+
+export type AiDraftSelection = {
+  socialPosts: number[];
+  googleAds: number[];
+  socialAds: number[];
+  blogOutlines: number[];
+  calendar: number[];
 };
 
 export type AiArtifact = {
