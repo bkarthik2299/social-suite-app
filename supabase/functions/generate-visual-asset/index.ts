@@ -61,8 +61,9 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'REPLICATE_IMAGE_MODEL must be in owner/model format.' }, 500);
   }
 
-  const prompt = buildImagePrompt(visualGuide, body.context || {});
-  const input = buildPredictionInput(model, prompt);
+  const context = body.context || {};
+  const prompt = buildImagePrompt(visualGuide, context);
+  const input = buildPredictionInput(model, prompt, context);
 
   try {
     const created = await createPrediction(endpoint, token, input);
@@ -113,12 +114,21 @@ async function createPrediction(endpoint: string, token: string, input: Record<s
   return payload as Prediction;
 }
 
-function buildPredictionInput(model: string, prompt: string): Record<string, unknown> {
+function buildPredictionInput(model: string, prompt: string, context: Record<string, unknown>): Record<string, unknown> {
   const input: Record<string, unknown> = { prompt };
+  const aspectRatio = normalizeAspectRatio(context.aspectRatio);
 
   if (model.toLowerCase() === 'openai/gpt-image-2') {
     input.quality = 'medium';
     input.output_format = 'jpeg';
+    input.aspect_ratio = aspectRatio;
+
+    const inputImages = brandGuideImageUrls(context).slice(0, 4);
+    if (inputImages.length) {
+      input.input_images = inputImages;
+    }
+  } else if (model.toLowerCase().includes('flux')) {
+    input.aspect_ratio = aspectRatio;
   }
 
   return input;
@@ -206,17 +216,42 @@ function buildImagePrompt(visualGuide: string, context: Record<string, unknown>)
   const topic = cleanText(context.topic);
   const headline = cleanText(context.headline);
   const name = cleanText(context.name);
+  const aspectRatio = normalizeAspectRatio(context.aspectRatio);
+  const brandGuideContext = context.useBrandGuide === true ? cleanBrandGuideSummary(context.brandGuide) : '';
 
   return [
     'Create one polished, brand-safe marketing image for a campaign draft.',
     kind ? `Asset type: ${kind}.` : '',
     platform || platforms ? `Platform context: ${platform || platforms}.` : '',
+    aspectRatio ? `Required aspect ratio: ${aspectRatio}.` : '',
     topic ? `Topic: ${topic}.` : '',
     headline ? `Headline context: ${headline}.` : '',
     name ? `Draft name: ${name}.` : '',
+    brandGuideContext ? `Brand guide design context:\n${brandGuideContext}` : '',
     `Visual guide: ${visualGuide}`,
     'Style requirements: clean professional composition, clear focal point, premium commercial quality, realistic lighting, no crowded layout, no dense readable text, no brand logo unless explicitly provided, no graphic medical procedure imagery, no before-and-after claims, no misleading health outcome claims.',
   ].filter(Boolean).join('\n');
+}
+
+function normalizeAspectRatio(value: unknown) {
+  const ratio = cleanText(value);
+  return ['1:1', '4:5', '9:16', '16:9'].includes(ratio) ? ratio : '1:1';
+}
+
+function cleanBrandGuideSummary(value: unknown) {
+  if (!value || typeof value !== 'object') return '';
+  const record = value as Record<string, unknown>;
+  return cleanText(record.summary).slice(0, 1600);
+}
+
+function brandGuideImageUrls(context: Record<string, unknown>) {
+  if (context.useBrandGuide !== true) return [];
+  const brandGuide = context.brandGuide;
+  if (!brandGuide || typeof brandGuide !== 'object') return [];
+  const imageUrls = (brandGuide as Record<string, unknown>).imageUrls;
+  return Array.isArray(imageUrls)
+    ? imageUrls.filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)).slice(0, 6)
+    : [];
 }
 
 function modelEndpoint(model: string) {
