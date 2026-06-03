@@ -100,6 +100,7 @@ export type SocialPostDraft = {
   platforms: string[];
   scheduledDate?: string;
   creativeBrief?: string;
+  visualGuide?: string;
 };
 
 export type GoogleAdDraft = {
@@ -121,6 +122,7 @@ export type SocialAdDraft = {
   primaryText: string;
   headline: string;
   description?: string;
+  visualGuide?: string;
   cta: string;
   destinationUrl?: string;
   scheduledDate?: string;

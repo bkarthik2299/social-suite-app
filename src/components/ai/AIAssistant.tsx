@@ -1550,6 +1550,11 @@ function ArtifactPreview({
               >
                 <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{post.caption}</p>
                 {post.creativeBrief && <p className="mt-3 text-xs text-slate-500">{post.creativeBrief}</p>}
+                {post.visualGuide && (
+                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                    <span className="font-semibold text-slate-800">Visual Guide: </span>{post.visualGuide}
+                  </div>
+                )}
               </PreviewCard>
             ))}
           </div>
@@ -1589,6 +1594,11 @@ function ArtifactPreview({
                 <p className="text-sm leading-6 text-slate-600">{ad.primaryText}</p>
                 <p className="mt-3 text-sm font-semibold text-slate-900">{ad.headline}</p>
                 {ad.description && <p className="text-sm text-slate-500">{ad.description}</p>}
+                {ad.visualGuide && (
+                  <div className="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">
+                    <span className="font-semibold text-slate-800">Visual Guide: </span>{ad.visualGuide}
+                  </div>
+                )}
               </PreviewCard>
             ))}
           </div>

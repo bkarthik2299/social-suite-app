@@ -34,7 +34,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useContentItems, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
+import { useBrandGuide, useContentItems, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
 import { SocialPost, GoogleAd, SocialAd } from '@/types';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -43,6 +43,8 @@ import { Separator } from '@/components/ui/separator';
 import { Calendar } from '@/components/ui/calendar';
 import { BlogEditor } from '@/components/editor/BlogEditor';
 import { campaignPath, findBySlug, folderPath, projectPath } from '@/lib/routes';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/use-toast';
 
 // --- Platform Constants ---
 const PLATFORM_SPECS = {
@@ -112,6 +114,18 @@ const formatDateLabel = (value: unknown, pattern: string, fallback: string) => {
 
 type SocialPlatform = 'linkedin' | 'twitter' | 'instagram' | 'facebook';
 type SocialAdCta = 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
+type BrandVisualContext = {
+    brandName?: string;
+    summary: string;
+    imageUrls: string[];
+} | null;
+
+const IMAGE_ASPECT_RATIOS = [
+    { value: '1:1', label: 'Square' },
+    { value: '4:5', label: 'Portrait' },
+    { value: '9:16', label: 'Story' },
+    { value: '16:9', label: 'Landscape' },
+] as const;
 
 const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
     const platform = String(value || '').toLowerCase();
@@ -145,6 +159,88 @@ const payloadString = (payload: Record<string, unknown>, keys: string[], fallbac
         if (typeof value === 'string' && value.trim()) return value.trim();
     }
     return fallback;
+};
+
+const visualGuideFromPayload = (payload: Record<string, unknown>, fallback = '') => payloadString(payload, [
+    'visualGuide',
+    'visual_guide',
+    'imagePrompt',
+    'image_prompt',
+    'visualPrompt',
+    'visual_prompt',
+    'visualDescription',
+    'visual_description',
+    'visual',
+], fallback);
+
+const generatedImagesFromPayload = (payload: Record<string, unknown>) => {
+    const images = payload.generatedImages ?? payload.generated_images;
+    return Array.isArray(images) ? images.filter((image): image is string => typeof image === 'string' && image.trim().length > 0) : [];
+};
+
+const uniqueImages = (images: string[]) => Array.from(new Set(images.map((item) => item.trim()).filter(Boolean)));
+
+const generateVisualAsset = async (
+    visualGuide: string,
+    context: Record<string, unknown>,
+) => {
+    const guide = visualGuide.trim();
+    if (!guide) {
+        throw new Error('Add a visual guide before generating an image.');
+    }
+
+    const { data, error } = await supabase.functions.invoke('generate-visual-asset', {
+        body: { visualGuide: guide, context },
+    });
+
+    if (error) throw error;
+
+    const payload = data as { imageUrl?: string; error?: string };
+    if (payload?.error) throw new Error(payload.error);
+    if (!payload?.imageUrl) throw new Error('Image generation did not return an image.');
+
+    return payload.imageUrl;
+};
+
+const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): BrandVisualContext => {
+    if (!assets.guide) return null;
+
+    const colors = assets.colors
+        .slice(0, 8)
+        .map((color) => `${color.name || color.role}: ${color.hex}`)
+        .join('; ');
+    const fonts = assets.fonts
+        .slice(0, 5)
+        .map((font) => `${font.category}: ${font.font_family}${font.weight ? ` ${font.weight}` : ''}`)
+        .join('; ');
+    const logoRules = [
+        assets.guide.logo_clearspace ? `Clearspace: ${assets.guide.logo_clearspace}` : '',
+        assets.guide.logo_min_digital ? `Minimum digital logo size: ${assets.guide.logo_min_digital}` : '',
+        ...assets.logoRules.slice(0, 5).map((rule) => `${rule.rule_type}: ${rule.caption}`),
+    ].filter(Boolean).join('; ');
+    const styleNotes = [
+        assets.guide.photography_style ? `Photography: ${assets.guide.photography_style}` : '',
+        assets.guide.illustration_style ? `Illustration: ${assets.guide.illustration_style}` : '',
+        assets.guide.iconography_rules ? `Iconography: ${assets.guide.iconography_rules}` : '',
+        assets.guide.social_rules ? `Social rules: ${assets.guide.social_rules}` : '',
+        assets.guide.ad_rules ? `Ad rules: ${assets.guide.ad_rules}` : '',
+    ].filter(Boolean).join('; ');
+    const imageUrls = [
+        ...assets.logos.map((logo) => logo.file_url),
+        ...assets.moodImages.map((image) => image.image_url),
+    ].filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)).slice(0, 6);
+
+    return {
+        brandName: assets.guide.brand_name || undefined,
+        summary: [
+            assets.guide.brand_name ? `Brand: ${assets.guide.brand_name}` : '',
+            colors ? `Colors: ${colors}` : '',
+            fonts ? `Typography: ${fonts}` : '',
+            logoRules ? `Logo rules: ${logoRules}` : '',
+            styleNotes,
+        ].filter(Boolean).join('\n'),
+        imageUrls,
+    };
 };
 
 // --- Platform Icons ---
@@ -195,8 +291,113 @@ const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: st
     );
 };
 
+const VisualGuideControls = ({
+    selectedAspectRatio,
+    onAspectRatioChange,
+    useBrandGuide,
+    onUseBrandGuideChange,
+    hasBrandGuide,
+}: {
+    selectedAspectRatio: string;
+    onAspectRatioChange: (value: string) => void;
+    useBrandGuide: boolean;
+    onUseBrandGuideChange: (value: boolean) => void;
+    hasBrandGuide: boolean;
+}) => (
+    <div className="flex flex-wrap items-center gap-2">
+        {IMAGE_ASPECT_RATIOS.map((ratio) => (
+            <button
+                key={ratio.value}
+                type="button"
+                onClick={() => onAspectRatioChange(ratio.value)}
+                className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                    selectedAspectRatio === ratio.value
+                        ? "border-blue-200 bg-blue-50 text-blue-700"
+                        : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                )}
+            >
+                {ratio.label} <span className="ml-1 text-slate-400">{ratio.value}</span>
+            </button>
+        ))}
+        <button
+            type="button"
+            onClick={() => onUseBrandGuideChange(!useBrandGuide)}
+            disabled={!hasBrandGuide}
+            className={cn(
+                "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                useBrandGuide && hasBrandGuide
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                !hasBrandGuide && "cursor-not-allowed opacity-50"
+            )}
+        >
+            Use Brand Guide
+        </button>
+    </div>
+);
+
+const GeneratedImageStrip = ({
+    images,
+    selectedImage,
+    onSelect,
+    onPreview,
+}: {
+    images: string[];
+    selectedImage: string;
+    onSelect: (image: string) => void;
+    onPreview: (image: string) => void;
+}) => (
+    <div className="space-y-2">
+        <Label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Generated Images</Label>
+        <div className="flex flex-wrap gap-2">
+            {images.length ? images.map((item, index) => (
+                <div key={`${item}-${index}`} className="relative h-16 w-16 overflow-hidden rounded-lg border bg-slate-50">
+                    <button
+                        type="button"
+                        onClick={() => onSelect(item)}
+                        className={cn(
+                            "h-full w-full overflow-hidden",
+                            selectedImage === item ? "ring-2 ring-blue-500 ring-offset-2" : "hover:opacity-90"
+                        )}
+                        aria-label={`Select generated image ${index + 1}`}
+                    >
+                        <img src={item} alt={`Generated option ${index + 1}`} className="h-full w-full object-cover" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onPreview(item)}
+                        className="absolute bottom-1 right-1 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-sm hover:bg-white"
+                        aria-label={`View generated image ${index + 1}`}
+                    >
+                        <Eye className="h-3.5 w-3.5" />
+                    </button>
+                </div>
+            )) : (
+                <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-slate-300">
+                    <ImageIcon className="h-5 w-5" />
+                </div>
+            )}
+        </div>
+    </div>
+);
+
+const ImageLightbox = ({ image, onClose }: { image: string; onClose: () => void }) => (
+    <Dialog open={!!image} onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="max-w-[min(96vw,1100px)] border-0 bg-black p-0 shadow-2xl">
+            <DialogHeader className="sr-only">
+                <DialogTitle>Full image preview</DialogTitle>
+                <DialogDescription>Expanded campaign image preview.</DialogDescription>
+            </DialogHeader>
+            <div className="flex max-h-[90vh] items-center justify-center p-3">
+                {image && <img src={image} alt="Full campaign visual" className="max-h-[86vh] w-auto max-w-full rounded-lg object-contain" />}
+            </div>
+        </DialogContent>
+    </Dialog>
+);
+
 // --- Helper Components for Preview ---
-const SocialPreview = ({ post }: { post: Partial<SocialPost> }) => {
+const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onImageClick?: (image: string) => void }) => {
     const [platform, setPlatform] = useState<'instagram' | 'facebook' | 'linkedin' | 'twitter'>('linkedin');
     const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
 
@@ -277,12 +478,16 @@ const SocialPreview = ({ post }: { post: Partial<SocialPost> }) => {
 
     const RenderMedia = () => (
         post.image ? (
-            <div className={cn("w-full bg-slate-100 overflow-hidden relative group border-y border-slate-100", getAspectRatioClass())}>
+            <button
+                type="button"
+                onClick={() => post.image && onImageClick?.(post.image)}
+                className={cn("w-full bg-slate-100 overflow-hidden relative group border-y border-slate-100 cursor-zoom-in", getAspectRatioClass())}
+            >
                 <img src={post.image} alt="Post content" className="w-full h-full object-cover" />
                 <div className="absolute inset-0 flex items-center justify-center bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Badge variant="secondary" className="bg-white/90 backdrop-blur pointer-events-none">Image Preview</Badge>
                 </div>
-            </div>
+            </button>
         ) : (
             <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", getAspectRatioClass())}>
                 <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -522,7 +727,7 @@ const SocialPreview = ({ post }: { post: Partial<SocialPost> }) => {
 
 // --- Tab Content Components ---
 
-const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
+const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({
         id: i.id,
@@ -530,15 +735,27 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
         name: i.name,
         status: i.status,
         ...i.payload,
+        creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
         caption: payloadString(i.payload, ['caption', 'body', 'copy', 'text', 'content', 'post_copy', 'postCopy', 'primary_text', 'primaryText'], i.name || 'Social post draft'),
+        visualGuide: visualGuideFromPayload(i.payload),
+        generatedImages: generatedImagesFromPayload(i.payload),
+        imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
+        useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
     }));
+    const { toast } = useToast();
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
 
     // Form State
     const [brief, setBrief] = useState('');
+    const [visualGuide, setVisualGuide] = useState('');
     const [caption, setCaption] = useState('');
     const [image, setImage] = useState('');
+    const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+    const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
+    const [useBrandGuide, setUseBrandGuide] = useState(false);
+    const [lightboxImage, setLightboxImage] = useState('');
+    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [date, setDate] = useState<Date | undefined>(undefined);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['linkedin']);
     const [topic, setTopic] = useState('');
@@ -556,9 +773,13 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
         if (post) {
             setEditingPost(post);
             setName(post.name || 'New Social Post');
-            setBrief(post.creativeBrief);
+            setBrief(post.creativeBrief || '');
+            setVisualGuide(post.visualGuide || post.creativeBrief || '');
             setCaption(post.caption);
             setImage(post.image || '');
+            setGeneratedImages(uniqueImages([...(post.generatedImages || []), post.image || '']));
+            setSelectedAspectRatio(post.imageAspectRatio || '1:1');
+            setUseBrandGuide(post.useBrandGuide === true);
             setDate(toValidDate(post.scheduledDate));
             setSelectedPlatforms(post.platforms || ['linkedin']);
             setTopic(post.topic || '');
@@ -566,8 +787,12 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
             setEditingPost(null);
             setName('New Social Post');
             setBrief('');
+            setVisualGuide('');
             setCaption('');
             setImage('');
+            setGeneratedImages([]);
+            setSelectedAspectRatio('1:1');
+            setUseBrandGuide(false);
             setDate(undefined);
             setSelectedPlatforms(['linkedin']);
             setTopic('');
@@ -580,9 +805,13 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
             campaignId,
             name,
             creativeBrief: brief,
+            visualGuide,
             caption,
             hashtags: [], // Hashtags implicity in caption now
             image,
+            generatedImages,
+            imageAspectRatio: selectedAspectRatio,
+            useBrandGuide,
             platforms: selectedPlatforms,
             scheduledDate: date ? date.toISOString() : '',
             topic,
@@ -615,6 +844,36 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
 
     const triggerFileUpload = () => {
         fileInputRef.current?.click();
+    };
+
+    const handleGenerateImage = async () => {
+        setIsGeneratingImage(true);
+        try {
+            const imageUrl = await generateVisualAsset(visualGuide, {
+                kind: 'social-post',
+                name,
+                topic,
+                caption,
+                platforms: selectedPlatforms,
+                aspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                brandGuide: useBrandGuide ? brandVisualContext : null,
+            });
+            setImage(imageUrl);
+            setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
+            toast({
+                title: 'Image generated',
+                description: 'The generated image has been placed in the media preview.',
+            });
+        } catch (error) {
+            toast({
+                title: 'Image generation failed',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsGeneratingImage(false);
+        }
     };
 
     return (
@@ -791,6 +1050,48 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
                                     </CardContent>
                                 </Card>
 
+                                {/* Visual Guide */}
+                                <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
+                                    <CardContent className="p-6 space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-slate-700">Visual Guide</Label>
+                                                <p className="text-xs text-slate-500 mt-1">Describe the intended image before generating or uploading media.</p>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-2"
+                                                disabled={!visualGuide.trim() || isGeneratingImage}
+                                                onClick={handleGenerateImage}
+                                            >
+                                                <Sparkles className="w-3.5 h-3.5" />
+                                                {isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                            </Button>
+                                        </div>
+                                        <Textarea
+                                            className="min-h-[120px] resize-none border-slate-200 bg-slate-50 focus:bg-white transition-colors"
+                                            placeholder="e.g. Calm premium hospital visual, warm daylight, diverse young adults, clear focal point, blue-white palette, minimal text overlay."
+                                            value={visualGuide}
+                                            onChange={(e) => setVisualGuide(e.target.value)}
+                                        />
+                                        <VisualGuideControls
+                                            selectedAspectRatio={selectedAspectRatio}
+                                            onAspectRatioChange={setSelectedAspectRatio}
+                                            useBrandGuide={useBrandGuide}
+                                            onUseBrandGuideChange={setUseBrandGuide}
+                                            hasBrandGuide={!!brandVisualContext}
+                                        />
+                                        <GeneratedImageStrip
+                                            images={generatedImages}
+                                            selectedImage={image}
+                                            onSelect={setImage}
+                                            onPreview={setLightboxImage}
+                                        />
+                                    </CardContent>
+                                </Card>
+
                                 {/* Caption */}
                                 <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
                                     <CardContent className="p-6">
@@ -827,11 +1128,14 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
                                         />
 
                                         {image ? (
-                                            <div className="relative rounded-xl overflow-hidden border border-slate-200 group aspect-video bg-slate-100 flex items-center justify-center">
+                                            <div
+                                                className="relative rounded-xl overflow-hidden border border-slate-200 group aspect-video bg-slate-100 flex items-center justify-center cursor-zoom-in"
+                                                onClick={() => setLightboxImage(image)}
+                                            >
                                                 <img src={image} className="w-full h-full object-contain" alt="Uploaded asset" />
                                                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                                    <Button variant="secondary" size="sm" onClick={triggerFileUpload}>Replace</Button>
-                                                    <Button variant="destructive" size="sm" onClick={() => setImage('')}>Remove</Button>
+                                                    <Button variant="secondary" size="sm" onClick={(event) => { event.stopPropagation(); triggerFileUpload(); }}>Replace</Button>
+                                                    <Button variant="destructive" size="sm" onClick={(event) => { event.stopPropagation(); setImage(''); }}>Remove</Button>
                                                 </div>
                                             </div>
                                         ) : (
@@ -856,12 +1160,13 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
                         {/* Right Column: Preview */}
                         <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
                             <div className="p-8 h-full flex items-center justify-center">
-                                <SocialPreview post={{ caption, hashtags: [], image, platforms: selectedPlatforms }} />
+                                <SocialPreview post={{ caption, hashtags: [], image, platforms: selectedPlatforms }} onImageClick={setLightboxImage} />
                             </div>
                         </div>
                     </div>
                 </DialogContent>
             </Dialog>
+            <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage('')} />
         </div>
     );
 };
@@ -1553,7 +1858,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     );
 };
 
-const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
+const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => ({
         id: i.id,
@@ -1565,7 +1870,13 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         cta: normalizeSocialAdCta(i.payload.cta),
         primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
         headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
+        description: payloadString(i.payload, ['description', 'supporting_text'], ''),
+        visualGuide: visualGuideFromPayload(i.payload),
+        generatedImages: generatedImagesFromPayload(i.payload),
+        imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
+        useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
     }));
+    const { toast } = useToast();
     const campaignAds = socialAds.filter(ad => ad.campaignId === campaignId);
 
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
@@ -1578,7 +1889,13 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     const [primaryText, setPrimaryText] = useState('');
     const [headline, setHeadline] = useState('');
     const [description, setDescription] = useState('');
+    const [visualGuide, setVisualGuide] = useState('');
     const [image, setImage] = useState('');
+    const [generatedImages, setGeneratedImages] = useState<string[]>([]);
+    const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
+    const [useBrandGuide, setUseBrandGuide] = useState(false);
+    const [lightboxImage, setLightboxImage] = useState('');
+    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [cta, setCta] = useState<'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download'>('learn_more');
     const [destinationUrl, setDestinationUrl] = useState('');
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined);
@@ -1594,7 +1911,11 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setPrimaryText(ad.primaryText || '');
             setHeadline(ad.headline || '');
             setDescription(ad.description || '');
+            setVisualGuide(ad.visualGuide || '');
             setImage(ad.image || '');
+            setGeneratedImages(uniqueImages([...(ad.generatedImages || []), ad.image || '']));
+            setSelectedAspectRatio(ad.imageAspectRatio || '1:1');
+            setUseBrandGuide(ad.useBrandGuide === true);
             setCta(normalizeSocialAdCta(ad.cta));
             setDestinationUrl(ad.destinationUrl || '');
             setScheduledDate(toValidDate(ad.scheduledDate));
@@ -1606,7 +1927,11 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setPrimaryText('');
             setHeadline('');
             setDescription('');
+            setVisualGuide('');
             setImage('');
+            setGeneratedImages([]);
+            setSelectedAspectRatio('1:1');
+            setUseBrandGuide(false);
             setCta('learn_more');
             setDestinationUrl('');
             setScheduledDate(undefined);
@@ -1623,7 +1948,11 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             primaryText,
             headline,
             description,
+            visualGuide,
             image,
+            generatedImages,
+            imageAspectRatio: selectedAspectRatio,
+            useBrandGuide,
             cta,
             destinationUrl,
             scheduledDate: scheduledDate ? scheduledDate.toISOString() : undefined,
@@ -1645,6 +1974,40 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             const reader = new FileReader();
             reader.onloadend = () => setImage(reader.result as string);
             reader.readAsDataURL(file);
+        }
+    };
+
+    const handleGenerateImage = async () => {
+        setIsGeneratingImage(true);
+        try {
+            const imageUrl = await generateVisualAsset(visualGuide, {
+                kind: 'social-ad',
+                name,
+                topic,
+                platform,
+                primaryText,
+                headline,
+                description,
+                cta,
+                destinationUrl,
+                aspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                brandGuide: useBrandGuide ? brandVisualContext : null,
+            });
+            setImage(imageUrl);
+            setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
+            toast({
+                title: 'Image generated',
+                description: 'The generated image has been placed in the ad preview.',
+            });
+        } catch (error) {
+            toast({
+                title: 'Image generation failed',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsGeneratingImage(false);
         }
     };
 
@@ -1796,9 +2159,9 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
 
                                             {/* Media FIRST for Instagram */}
                                             {image ? (
-                                                <div className="w-full aspect-square bg-slate-100 overflow-hidden">
+                                                <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full object-cover" />
-                                                </div>
+                                                </button>
                                             ) : (
                                                 <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3">
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -1861,9 +2224,9 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
 
                                             {/* Media */}
                                             {image ? (
-                                                <div className="w-full aspect-square bg-slate-100 overflow-hidden border-y border-slate-100">
+                                                <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full object-cover" />
-                                                </div>
+                                                </button>
                                             ) : (
                                                 <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -1934,9 +2297,9 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
 
                                             {/* Media */}
                                             {image ? (
-                                                <div className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden border-y border-slate-100">
+                                                <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full object-cover" />
-                                                </div>
+                                                </button>
                                             ) : (
                                                 <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -2000,9 +2363,9 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                     {/* Website Card - Twitter style (media + headline as card) */}
                                                     <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                                                         {image ? (
-                                                            <div className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden">
+                                                            <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
                                                                 <img src={image} alt="Ad content" className="w-full h-full object-cover" />
-                                                            </div>
+                                                            </button>
                                                         ) : (
                                                             <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3">
                                                                 <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -2202,19 +2565,61 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                         </CardContent>
                                     </Card>
 
+                                    {/* Visual Guide */}
+                                    <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
+                                        <CardContent className="p-6 space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-slate-700">Visual Guide</Label>
+                                                    <p className="text-xs text-slate-500 mt-1">Use this as the image direction for the paid social creative.</p>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-2"
+                                                    disabled={!visualGuide.trim() || isGeneratingImage}
+                                                    onClick={handleGenerateImage}
+                                                >
+                                                    <Sparkles className="w-3.5 h-3.5" />
+                                                    {isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                                </Button>
+                                            </div>
+                                            <Textarea
+                                                placeholder="e.g. Premium paid social image, confident subject, clean negative space, brand-safe palette, no dense text, clear CTA area."
+                                                value={visualGuide}
+                                                onChange={(e) => setVisualGuide(e.target.value)}
+                                                className="min-h-[120px] resize-none"
+                                            />
+                                            <VisualGuideControls
+                                                selectedAspectRatio={selectedAspectRatio}
+                                                onAspectRatioChange={setSelectedAspectRatio}
+                                                useBrandGuide={useBrandGuide}
+                                                onUseBrandGuideChange={setUseBrandGuide}
+                                                hasBrandGuide={!!brandVisualContext}
+                                            />
+                                            <GeneratedImageStrip
+                                                images={generatedImages}
+                                                selectedImage={image}
+                                                onSelect={setImage}
+                                                onPreview={setLightboxImage}
+                                            />
+                                        </CardContent>
+                                    </Card>
+
                                     {/* Image Upload */}
                                     <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
                                         <CardContent className="p-6">
                                             <Label className="text-sm font-semibold text-slate-700 mb-3 block">Ad Image</Label>
                                             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
                                             {image ? (
-                                                <div className="relative group">
+                                                <div className="relative group cursor-zoom-in" onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad" className="w-full h-48 object-cover rounded-lg" />
                                                     <Button
                                                         variant="destructive"
                                                         size="sm"
                                                         className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                        onClick={() => setImage('')}
+                                                        onClick={(event) => { event.stopPropagation(); setImage(''); }}
                                                     >
                                                         <Trash2 className="w-4 h-4" />
                                                     </Button>
@@ -2296,6 +2701,7 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                     </DialogContent>
                 </Dialog>
             </div>
+            <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage('')} />
 
             {/* Cards Grid */}
             {campaignAds.length === 0 ? (
@@ -2603,6 +3009,10 @@ export default function CampaignDashboard() {
     const folder = findBySlug(folders, folderId);
     const { data: campaigns = [], isLoading: isLoadingCampaigns, updateCampaign } = useCampaigns(folder?.id || '');
     const campaign = findBySlug(campaigns, campaignId);
+    const brandGuideList = useBrandGuide('');
+    const activeBrandGuideId = brandGuideList.guides.find((guide) => guide.project_id === project?.id)?.id || brandGuideList.guides[0]?.id || '';
+    const activeBrandGuide = useBrandGuide(activeBrandGuideId);
+    const brandVisualContext = buildBrandVisualContext(activeBrandGuide);
 
     const campaignName = campaign?.name || "Campaign Dashboard";
     const resolvedCampaignId = campaign?.id || '';
@@ -2665,6 +3075,7 @@ export default function CampaignDashboard() {
                     <SocialPostsTab
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'posts'}
+                        brandVisualContext={brandVisualContext}
                     />
                 </TabsContent>
                 <TabsContent value="google-ads">
@@ -2677,6 +3088,7 @@ export default function CampaignDashboard() {
                     <SocialAdsTab
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'social-ads'}
+                        brandVisualContext={brandVisualContext}
                     />
                 </TabsContent>
                 <TabsContent value="blogs">

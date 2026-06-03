@@ -1,8 +1,8 @@
 export type CampaignPack = {
   strategy: { title: string; summary: string; objectives: string[]; contentPillars: string[] };
-  socialPosts: Array<{ name: string; topic: string; caption: string; platforms: string[]; scheduledDate?: string; creativeBrief?: string }>;
+  socialPosts: Array<{ name: string; topic: string; caption: string; platforms: string[]; scheduledDate?: string; creativeBrief?: string; visualGuide?: string }>;
   googleAds: Array<{ name: string; topic: string; startDate?: string; finalUrl?: string; path1?: string; path2?: string; headlines: string[]; descriptions: string[]; callouts?: string[] }>;
-  socialAds: Array<{ name: string; topic: string; platform: string; primaryText: string; headline: string; description?: string; cta: string; destinationUrl?: string; scheduledDate?: string }>;
+  socialAds: Array<{ name: string; topic: string; platform: string; primaryText: string; headline: string; description?: string; visualGuide?: string; cta: string; destinationUrl?: string; scheduledDate?: string }>;
   blogOutlines: Array<{ title: string; slug: string; excerpt: string; metaTitle: string; metaDescription: string; keywords: string[]; outline: string[]; publishDate?: string }>;
   calendar: Array<{ title: string; type: 'socials' | 'google-ad' | 'meta-ad' | 'blogs'; date: string }>;
 };
@@ -101,6 +101,16 @@ function normalizeSocialPosts(input: unknown): CampaignPack['socialPosts'] {
       platforms,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
       creativeBrief: stringValue(item.creativeBrief ?? item.creative_brief ?? item.visual_description ?? item.visual) || undefined,
+      visualGuide: stringValue(
+        item.visualGuide
+        ?? item.visual_guide
+        ?? item.imagePrompt
+        ?? item.image_prompt
+        ?? item.visualPrompt
+        ?? item.visual_prompt
+        ?? item.visual_description
+        ?? item.visual,
+      ) || undefined,
     };
   });
 }
@@ -161,7 +171,17 @@ function normalizeSocialAds(input: unknown): CampaignPack['socialAds'] {
       platform: normalizeSocialAdPlatform(item.platform ?? item.channel),
       primaryText,
       headline,
-      description: stringValue(item.description ?? item.visual_description ?? item.supporting_text) || undefined,
+      description: stringValue(item.description ?? item.supporting_text) || undefined,
+      visualGuide: stringValue(
+        item.visualGuide
+        ?? item.visual_guide
+        ?? item.imagePrompt
+        ?? item.image_prompt
+        ?? item.visualPrompt
+        ?? item.visual_prompt
+        ?? item.visual_description
+        ?? item.visual,
+      ) || undefined,
       cta: normalizeSocialAdCta(item.cta),
       destinationUrl: stringValue(item.destinationUrl ?? item.destination_url ?? item.final_url ?? item.link) || undefined,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),

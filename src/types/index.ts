@@ -55,9 +55,13 @@ export interface SocialPost {
   name?: string; // Custom title
   topic?: string; // Topic/Idea for the post
   creativeBrief: string;
+  visualGuide?: string;
   caption: string;
   hashtags: string[];
   image?: string;
+  generatedImages?: string[];
+  imageAspectRatio?: string;
+  useBrandGuide?: boolean;
   platforms: string[]; // e.g. ['instagram', 'facebook', 'linkedin', 'twitter']
   scheduledDate: string;
   status: 'draft' | 'scheduled' | 'published';
@@ -90,7 +94,11 @@ export interface SocialAd {
   primaryText: string;      // 125-150 chars recommended
   headline: string;         // 40-70 chars
   description?: string;     // 30 chars (FB only)
+  visualGuide?: string;
   image?: string;
+  generatedImages?: string[];
+  imageAspectRatio?: string;
+  useBrandGuide?: boolean;
   cta: 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
   destinationUrl: string;
   scheduledDate?: string;
