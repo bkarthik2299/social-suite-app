@@ -63,18 +63,23 @@ Deno.serve(async (req) => {
 
   const context = body.context || {};
   const prompt = buildImagePrompt(visualGuide, context);
-  const input = buildPredictionInput(model, prompt, context);
 
   try {
+    const input = await buildPredictionInput(model, prompt, context);
     const created = await createPrediction(endpoint, token, input);
     const prediction = await waitForPrediction(created, token);
     const outputUrl = firstOutputUrl(prediction.output);
 
     if (!outputUrl) {
-      const errorMessage = typeof prediction.error === 'string'
-        ? prediction.error
-        : 'Image generation did not return an output file.';
-      return jsonResponse({ error: errorMessage, predictionId: prediction.id, predictionUrl: prediction.urls?.web }, 502);
+      const errorMessage = readError(prediction.error)
+        || (cleanText(prediction.status) ? `Replicate finished with status "${cleanText(prediction.status)}" but did not include a supported image URL.` : '')
+        || 'Image generation did not return an output file.';
+      return jsonResponse({
+        error: errorMessage,
+        predictionId: prediction.id,
+        predictionUrl: prediction.urls?.web,
+        outputPreview: previewValue(prediction.output),
+      }, 502);
     }
 
     const imageUrl = await imageToDataUrl(outputUrl).catch(() => outputUrl);
@@ -114,20 +119,16 @@ async function createPrediction(endpoint: string, token: string, input: Record<s
   return payload as Prediction;
 }
 
-function buildPredictionInput(model: string, prompt: string, context: Record<string, unknown>): Record<string, unknown> {
+async function buildPredictionInput(model: string, prompt: string, context: Record<string, unknown>): Promise<Record<string, unknown>> {
   const input: Record<string, unknown> = { prompt };
   const aspectRatio = normalizeAspectRatio(context.aspectRatio);
+  const modelId = model.toLowerCase();
 
-  if (model.toLowerCase() === 'openai/gpt-image-2') {
+  if (modelId === 'openai/gpt-image-2') {
     input.quality = 'medium';
     input.output_format = 'jpeg';
-    input.aspect_ratio = aspectRatio;
-
-    const inputImages = shouldUseBrandReferenceImages() ? brandGuideImageUrls(context).slice(0, 4) : [];
-    if (inputImages.length) {
-      input.input_images = inputImages;
-    }
-  } else if (model.toLowerCase().includes('flux')) {
+    input.aspect_ratio = normalizeGptImage2AspectRatio(aspectRatio);
+  } else if (modelId.includes('flux')) {
     input.aspect_ratio = aspectRatio;
   }
 
@@ -199,8 +200,19 @@ function firstOutputUrl(output: unknown): string | undefined {
   if (output && typeof output === 'object') {
     const record = output as Record<string, unknown>;
     return firstOutputUrl(record.url)
+      || firstOutputUrl(record.urls)
       || firstOutputUrl(record.image)
+      || firstOutputUrl(record.images)
       || firstOutputUrl(record.file)
+      || firstOutputUrl(record.files)
+      || firstOutputUrl(record.download_url)
+      || firstOutputUrl(record.downloadUrl)
+      || firstOutputUrl(record.signed_url)
+      || firstOutputUrl(record.signedUrl)
+      || firstOutputUrl(record.uri)
+      || firstOutputUrl(record.href)
+      || firstOutputUrl(record.data)
+      || firstOutputUrl(record.result)
       || firstOutputUrl(record.output);
   }
 
@@ -229,7 +241,7 @@ function buildImagePrompt(visualGuide: string, context: Record<string, unknown>)
     name ? `Draft name: ${name}.` : '',
     brandGuideContext ? `Brand guide design context:\n${brandGuideContext}` : '',
     `Visual guide: ${visualGuide}`,
-    'Style requirements: clean professional composition, clear focal point, premium commercial quality, realistic lighting, no crowded layout, no dense readable text, no brand logo unless explicitly provided, no graphic medical procedure imagery, no before-and-after claims, no misleading health outcome claims.',
+    'Style requirements: clean professional composition, clear focal point, premium commercial quality, realistic lighting, no crowded layout, no dense readable text, do not include any brand logo, do not recreate or invent a logo/wordmark, no graphic medical procedure imagery, no before-and-after claims, no misleading health outcome claims.',
   ].filter(Boolean).join('\n');
 }
 
@@ -238,24 +250,16 @@ function normalizeAspectRatio(value: unknown) {
   return ['1:1', '4:5', '9:16', '16:9'].includes(ratio) ? ratio : '1:1';
 }
 
+function normalizeGptImage2AspectRatio(value: string) {
+  if (value === '16:9') return '3:2';
+  if (value === '4:5' || value === '9:16') return '2:3';
+  return '1:1';
+}
+
 function cleanBrandGuideSummary(value: unknown) {
   if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
   return cleanText(record.summary).slice(0, 1600);
-}
-
-function brandGuideImageUrls(context: Record<string, unknown>) {
-  if (context.useBrandGuide !== true) return [];
-  const brandGuide = context.brandGuide;
-  if (!brandGuide || typeof brandGuide !== 'object') return [];
-  const imageUrls = (brandGuide as Record<string, unknown>).imageUrls;
-  return Array.isArray(imageUrls)
-    ? imageUrls.filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)).slice(0, 6)
-    : [];
-}
-
-function shouldUseBrandReferenceImages() {
-  return cleanText(Deno.env.get('REPLICATE_USE_BRAND_REFERENCE_IMAGES')).toLowerCase() === 'true';
 }
 
 function modelEndpoint(model: string) {
@@ -281,6 +285,14 @@ function readError(payload: unknown) {
     || readError(record.error)
     || readError(record.message)
     || JSON.stringify(payload).slice(0, 500);
+}
+
+function previewValue(value: unknown) {
+  try {
+    return JSON.stringify(value).slice(0, 800);
+  } catch {
+    return '';
+  }
 }
 
 function delay(ms: number) {
