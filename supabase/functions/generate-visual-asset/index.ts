@@ -62,9 +62,10 @@ Deno.serve(async (req) => {
   }
 
   const prompt = buildImagePrompt(visualGuide, body.context || {});
+  const input = buildPredictionInput(model, prompt);
 
   try {
-    const created = await createPrediction(endpoint, token, prompt);
+    const created = await createPrediction(endpoint, token, input);
     const prediction = await waitForPrediction(created, token);
     const outputUrl = firstOutputUrl(prediction.output);
 
@@ -90,7 +91,7 @@ Deno.serve(async (req) => {
   }
 });
 
-async function createPrediction(endpoint: string, token: string, prompt: string): Promise<Prediction> {
+async function createPrediction(endpoint: string, token: string, input: Record<string, unknown>): Promise<Prediction> {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -100,9 +101,7 @@ async function createPrediction(endpoint: string, token: string, prompt: string)
       'Cancel-After': '2m',
     },
     body: JSON.stringify({
-      input: {
-        prompt,
-      },
+      input,
     }),
   });
 
@@ -112,6 +111,17 @@ async function createPrediction(endpoint: string, token: string, prompt: string)
   }
 
   return payload as Prediction;
+}
+
+function buildPredictionInput(model: string, prompt: string): Record<string, unknown> {
+  const input: Record<string, unknown> = { prompt };
+
+  if (model.toLowerCase() === 'openai/gpt-image-2') {
+    input.quality = 'medium';
+    input.output_format = 'jpeg';
+  }
+
+  return input;
 }
 
 async function waitForPrediction(prediction: Prediction, token: string): Promise<Prediction> {
