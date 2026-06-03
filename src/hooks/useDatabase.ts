@@ -27,6 +27,7 @@ export type BrandGuide = {
     org_id: string;
     project_id: string | null;
     brand_name: string | null;
+    website_url: string | null;
     tagline: string | null;
     mission: string | null;
     vision: string | null;
@@ -1028,6 +1029,7 @@ const createLocalBrandGuide = (orgId: string, projectId?: string | null, brandNa
         org_id: orgId,
         project_id: projectId || null,
         brand_name: brandName || 'Untitled Brand',
+        website_url: null,
         tagline: null,
         mission: null,
         vision: null,

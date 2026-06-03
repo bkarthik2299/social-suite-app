@@ -52,6 +52,13 @@ const socialLinksFromCustomSections = (value: unknown) => {
     .map((item) => ({ platform: String(item.platform || 'social'), url: String(item.url) }));
 };
 
+const instantModel = () =>
+  Deno.env.get('OPENROUTER_INSTANT_MODEL') ||
+  Deno.env.get('AI_INSTANT_MODEL') ||
+  Deno.env.get('AI_FAST_MODEL') ||
+  Deno.env.get('AI_DEFAULT_MODEL') ||
+  'qwen/qwen3-coder-30b-a3b-instruct';
+
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
   if (methodResponse) return methodResponse;
@@ -98,9 +105,10 @@ Deno.serve(async (req) => {
       externalSnippets,
     };
     const sourceHash = await sha256(JSON.stringify(sourcePackage));
+    const model = instantModel();
 
     const markdown = await openRouterText({
-      model: Deno.env.get('AI_DEFAULT_MODEL') || 'qwen/qwen3-coder-30b-a3b-instruct',
+      model,
       messages: [
         {
           role: 'system',
@@ -125,7 +133,7 @@ Deno.serve(async (req) => {
         summary,
         source_hash: sourceHash,
         status: 'ready',
-        model: Deno.env.get('AI_DEFAULT_MODEL') || 'qwen/qwen3-coder-30b-a3b-instruct',
+        model,
         manual_edit: false,
         error: null,
         generated_by: userId,

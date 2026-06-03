@@ -5,6 +5,7 @@ import {
     Download,
     ExternalLink,
     FileText,
+    Globe,
     Image as ImageIcon,
     Link2,
     Mic2,
@@ -58,7 +59,7 @@ import {
     useBrandGuide,
     useProjects,
 } from '@/hooks/useDatabase';
-import { useBrandKnowledge } from '@/hooks/useAI';
+import { useBrandKnowledge, useBrandResearch } from '@/hooks/useAI';
 import { cn } from '@/lib/utils';
 
 type ToneSpectrum = {
@@ -229,6 +230,7 @@ export default function BrandGuidePage() {
         compileKnowledge,
         updateMarkdown,
     } = useBrandKnowledge(guideId);
+    const researchWebsite = useBrandResearch(guideId);
 
     useEffect(() => {
         setKnowledgeDraft(brandKnowledgeDocument?.markdown || '');
@@ -428,6 +430,28 @@ export default function BrandGuidePage() {
         }
     };
 
+    const researchBrandWebsite = async () => {
+        if (!guideId) return;
+        const brandName = stringValue(draft.brand_name).trim();
+        const websiteUrl = stringValue(draft.website_url).trim();
+        if (!brandName || !websiteUrl) {
+            toast({ title: 'Brand name and website are required', description: 'Add both before running website research.', variant: 'destructive' });
+            return;
+        }
+
+        try {
+            const result = await researchWebsite.mutateAsync({ brandName, websiteUrl });
+            setDraft(result.guide || {});
+            setOpenSections((current) => current.includes('knowledge') ? current : [...current, 'knowledge']);
+            toast({
+                title: 'Website research complete',
+                description: `Updated ${result.fieldsUpdated.length || 0} brand fields from ${result.sourceCount || 0} source pages.`,
+            });
+        } catch (error) {
+            toast({ title: 'Could not research website', description: errorMessage(error), variant: 'destructive' });
+        }
+    };
+
     const saveBrandKnowledge = async () => {
         if (!brandKnowledgeDocument?.id) return;
         try {
@@ -533,6 +557,7 @@ export default function BrandGuidePage() {
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <div className="grid gap-5 md:grid-cols-2">
                                         <GuideTextField label="Brand / Client Name" value={stringValue(draft.brand_name)} disabled={false} placeholder="NaruvI, Acme Studio, Bright Foods..." onChange={(value) => updateDraft('brand_name', value)} onBlur={() => commitGuideField('brand_name')} />
+                                        <GuideTextField label="Website" value={stringValue(draft.website_url)} disabled={false} placeholder="https://brand.com" onChange={(value) => updateDraft('website_url', value)} onBlur={() => commitGuideField('website_url')} />
                                         <GuideTextField label="Short Tagline" value={stringValue(draft.tagline)} disabled={false} placeholder="A short line people remember" onChange={(value) => updateDraft('tagline', value)} onBlur={() => commitGuideField('tagline')} />
                                         <div className="grid gap-2.5">
                                             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assigned Project</Label>
@@ -554,6 +579,27 @@ export default function BrandGuidePage() {
                                         </div>
                                         <div className="md:col-span-2">
                                             <GuideTextField label="About the Brand" value={stringValue(draft.elevator_pitch)} disabled={false} textarea placeholder="Describe the brand in plain language: what they do, who they serve, what makes them different, and anything a social media manager should know before creating content." onChange={(value) => updateDraft('elevator_pitch', value)} onBlur={() => commitGuideField('elevator_pitch')} />
+                                        </div>
+                                    </div>
+                                    <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                                            <div className="min-w-0 space-y-1">
+                                                <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+                                                    <Globe className="h-4 w-4 text-primary" />
+                                                    Research Website
+                                                </div>
+                                                <p className="max-w-2xl text-sm leading-6 text-slate-600">
+                                                    Pull website copy, visual cues, and positioning into this guide. Review the fields, then use Generate Knowledge Base to compile the canonical markdown.
+                                                </p>
+                                            </div>
+                                            <Button
+                                                className="h-10 gap-2 rounded-xl bg-primary px-4 font-medium text-white hover:bg-primary/90"
+                                                onClick={researchBrandWebsite}
+                                                disabled={researchWebsite.isPending || !guideId}
+                                            >
+                                                {researchWebsite.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                                {researchWebsite.isPending ? 'Researching...' : 'Research Website'}
+                                            </Button>
                                         </div>
                                     </div>
                                 </AccordionContent>

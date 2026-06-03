@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import type { BrandGuide } from '@/hooks/useDatabase';
 import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
 
 const db = supabase as unknown as SupabaseClient;
@@ -70,6 +71,32 @@ export function useBrandKnowledge(guideId: string) {
     compileKnowledge,
     updateMarkdown,
   };
+}
+
+export function useBrandResearch(guideId: string) {
+  const qc = useQueryClient();
+  const { organization } = useAuth();
+  const orgId = organization?.id || '';
+
+  return useMutation({
+    mutationFn: async ({ brandName, websiteUrl }: { brandName: string; websiteUrl: string }) =>
+      invokeOrThrow<{
+        guide: BrandGuide;
+        sourceCount: number;
+        fieldsUpdated: string[];
+        colorsInserted?: number;
+        fontsInserted?: number;
+        logosInserted?: number;
+      }>('brand-research-website', { guideId, brandName, websiteUrl }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['brand_guides', orgId] });
+      void qc.invalidateQueries({ queryKey: ['brand_guide', orgId, guideId] });
+      void qc.invalidateQueries({ queryKey: ['brand_colors', guideId] });
+      void qc.invalidateQueries({ queryKey: ['brand_fonts', guideId] });
+      void qc.invalidateQueries({ queryKey: ['brand_logos', guideId] });
+      void qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, guideId] });
+    },
+  });
 }
 
 export function useAIMission() {
