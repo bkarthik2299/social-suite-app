@@ -54,6 +54,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
 
     expect(pack.strategy?.title).toBe('Naruvi Free Preventive Checkup Launch');
     expect(pack.socialPosts).toHaveLength(1);
+    expect(pack.socialPosts?.[0].caption).toBe('Book a free preventive health checkup at Naruvi.');
     expect(pack.socialPosts?.[0].visualGuide).toBe('Clean teal carousel.');
     expect(pack.googleAds[0].headlines).toContain('Free Health Checkup');
     expect(pack.socialAds).toHaveLength(1);
@@ -94,6 +95,28 @@ describe('normalizeBriefToCampaignArtifact', () => {
       visualGuide: 'Warm community visual with soft pink accents.',
       platform: 'facebook',
     });
+  });
+
+  it('keeps social post titles out of captions', () => {
+    const pack = normalizeBriefToCampaignArtifact({
+      socialPosts: [
+        {
+          name: 'Breast Awareness Post 2',
+          topic: 'Symptom Awareness',
+          caption: 'Breast Awareness Post 2\n\nKnow the signs. Early detection can make a difference.',
+          platform: 'Instagram',
+        },
+        {
+          name: 'Community Health Post',
+          title: 'Community Health Post',
+          body: 'Join the conversation and share one preventive step you trust.',
+          platform: 'LinkedIn',
+        },
+      ],
+    });
+
+    expect(pack.socialPosts?.[0].caption).toBe('Know the signs. Early detection can make a difference.');
+    expect(pack.socialPosts?.[1].caption).toBe('Join the conversation and share one preventive step you trust.');
   });
 });
 

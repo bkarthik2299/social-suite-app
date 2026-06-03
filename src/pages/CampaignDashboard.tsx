@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Twitter, Sparkles, Lightbulb, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft } from 'lucide-react';
+import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Twitter, Sparkles, Lightbulb, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft, Download } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -117,6 +117,7 @@ type SocialAdCta = 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'downl
 type BrandVisualContext = {
     brandName?: string;
     summary: string;
+    styleImageUrls: string[];
     imageUrls: string[];
 } | null;
 
@@ -173,12 +174,109 @@ const visualGuideFromPayload = (payload: Record<string, unknown>, fallback = '')
     'visual',
 ], fallback);
 
+const socialCaptionFromPayload = (payload: Record<string, unknown>, fallback = '') => stripCaptionTitlePrefix(
+    payloadString(payload, ['caption', 'body', 'copy', 'text', 'content', 'post_copy', 'postCopy', 'primary_text', 'primaryText'], fallback),
+    [
+        fallback,
+        payloadString(payload, ['name', 'title', 'headline']),
+        payloadString(payload, ['topic', 'post_type', 'format']),
+    ],
+);
+
 const generatedImagesFromPayload = (payload: Record<string, unknown>) => {
     const images = payload.generatedImages ?? payload.generated_images;
     return Array.isArray(images) ? images.filter((image): image is string => typeof image === 'string' && image.trim().length > 0) : [];
 };
 
 const uniqueImages = (images: string[]) => Array.from(new Set(images.map((item) => item.trim()).filter(Boolean)));
+
+const previewAccountName = (name?: string) => name?.trim() || 'Project';
+
+const previewAccountHandle = (name?: string) => {
+    const handle = previewAccountName(name)
+        .toLowerCase()
+        .replace(/&/g, ' and ')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+    return handle || 'project';
+};
+
+const previewAccountInitials = (name?: string) => {
+    const words = previewAccountName(name).split(/\s+/).filter(Boolean);
+    const initials = words.length > 1
+        ? words.slice(0, 2).map((word) => word[0]).join('')
+        : words[0]?.[0] || 'P';
+
+    return initials.toUpperCase();
+};
+
+const downloadImageAsset = async (imageUrl: string, filename = 'social-suite-image.jpg') => {
+    if (!imageUrl) return;
+
+    const safeFilename = filename.replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').toLowerCase();
+    const link = document.createElement('a');
+    let objectUrl = '';
+
+    try {
+        if (imageUrl.startsWith('data:')) {
+            link.href = imageUrl;
+        } else {
+            const response = await fetch(imageUrl);
+            if (!response.ok) throw new Error('Image download failed.');
+            const blob = await response.blob();
+            objectUrl = URL.createObjectURL(blob);
+            link.href = objectUrl;
+        }
+
+        link.download = safeFilename || 'social-suite-image.jpg';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+    } catch {
+        window.open(imageUrl, '_blank', 'noopener,noreferrer');
+    } finally {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
+};
+
+const uniqueTextValues = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+
+const stripCaptionTitlePrefix = (caption: string, candidates: string[]) => {
+    const original = caption.trim();
+    if (!original) return '';
+
+    const titles = uniqueTextValues(candidates)
+        .filter((candidate) => candidate.length >= 4)
+        .sort((a, b) => b.length - a.length);
+
+    for (const title of titles) {
+        const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const prefixed = new RegExp(`^\\s*${escaped}(?:\\s*(?:[:\\-–—|•])\\s*|\\s*\\n+\\s*)+`, 'i');
+        const withoutTitle = original.replace(prefixed, '').trim();
+        if (withoutTitle && withoutTitle !== original) return withoutTitle;
+    }
+
+    return original;
+};
+
+const normalizeBrandAssetUrl = (value: string) => {
+    const url = value.trim();
+    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) return url;
+    if (!/^https?:\/\//i.test(url)) return '';
+
+    try {
+        const parsed = new URL(url);
+        if (parsed.pathname === '/_next/image') {
+            const source = parsed.searchParams.get('url');
+            if (source) return new URL(source, parsed.origin).toString();
+        }
+    } catch {
+        return '';
+    }
+
+    return url;
+};
 
 const generateVisualAsset = async (
     visualGuide: string,
@@ -193,7 +291,20 @@ const generateVisualAsset = async (
         body: { visualGuide: guide, context },
     });
 
-    if (error) throw error;
+    if (error) {
+        const contextResponse = (error as { context?: Response }).context;
+        if (contextResponse && typeof contextResponse.clone === 'function') {
+            try {
+                const payload = await contextResponse.clone().json() as { error?: string };
+                if (payload?.error) throw new Error(payload.error);
+            } catch (payloadError) {
+                if (payloadError instanceof Error && payloadError.message !== 'Unexpected end of JSON input') {
+                    throw payloadError;
+                }
+            }
+        }
+        throw error;
+    }
 
     const payload = data as { imageUrl?: string; error?: string };
     if (payload?.error) throw new Error(payload.error);
@@ -213,11 +324,6 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
         .slice(0, 5)
         .map((font) => `${font.category}: ${font.font_family}${font.weight ? ` ${font.weight}` : ''}`)
         .join('; ');
-    const logoRules = [
-        assets.guide.logo_clearspace ? `Clearspace: ${assets.guide.logo_clearspace}` : '',
-        assets.guide.logo_min_digital ? `Minimum digital logo size: ${assets.guide.logo_min_digital}` : '',
-        ...assets.logoRules.slice(0, 5).map((rule) => `${rule.rule_type}: ${rule.caption}`),
-    ].filter(Boolean).join('; ');
     const styleNotes = [
         assets.guide.photography_style ? `Photography: ${assets.guide.photography_style}` : '',
         assets.guide.illustration_style ? `Illustration: ${assets.guide.illustration_style}` : '',
@@ -225,10 +331,10 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
         assets.guide.social_rules ? `Social rules: ${assets.guide.social_rules}` : '',
         assets.guide.ad_rules ? `Ad rules: ${assets.guide.ad_rules}` : '',
     ].filter(Boolean).join('; ');
-    const imageUrls = [
-        ...assets.logos.map((logo) => logo.file_url),
-        ...assets.moodImages.map((image) => image.image_url),
-    ].filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url)).slice(0, 6);
+    const styleImageUrls = assets.moodImages
+        .map((image) => normalizeBrandAssetUrl(image.image_url))
+        .filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url));
+    const imageUrls = uniqueImages(styleImageUrls).slice(0, 6);
 
     return {
         brandName: assets.guide.brand_name || undefined,
@@ -236,9 +342,10 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
             assets.guide.brand_name ? `Brand: ${assets.guide.brand_name}` : '',
             colors ? `Colors: ${colors}` : '',
             fonts ? `Typography: ${fonts}` : '',
-            logoRules ? `Logo rules: ${logoRules}` : '',
             styleNotes,
+            'Logo instruction: do not include, recreate, or invent a logo in generated images.',
         ].filter(Boolean).join('\n'),
+        styleImageUrls: uniqueImages(styleImageUrls).slice(0, 4),
         imageUrls,
     };
 };
@@ -362,7 +469,15 @@ const GeneratedImageStrip = ({
                         )}
                         aria-label={`Select generated image ${index + 1}`}
                     >
-                        <img src={item} alt={`Generated option ${index + 1}`} className="h-full w-full object-cover" />
+                        <img src={item} alt={`Generated option ${index + 1}`} className="h-full w-full bg-white object-contain" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => downloadImageAsset(item, `generated-image-${index + 1}.jpg`)}
+                        className="absolute left-1 bottom-1 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-slate-700 shadow-sm hover:bg-white"
+                        aria-label={`Download generated image ${index + 1}`}
+                    >
+                        <Download className="h-3.5 w-3.5" />
                     </button>
                     <button
                         type="button"
@@ -384,24 +499,45 @@ const GeneratedImageStrip = ({
 
 const ImageLightbox = ({ image, onClose }: { image: string; onClose: () => void }) => (
     <Dialog open={!!image} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-[min(96vw,1100px)] border-0 bg-black p-0 shadow-2xl">
+        <DialogContent
+            overlayClassName="bg-transparent backdrop-blur-0"
+            className="max-w-[min(96vw,1120px)] border-0 bg-transparent p-0 shadow-none sm:rounded-none [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child]:z-20 [&>button:last-child]:flex [&>button:last-child]:h-10 [&>button:last-child]:w-10 [&>button:last-child]:items-center [&>button:last-child]:justify-center [&>button:last-child]:rounded-full [&>button:last-child]:bg-white [&>button:last-child]:text-slate-800 [&>button:last-child]:opacity-100 [&>button:last-child]:shadow-md [&>button:last-child]:ring-1 [&>button:last-child]:ring-slate-200 [&>button:last-child]:ring-offset-0 [&>button:last-child]:hover:bg-slate-50"
+        >
             <DialogHeader className="sr-only">
                 <DialogTitle>Full image preview</DialogTitle>
                 <DialogDescription>Expanded campaign image preview.</DialogDescription>
             </DialogHeader>
-            <div className="flex max-h-[90vh] items-center justify-center p-3">
-                {image && <img src={image} alt="Full campaign visual" className="max-h-[86vh] w-auto max-w-full rounded-lg object-contain" />}
+            {image && (
+                <button
+                    type="button"
+                    onClick={() => downloadImageAsset(image)}
+                    className="absolute right-16 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white text-slate-800 shadow-md ring-1 ring-slate-200 hover:bg-slate-50"
+                    aria-label="Download image"
+                >
+                    <Download className="h-4 w-4" />
+                </button>
+            )}
+            <div className="flex max-h-[94vh] items-center justify-center px-12 py-6">
+                {image && <img src={image} alt="Full campaign visual" className="max-h-[90vh] w-auto max-w-full rounded-xl bg-white object-contain shadow-2xl ring-1 ring-slate-200" />}
             </div>
         </DialogContent>
     </Dialog>
 );
 
 // --- Helper Components for Preview ---
-const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onImageClick?: (image: string) => void }) => {
+const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<SocialPost>; accountName?: string; onImageClick?: (image: string) => void }) => {
     const [platform, setPlatform] = useState<'instagram' | 'facebook' | 'linkedin' | 'twitter'>('linkedin');
     const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
+    const [captionExpanded, setCaptionExpanded] = useState(false);
 
     const specs = PLATFORM_SPECS[platform];
+    const displayAccountName = previewAccountName(accountName);
+    const displayAccountHandle = previewAccountHandle(accountName);
+    const displayAccountInitials = previewAccountInitials(accountName);
+
+    useEffect(() => {
+        setCaptionExpanded(false);
+    }, [platform, post.caption]);
 
     const displayHashtags = post.hashtags?.length
         ? post.hashtags.map(tag => `${tag.startsWith('#') ? '' : '#'}${tag}`).join(' ')
@@ -413,12 +549,22 @@ const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onIm
         const suffix = platform === 'linkedin' ? "...see more" : "...more";
 
         if (platform === 'twitter') return text; // Standard 280 just shows
+        if (captionExpanded) return text;
 
         if (text.length <= limit) return text;
         return (
             <>
                 {text.slice(0, limit)}
-                <span className="text-slate-500 font-medium cursor-pointer hover:underline ml-1">{suffix}</span>
+                <button
+                    type="button"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        setCaptionExpanded(true);
+                    }}
+                    className="ml-1 inline font-medium text-slate-500 underline-offset-2 hover:underline"
+                >
+                    {suffix}
+                </button>
             </>
         );
     };
@@ -444,16 +590,16 @@ const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onIm
                         platform === 'facebook' ? "bg-[#0866FF]" :
                             platform === 'twitter' ? "bg-black" :
                                 "bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500"
-                )}>MP</AvatarFallback>
+                )}>{displayAccountInitials}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1">
-                    <h4 className="font-bold text-sm text-gray-900 leading-tight">Marketing Pro</h4>
+                    <h4 className="font-bold text-sm text-gray-900 leading-tight">{displayAccountName}</h4>
                     {platform === 'twitter' && <Badge variant="secondary" className="h-4 px-1 text-[9px] bg-blue-50 text-blue-500"><svg viewBox="0 0 22 22" className="w-2.5 h-2.5 fill-current"><path d="M20.396 11c-.018-.646-.215-1.275-.57-1.816-.354-.54-.852-.972-1.438-1.246.223-.602.27-1.264.127-1.897-.146-.633-.502-1.182-1.028-1.582.47-.437.82-1.002.993-1.614.173-.615.158-1.274-.044-1.876-.633.228-1.29.27-1.92.122-.63-.148-1.185-.508-1.6-.99.428-.48.665-1.107.665-1.745 0-.58-.198-1.134-.548-1.593-.687.167-1.41.13-2.062-.108-.65-.24-1.205-.68-1.583-1.25-.333.528-.84.92-1.43 1.107-.59.187-1.22.18-1.83-.02-.373.6-.948 1.02-1.617 1.18-.67.16-1.375-.02-1.947-.51.103.682-.014 1.385-.334 1.956-.32.57-.83 1.002-1.452 1.226.476.43.824 1.002 1.003 1.625.18.623.163 1.294-.048 1.905.626-.22 1.282-.258 1.91-.107.628.15 1.18.515 1.592 1.002-.424.48-.66 1.106-.66 1.743 0 .58.196 1.13.543 1.585.69-.17 1.413-.135 2.066.103.652.24 1.21.68 1.59 1.25.335-.526.84-.917 1.43-1.103.593-.186 1.223-.178 1.834.02.368-.602.946-1.022 1.616-1.18.67-.158 1.376.02 1.948.51-.105-.682.012-1.385.333-1.956.32-.57.83-1.002 1.452-1.226" /></svg></Badge>}
                 </div>
                 <p className="text-xs text-gray-500 leading-tight truncate">
                     {platform === 'linkedin' && "Team Workspace • 2h • 🌐"}
-                    {platform === 'twitter' && "@marketing_pro • 2h"}
+                    {platform === 'twitter' && `@${displayAccountHandle} • 2h`}
                     {platform === 'instagram' && "Original Audio"}
                     {platform === 'facebook' && <span className="flex items-center gap-1">2h • <Globe className="w-3 h-3" /></span>}
                 </p>
@@ -478,16 +624,30 @@ const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onIm
 
     const RenderMedia = () => (
         post.image ? (
-            <button
-                type="button"
-                onClick={() => post.image && onImageClick?.(post.image)}
-                className={cn("w-full bg-slate-100 overflow-hidden relative group border-y border-slate-100 cursor-zoom-in", getAspectRatioClass())}
-            >
-                <img src={post.image} alt="Post content" className="w-full h-full object-cover" />
-                <div className="absolute inset-0 flex items-center justify-center bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Badge variant="secondary" className="bg-white/90 backdrop-blur pointer-events-none">Image Preview</Badge>
-                </div>
-            </button>
+            <div className={cn("w-full bg-white overflow-hidden relative group border-y border-slate-100", getAspectRatioClass())}>
+                <button
+                    type="button"
+                    onClick={() => post.image && onImageClick?.(post.image)}
+                    className="h-full w-full cursor-zoom-in"
+                    aria-label="Open image preview"
+                >
+                    <img src={post.image} alt="Post content" className="h-full w-full object-contain" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Badge variant="secondary" className="bg-white/90 backdrop-blur pointer-events-none">Image Preview</Badge>
+                    </div>
+                </button>
+                <button
+                    type="button"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        if (post.image) downloadImageAsset(post.image);
+                    }}
+                    className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-slate-800 opacity-0 shadow-sm transition-opacity hover:bg-white group-hover:opacity-100"
+                    aria-label="Download image"
+                >
+                    <Download className="h-4 w-4" />
+                </button>
+            </div>
         ) : (
             <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", getAspectRatioClass())}>
                 <ImageIcon className="w-8 h-8 text-slate-300" />
@@ -676,7 +836,7 @@ const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onIm
                                         <RenderActions />
                                         <div className="px-4 pb-4">
                                             <div className="text-sm">
-                                                <span className="font-bold mr-2 text-gray-900">marketing.pro</span>
+                                                <span className="font-bold mr-2 text-gray-900">{displayAccountName}</span>
                                                 <span className="text-gray-900">{getTruncatedCaption(post.caption || "")}</span>
                                             </div>
                                             {displayHashtags && <div className="text-blue-900 text-sm mt-1">{displayHashtags}</div>}
@@ -727,7 +887,7 @@ const SocialPreview = ({ post, onImageClick }: { post: Partial<SocialPost>; onIm
 
 // --- Tab Content Components ---
 
-const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext }) => {
+const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({
         id: i.id,
@@ -736,7 +896,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext }: { campai
         status: i.status,
         ...i.payload,
         creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
-        caption: payloadString(i.payload, ['caption', 'body', 'copy', 'text', 'content', 'post_copy', 'postCopy', 'primary_text', 'primaryText'], i.name || 'Social post draft'),
+        caption: socialCaptionFromPayload(i.payload, i.name || 'Social post draft'),
         visualGuide: visualGuideFromPayload(i.payload),
         generatedImages: generatedImagesFromPayload(i.payload),
         imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
@@ -1134,6 +1294,10 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext }: { campai
                                             >
                                                 <img src={image} className="w-full h-full object-contain" alt="Uploaded asset" />
                                                 <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                                    <Button variant="secondary" size="sm" onClick={(event) => { event.stopPropagation(); downloadImageAsset(image); }}>
+                                                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                                                        Download
+                                                    </Button>
                                                     <Button variant="secondary" size="sm" onClick={(event) => { event.stopPropagation(); triggerFileUpload(); }}>Replace</Button>
                                                     <Button variant="destructive" size="sm" onClick={(event) => { event.stopPropagation(); setImage(''); }}>Remove</Button>
                                                 </div>
@@ -1160,7 +1324,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext }: { campai
                         {/* Right Column: Preview */}
                         <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
                             <div className="p-8 h-full flex items-center justify-center">
-                                <SocialPreview post={{ caption, hashtags: [], image, platforms: selectedPlatforms }} onImageClick={setLightboxImage} />
+                                <SocialPreview post={{ caption, hashtags: [], image, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
                             </div>
                         </div>
                     </div>
@@ -1858,7 +2022,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     );
 };
 
-const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext }) => {
+const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => ({
         id: i.id,
@@ -2037,6 +2201,9 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
     };
 
     const currentSpec = AD_PLATFORM_SPECS[platform];
+    const displayAccountName = previewAccountName(projectName);
+    const displayAccountHandle = previewAccountHandle(projectName);
+    const displayAccountInitials = previewAccountInitials(projectName);
 
     const AdPreview = () => (
         <div className="flex flex-col h-full bg-slate-50/50 rounded-xl overflow-hidden border border-slate-100">
@@ -2148,10 +2315,10 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Header */}
                                             <div className="p-3 flex gap-3 items-center">
                                                 <Avatar className="w-8 h-8 ring-2 ring-pink-100">
-                                                    <AvatarFallback className="bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 text-white text-xs">MP</AvatarFallback>
+                                                    <AvatarFallback className="bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 text-white text-xs">{displayAccountInitials}</AvatarFallback>
                                                 </Avatar>
                                                 <div className="flex-1 min-w-0">
-                                                    <h4 className="font-semibold text-sm text-gray-900 leading-tight">marketing_pro</h4>
+                                                    <h4 className="font-semibold text-sm text-gray-900 leading-tight">{displayAccountName}</h4>
                                                     <p className="text-[10px] text-slate-500">Sponsored</p>
                                                 </div>
                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400"><MoreHorizontal className="w-4 h-4" /></Button>
@@ -2160,7 +2327,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Media FIRST for Instagram */}
                                             {image ? (
                                                 <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full object-cover" />
+                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
                                                 <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3">
@@ -2191,7 +2358,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Caption BELOW for Instagram */}
                                             <div className="px-4 pb-4">
                                                 <div className="text-sm">
-                                                    <span className="font-bold mr-2 text-gray-900">marketing_pro</span>
+                                                    <span className="font-bold mr-2 text-gray-900">{displayAccountName}</span>
                                                     <span className="text-gray-700">{primaryText || 'Your ad caption will appear here...'}</span>
                                                 </div>
                                                 {headline && <p className="text-sm text-blue-900 mt-1">{headline}</p>}
@@ -2206,10 +2373,10 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Header */}
                                             <div className="p-4 flex gap-3 items-center">
                                                 <Avatar className="w-10 h-10 ring-1 ring-slate-100">
-                                                    <AvatarFallback className="bg-[#0866FF] text-white text-xs">MP</AvatarFallback>
+                                                    <AvatarFallback className="bg-[#0866FF] text-white text-xs">{displayAccountInitials}</AvatarFallback>
                                                 </Avatar>
                                                 <div className="flex-1 min-w-0">
-                                                    <h4 className="font-bold text-sm text-gray-900 leading-tight">Marketing Pro</h4>
+                                                    <h4 className="font-bold text-sm text-gray-900 leading-tight">{displayAccountName}</h4>
                                                     <p className="text-xs text-slate-500 leading-tight flex items-center gap-1">Sponsored • <Globe className="w-3 h-3" /></p>
                                                 </div>
                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400"><MoreHorizontal className="w-4 h-4" /></Button>
@@ -2225,7 +2392,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Media */}
                                             {image ? (
                                                 <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full object-cover" />
+                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
                                                 <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
@@ -2279,10 +2446,10 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Header */}
                                             <div className="p-4 flex gap-3 items-center">
                                                 <Avatar className="w-12 h-12 ring-1 ring-slate-100">
-                                                    <AvatarFallback className="bg-[#0A66C2] text-white text-sm font-bold">MP</AvatarFallback>
+                                                    <AvatarFallback className="bg-[#0A66C2] text-white text-sm font-bold">{displayAccountInitials}</AvatarFallback>
                                                 </Avatar>
                                                 <div className="flex-1 min-w-0">
-                                                    <h4 className="font-bold text-sm text-gray-900 leading-tight">Marketing Pro</h4>
+                                                    <h4 className="font-bold text-sm text-gray-900 leading-tight">{displayAccountName}</h4>
                                                     <p className="text-xs text-slate-500 leading-tight">Promoted</p>
                                                 </div>
                                                 <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400"><MoreHorizontal className="w-4 h-4" /></Button>
@@ -2298,7 +2465,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Media */}
                                             {image ? (
                                                 <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full object-cover" />
+                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
                                                 <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
@@ -2347,12 +2514,12 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             {/* Header */}
                                             <div className="p-4 flex gap-3 items-start">
                                                 <Avatar className="w-10 h-10">
-                                                    <AvatarFallback className="bg-black text-white text-xs">MP</AvatarFallback>
+                                                    <AvatarFallback className="bg-black text-white text-xs">{displayAccountInitials}</AvatarFallback>
                                                 </Avatar>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="flex items-center gap-1">
-                                                        <h4 className="font-bold text-sm text-gray-900">Marketing Pro</h4>
-                                                        <span className="text-slate-500 text-sm">@marketing_pro</span>
+                                                        <h4 className="font-bold text-sm text-gray-900">{displayAccountName}</h4>
+                                                        <span className="text-slate-500 text-sm">@{displayAccountHandle}</span>
                                                     </div>
 
                                                     {/* Primary Text ABOVE media */}
@@ -2364,7 +2531,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                                     <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                                                         {image ? (
                                                             <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                                <img src={image} alt="Ad content" className="w-full h-full object-cover" />
+                                                                <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                             </button>
                                                         ) : (
                                                             <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3">
@@ -2614,7 +2781,16 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext }: { campaign
                                             <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
                                             {image ? (
                                                 <div className="relative group cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad" className="w-full h-48 object-cover rounded-lg" />
+                                                    <img src={image} alt="Ad" className="w-full h-48 bg-white object-contain rounded-lg" />
+                                                    <Button
+                                                        variant="secondary"
+                                                        size="icon"
+                                                        className="absolute top-2 right-12 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        onClick={(event) => { event.stopPropagation(); downloadImageAsset(image); }}
+                                                        aria-label="Download image"
+                                                    >
+                                                        <Download className="w-4 h-4" />
+                                                    </Button>
                                                     <Button
                                                         variant="destructive"
                                                         size="sm"
@@ -3076,6 +3252,7 @@ export default function CampaignDashboard() {
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'posts'}
                         brandVisualContext={brandVisualContext}
+                        projectName={project.name}
                     />
                 </TabsContent>
                 <TabsContent value="google-ads">
@@ -3089,6 +3266,7 @@ export default function CampaignDashboard() {
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'social-ads'}
                         brandVisualContext={brandVisualContext}
+                        projectName={project.name}
                     />
                 </TabsContent>
                 <TabsContent value="blogs">

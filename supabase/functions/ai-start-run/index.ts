@@ -273,6 +273,7 @@ async function processMission({
               'Use these exact top-level keys: strategy, socialPosts, googleAds, socialAds, blogOutlines, calendar.',
               'strategy must be an object: { "title": string, "summary": string, "objectives": string[], "contentPillars": string[] }. The summary must be a brief-specific campaign rationale of 3 to 5 sentences: explain the strategic approach, why it fits the stated objective, how engagement or conversion will be encouraged, and how the channel mix supports the plan.',
               'socialPosts must be an array of objects: { "name": string, "topic": string, "caption": non-empty string, "platforms": string[], "creativeBrief"?: string, "visualGuide": string, "scheduledDate"?: "YYYY-MM-DD" }.',
+              'For socialPosts, name and topic are metadata only. The caption must contain only the publishable caption copy and must not repeat the post name, post number, topic label, title, or headline at the start.',
               'socialAds must be an array of objects: { "name": string, "topic": string, "platform": string, "primaryText": non-empty string, "headline": non-empty string, "description"?: string, "visualGuide": string, "cta": string, "destinationUrl"?: string, "scheduledDate"?: "YYYY-MM-DD" }.',
               'googleAds must be an array of objects with non-empty headlines and descriptions arrays.',
               'calendar must be an array of objects: { "title": string, "type": "socials" | "google-ad" | "meta-ad" | "blogs", "date": "YYYY-MM-DD" }.',

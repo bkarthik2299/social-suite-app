@@ -80,16 +80,16 @@ function normalizeSocialPosts(input: unknown): SocialPostDraft[] {
     ) || headline || topic;
     const cta = stringValue(item.cta);
     const hashtags = stringArray(item.hashtags).join(' ');
+    const caption = stripCaptionTitlePrefix(joinText(uniqueStrings([
+      body,
+      cta ? `CTA: ${cta}` : '',
+      hashtags,
+    ])), [name, topic, headline]);
 
     return {
       name,
       topic,
-      caption: joinText(uniqueStrings([
-        headline && !body.toLowerCase().startsWith(headline.toLowerCase()) ? headline : '',
-        body,
-        cta ? `CTA: ${cta}` : '',
-        hashtags,
-      ])),
+      caption,
       platforms,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
       creativeBrief: stringValue(item.creativeBrief ?? item.creative_brief ?? item.visual_description ?? item.visual) || undefined,
@@ -374,6 +374,28 @@ function stringValue(input: unknown): string {
 
 function joinText(parts: unknown[]): string {
   return parts.map(stringValue).filter(Boolean).join('\n\n');
+}
+
+function stripCaptionTitlePrefix(caption: string, candidates: string[]): string {
+  const original = caption.trim();
+  if (!original) return '';
+
+  const titles = uniqueStrings(candidates)
+    .filter((candidate) => candidate.length >= 4)
+    .sort((a, b) => b.length - a.length);
+
+  for (const title of titles) {
+    const escaped = escapeRegExp(title);
+    const prefixed = new RegExp(`^\\s*${escaped}(?:\\s*(?:[:\\-–—|•])\\s*|\\s*\\n+\\s*)+`, 'i');
+    const withoutTitle = original.replace(prefixed, '').trim();
+    if (withoutTitle && withoutTitle !== original) return withoutTitle;
+  }
+
+  return original;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function slugify(value: string): string {
