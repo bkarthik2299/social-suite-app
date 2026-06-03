@@ -1337,28 +1337,72 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
 
 // --- Google Ads Components ---
 
+const GOOGLE_AD_MAX_HEADLINES = 15;
+const GOOGLE_AD_MAX_DESCRIPTIONS = 4;
+const GOOGLE_AD_HEADLINE_LIMIT = 30;
+const GOOGLE_AD_DESCRIPTION_LIMIT = 90;
+const GOOGLE_AD_PATH_LIMIT = 15;
+
+const trimGoogleAdField = (value: string | undefined, maxLength: number) => {
+    const normalized = (value || '').replace(/\s+/g, ' ').trim();
+    if (normalized.length <= maxLength) return normalized;
+    const clipped = normalized.slice(0, maxLength + 1);
+    const wordBoundary = clipped.lastIndexOf(' ');
+    const candidate = wordBoundary >= Math.floor(maxLength * 0.55)
+        ? clipped.slice(0, wordBoundary)
+        : clipped.slice(0, maxLength);
+    return candidate.replace(/[\s,;:|/\\-]+$/g, '').trim().slice(0, maxLength);
+};
 
 const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
     const [device, setDevice] = useState<'mobile' | 'desktop'>('mobile');
+    const [combinationIndex, setCombinationIndex] = useState(0);
 
-    const validHeadlines = ad.headlines?.filter(h => h.trim() !== '') || [];
-    const validDescriptions = ad.descriptions?.filter(d => d.trim() !== '') || [];
+    const validHeadlines = (ad.headlines?.map(h => trimGoogleAdField(h, GOOGLE_AD_HEADLINE_LIMIT)).filter(h => h.trim() !== '') || []).slice(0, GOOGLE_AD_MAX_HEADLINES);
+    const validDescriptions = (ad.descriptions?.map(d => trimGoogleAdField(d, GOOGLE_AD_DESCRIPTION_LIMIT)).filter(d => d.trim() !== '') || []).slice(0, GOOGLE_AD_MAX_DESCRIPTIONS);
     // Handle both old and new data structures or default to empty
     const validSitelinks = ad.sitelinks?.filter(s => s.text.trim() !== '') || [];
     const validCallouts = ad.callouts?.filter(c => c.trim() !== '') || [];
 
-    const displayHeadlines = validHeadlines.length > 0
-        ? validHeadlines.map((h, i) => (
-            <span key={i}>
-                {h}
-                {i < validHeadlines.length - 1 && <span className="mx-1">|</span>}
-            </span>
-        ))
-        : "Headline 1 | Headline 2 | Headline 3";
+    const headlineSlots = device === 'desktop' ? 3 : 2;
+    const descriptionSlots = device === 'desktop' ? 2 : 1;
+    const headlineGroups = Math.max(1, Math.ceil((validHeadlines.length || headlineSlots) / headlineSlots));
+    const descriptionGroups = Math.max(1, Math.ceil((validDescriptions.length || descriptionSlots) / descriptionSlots));
+    const combinationCount = Math.max(headlineGroups, descriptionGroups);
 
-    const displayDescription = validDescriptions.length > 0
-        ? validDescriptions.join('. ') + '.'
-        : "Description text goes here. Highlight your unique selling points and include a call to action.";
+    useEffect(() => {
+        setCombinationIndex(0);
+    }, [device, validHeadlines.length, validDescriptions.length]);
+
+    useEffect(() => {
+        if (combinationCount <= 1) return undefined;
+        const timer = window.setInterval(() => {
+            setCombinationIndex((current) => (current + 1) % combinationCount);
+        }, 4200);
+        return () => window.clearInterval(timer);
+    }, [combinationCount]);
+
+    const assetGroup = (items: string[], slots: number, fallback: string[]) => {
+        const source = items.length ? items : fallback;
+        const groups = Array.from({ length: Math.max(1, Math.ceil(source.length / slots)) }, (_, index) => (
+            source.slice(index * slots, index * slots + slots)
+        )).filter((group) => group.length > 0);
+        return groups[combinationIndex % groups.length] || fallback.slice(0, slots);
+    };
+
+    const servedHeadlines = assetGroup(validHeadlines, headlineSlots, ['Headline 1', 'Headline 2', 'Headline 3']);
+    const servedDescriptions = assetGroup(validDescriptions, descriptionSlots, ['Description text goes here. Highlight your unique selling points and include a call to action.']);
+
+    const displayHeadlines = servedHeadlines.map((headline, index) => (
+        <span key={`${headline}-${index}`}>
+            {headline}
+            {index < servedHeadlines.length - 1 && <span className="mx-1 text-[#5f6368]">|</span>}
+        </span>
+    ));
+
+    const displayDescription = servedDescriptions
+        .map((description) => description.replace(/\.+$/, ''))
+        .join(' ');
 
     const displayUrl = () => {
         const finalUrl = ad.finalUrl || 'example.com';
@@ -1413,6 +1457,28 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
                 </div>
             </div>
 
+            {combinationCount > 1 && (
+                <div className="flex items-center justify-between gap-3 border-b bg-white px-6 py-2">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                        Combination {combinationIndex + 1} of {combinationCount}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                        {Array.from({ length: combinationCount }).map((_, index) => (
+                            <button
+                                key={index}
+                                type="button"
+                                aria-label={`Show ad combination ${index + 1}`}
+                                onClick={() => setCombinationIndex(index)}
+                                className={cn(
+                                    "h-1.5 rounded-full transition-all",
+                                    index === combinationIndex ? "w-5 bg-blue-600" : "w-1.5 bg-slate-300 hover:bg-slate-400"
+                                )}
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
+
             {/* Preview Canvas */}
             <div className="flex-1 p-8 flex items-start justify-center overflow-y-auto bg-slate-50/50">
                 <div className={cn(
@@ -1464,7 +1530,7 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
                                         <div className="text-[#1a0dab] text-[18px] leading-[24px] font-medium mb-1 cursor-pointer">
                                             {displayHeadlines}
                                         </div>
-                                        <div className="text-[14px] leading-[20px] text-[#4d5156]">
+                                        <div className="line-clamp-4 text-[14px] leading-[20px] text-[#4d5156]">
                                             {displayDescription}
                                             {validCallouts.length > 0 && (
                                                 <span className="ml-1 text-[#4d5156]">
@@ -1537,7 +1603,7 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
                                     <div className="text-[#1a0dab] text-[20px] leading-[26px] cursor-pointer hover:underline mb-1">
                                         {displayHeadlines}
                                     </div>
-                                    <div className="text-[14px] leading-[22px] text-[#4d5156]">
+                                    <div className="line-clamp-3 text-[14px] leading-[22px] text-[#4d5156]">
                                         {displayDescription}
                                         {validCallouts.length > 0 && (
                                             <span className="ml-1 text-[#4d5156]">
@@ -1612,10 +1678,10 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setName(ad.name || 'New Search Ad');
             setStartDate(toValidDate(ad.startDate));
             setFinalUrl(ad.finalUrl || '');
-            setPath1(ad.path1 || '');
-            setPath2(ad.path2 || '');
-            setHeadlines(ad.headlines?.length ? ad.headlines : ['', '', '']);
-            setDescriptions(ad.descriptions?.length ? ad.descriptions : ['', '']);
+            setPath1(trimGoogleAdField(ad.path1, GOOGLE_AD_PATH_LIMIT));
+            setPath2(trimGoogleAdField(ad.path2, GOOGLE_AD_PATH_LIMIT));
+            setHeadlines(ad.headlines?.length ? ad.headlines.map(h => trimGoogleAdField(h, GOOGLE_AD_HEADLINE_LIMIT)).slice(0, GOOGLE_AD_MAX_HEADLINES) : ['', '', '']);
+            setDescriptions(ad.descriptions?.length ? ad.descriptions.map(d => trimGoogleAdField(d, GOOGLE_AD_DESCRIPTION_LIMIT)).slice(0, GOOGLE_AD_MAX_DESCRIPTIONS) : ['', '']);
             setTopic(ad.topic || '');
         } else {
             setEditingAd(null);
@@ -1637,10 +1703,10 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             name,
             startDate: startDate ? startDate.toISOString() : undefined,
             finalUrl,
-            path1,
-            path2,
-            headlines: headlines.filter(h => h.trim() !== ''),
-            descriptions: descriptions.filter(d => d.trim() !== ''),
+            path1: trimGoogleAdField(path1, GOOGLE_AD_PATH_LIMIT),
+            path2: trimGoogleAdField(path2, GOOGLE_AD_PATH_LIMIT),
+            headlines: headlines.map(h => trimGoogleAdField(h, GOOGLE_AD_HEADLINE_LIMIT)).filter(h => h.trim() !== '').slice(0, GOOGLE_AD_MAX_HEADLINES),
+            descriptions: descriptions.map(d => trimGoogleAdField(d, GOOGLE_AD_DESCRIPTION_LIMIT)).filter(d => d.trim() !== '').slice(0, GOOGLE_AD_MAX_DESCRIPTIONS),
             sitelinks: sitelinks.filter(s => s.text.trim() !== ''),
             callouts: callouts.filter(c => c.trim() !== ''),
             topic,
@@ -1658,7 +1724,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     // Helper to update specific index needed for array inputs
     const updateHeadline = (index: number, value: string) => {
         const newHeadlines = [...headlines];
-        newHeadlines[index] = value;
+        newHeadlines[index] = value.slice(0, GOOGLE_AD_HEADLINE_LIMIT);
         setHeadlines(newHeadlines);
     };
 
@@ -1668,7 +1734,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
 
     const updateDescription = (index: number, value: string) => {
         const newDescriptions = [...descriptions];
-        newDescriptions[index] = value;
+        newDescriptions[index] = value.slice(0, GOOGLE_AD_DESCRIPTION_LIMIT);
         setDescriptions(newDescriptions);
     };
 
@@ -1859,8 +1925,8 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                 <Input
                                                     placeholder="Services"
                                                     value={path1}
-                                                    maxLength={15}
-                                                    onChange={(e) => setPath1(e.target.value)}
+                                                    maxLength={GOOGLE_AD_PATH_LIMIT}
+                                                    onChange={(e) => setPath1(e.target.value.slice(0, GOOGLE_AD_PATH_LIMIT))}
                                                     className="bg-slate-50"
                                                 />
                                             </div>
@@ -1869,8 +1935,8 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                 <Input
                                                     placeholder="Consulting"
                                                     value={path2}
-                                                    maxLength={15}
-                                                    onChange={(e) => setPath2(e.target.value)}
+                                                    maxLength={GOOGLE_AD_PATH_LIMIT}
+                                                    onChange={(e) => setPath2(e.target.value.slice(0, GOOGLE_AD_PATH_LIMIT))}
                                                     className="bg-slate-50"
                                                 />
                                             </div>
@@ -1894,10 +1960,10 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                     <Input
                                                         placeholder={`Headline ${index + 1}`}
                                                         value={headline}
-                                                        maxLength={30}
+                                                        maxLength={GOOGLE_AD_HEADLINE_LIMIT}
                                                         onChange={(e) => updateHeadline(index, e.target.value)}
                                                     />
-                                                    <span className="absolute right-3 top-2.5 text-xs text-slate-400 text-[10px]">{headline.length}/30</span>
+                                                    <span className="absolute right-3 top-2.5 text-xs text-slate-400 text-[10px]">{headline.length}/{GOOGLE_AD_HEADLINE_LIMIT}</span>
                                                 </div>
                                                 {headlines.length > 3 && (
                                                     <Button variant="ghost" size="icon" onClick={() => removeHeadline(index)} className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 hover:bg-red-50">
@@ -1930,11 +1996,11 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                     <Textarea
                                                         placeholder={`Description ${index + 1}`}
                                                         value={desc}
-                                                        maxLength={90}
+                                                        maxLength={GOOGLE_AD_DESCRIPTION_LIMIT}
                                                         onChange={(e) => updateDescription(index, e.target.value)}
                                                         className="min-h-[80px] resize-none"
                                                     />
-                                                    <span className="absolute right-3 bottom-2 text-xs text-slate-400 text-[10px]">{desc.length}/90</span>
+                                                    <span className="absolute right-3 bottom-2 text-xs text-slate-400 text-[10px]">{desc.length}/{GOOGLE_AD_DESCRIPTION_LIMIT}</span>
                                                 </div>
                                                 {descriptions.length > 2 && (
                                                     <Button variant="ghost" size="icon" onClick={() => removeDescription(index)} className="mt-2 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 hover:bg-red-50">
