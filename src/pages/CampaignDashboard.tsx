@@ -43,6 +43,8 @@ import { Separator } from '@/components/ui/separator';
 import { Calendar } from '@/components/ui/calendar';
 import { BlogEditor } from '@/components/editor/BlogEditor';
 import { campaignPath, findBySlug, folderPath, projectPath } from '@/lib/routes';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/use-toast';
 
 // --- Platform Constants ---
 const PLATFORM_SPECS = {
@@ -145,6 +147,40 @@ const payloadString = (payload: Record<string, unknown>, keys: string[], fallbac
         if (typeof value === 'string' && value.trim()) return value.trim();
     }
     return fallback;
+};
+
+const visualGuideFromPayload = (payload: Record<string, unknown>, fallback = '') => payloadString(payload, [
+    'visualGuide',
+    'visual_guide',
+    'imagePrompt',
+    'image_prompt',
+    'visualPrompt',
+    'visual_prompt',
+    'visualDescription',
+    'visual_description',
+    'visual',
+], fallback);
+
+const generateVisualAsset = async (
+    visualGuide: string,
+    context: Record<string, unknown>,
+) => {
+    const guide = visualGuide.trim();
+    if (!guide) {
+        throw new Error('Add a visual guide before generating an image.');
+    }
+
+    const { data, error } = await supabase.functions.invoke('generate-visual-asset', {
+        body: { visualGuide: guide, context },
+    });
+
+    if (error) throw error;
+
+    const payload = data as { imageUrl?: string; error?: string };
+    if (payload?.error) throw new Error(payload.error);
+    if (!payload?.imageUrl) throw new Error('Image generation did not return an image.');
+
+    return payload.imageUrl;
 };
 
 // --- Platform Icons ---
@@ -530,15 +566,20 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
         name: i.name,
         status: i.status,
         ...i.payload,
+        creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
         caption: payloadString(i.payload, ['caption', 'body', 'copy', 'text', 'content', 'post_copy', 'postCopy', 'primary_text', 'primaryText'], i.name || 'Social post draft'),
+        visualGuide: visualGuideFromPayload(i.payload),
     }));
+    const { toast } = useToast();
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
 
     // Form State
     const [brief, setBrief] = useState('');
+    const [visualGuide, setVisualGuide] = useState('');
     const [caption, setCaption] = useState('');
     const [image, setImage] = useState('');
+    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [date, setDate] = useState<Date | undefined>(undefined);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['linkedin']);
     const [topic, setTopic] = useState('');
@@ -556,7 +597,8 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
         if (post) {
             setEditingPost(post);
             setName(post.name || 'New Social Post');
-            setBrief(post.creativeBrief);
+            setBrief(post.creativeBrief || '');
+            setVisualGuide(post.visualGuide || post.creativeBrief || '');
             setCaption(post.caption);
             setImage(post.image || '');
             setDate(toValidDate(post.scheduledDate));
@@ -566,6 +608,7 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
             setEditingPost(null);
             setName('New Social Post');
             setBrief('');
+            setVisualGuide('');
             setCaption('');
             setImage('');
             setDate(undefined);
@@ -580,6 +623,7 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
             campaignId,
             name,
             creativeBrief: brief,
+            visualGuide,
             caption,
             hashtags: [], // Hashtags implicity in caption now
             image,
@@ -615,6 +659,32 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
 
     const triggerFileUpload = () => {
         fileInputRef.current?.click();
+    };
+
+    const handleGenerateImage = async () => {
+        setIsGeneratingImage(true);
+        try {
+            const imageUrl = await generateVisualAsset(visualGuide, {
+                kind: 'social-post',
+                name,
+                topic,
+                caption,
+                platforms: selectedPlatforms,
+            });
+            setImage(imageUrl);
+            toast({
+                title: 'Image generated',
+                description: 'The generated image has been placed in the media preview.',
+            });
+        } catch (error) {
+            toast({
+                title: 'Image generation failed',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsGeneratingImage(false);
+        }
     };
 
     return (
@@ -788,6 +858,35 @@ const SocialPostsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCr
                                                 onChange={(e) => setBrief(e.target.value)}
                                             />
                                         </div>
+                                    </CardContent>
+                                </Card>
+
+                                {/* Visual Guide */}
+                                <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
+                                    <CardContent className="p-6 space-y-3">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div>
+                                                <Label className="text-sm font-semibold text-slate-700">Visual Guide</Label>
+                                                <p className="text-xs text-slate-500 mt-1">Describe the intended image before generating or uploading media.</p>
+                                            </div>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                className="gap-2"
+                                                disabled={!visualGuide.trim() || isGeneratingImage}
+                                                onClick={handleGenerateImage}
+                                            >
+                                                <Sparkles className="w-3.5 h-3.5" />
+                                                {isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                            </Button>
+                                        </div>
+                                        <Textarea
+                                            className="min-h-[120px] resize-none border-slate-200 bg-slate-50 focus:bg-white transition-colors"
+                                            placeholder="e.g. Calm premium hospital visual, warm daylight, diverse young adults, clear focal point, blue-white palette, minimal text overlay."
+                                            value={visualGuide}
+                                            onChange={(e) => setVisualGuide(e.target.value)}
+                                        />
                                     </CardContent>
                                 </Card>
 
@@ -1565,7 +1664,10 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         cta: normalizeSocialAdCta(i.payload.cta),
         primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
         headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
+        description: payloadString(i.payload, ['description', 'supporting_text'], ''),
+        visualGuide: visualGuideFromPayload(i.payload),
     }));
+    const { toast } = useToast();
     const campaignAds = socialAds.filter(ad => ad.campaignId === campaignId);
 
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
@@ -1578,7 +1680,9 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     const [primaryText, setPrimaryText] = useState('');
     const [headline, setHeadline] = useState('');
     const [description, setDescription] = useState('');
+    const [visualGuide, setVisualGuide] = useState('');
     const [image, setImage] = useState('');
+    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
     const [cta, setCta] = useState<'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download'>('learn_more');
     const [destinationUrl, setDestinationUrl] = useState('');
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined);
@@ -1594,6 +1698,7 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setPrimaryText(ad.primaryText || '');
             setHeadline(ad.headline || '');
             setDescription(ad.description || '');
+            setVisualGuide(ad.visualGuide || '');
             setImage(ad.image || '');
             setCta(normalizeSocialAdCta(ad.cta));
             setDestinationUrl(ad.destinationUrl || '');
@@ -1606,6 +1711,7 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             setPrimaryText('');
             setHeadline('');
             setDescription('');
+            setVisualGuide('');
             setImage('');
             setCta('learn_more');
             setDestinationUrl('');
@@ -1623,6 +1729,7 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             primaryText,
             headline,
             description,
+            visualGuide,
             image,
             cta,
             destinationUrl,
@@ -1645,6 +1752,36 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             const reader = new FileReader();
             reader.onloadend = () => setImage(reader.result as string);
             reader.readAsDataURL(file);
+        }
+    };
+
+    const handleGenerateImage = async () => {
+        setIsGeneratingImage(true);
+        try {
+            const imageUrl = await generateVisualAsset(visualGuide, {
+                kind: 'social-ad',
+                name,
+                topic,
+                platform,
+                primaryText,
+                headline,
+                description,
+                cta,
+                destinationUrl,
+            });
+            setImage(imageUrl);
+            toast({
+                title: 'Image generated',
+                description: 'The generated image has been placed in the ad preview.',
+            });
+        } catch (error) {
+            toast({
+                title: 'Image generation failed',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsGeneratingImage(false);
         }
     };
 
@@ -2199,6 +2336,35 @@ const SocialAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                                     />
                                                 </div>
                                             )}
+                                        </CardContent>
+                                    </Card>
+
+                                    {/* Visual Guide */}
+                                    <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
+                                        <CardContent className="p-6 space-y-3">
+                                            <div className="flex flex-wrap items-center justify-between gap-3">
+                                                <div>
+                                                    <Label className="text-sm font-semibold text-slate-700">Visual Guide</Label>
+                                                    <p className="text-xs text-slate-500 mt-1">Use this as the image direction for the paid social creative.</p>
+                                                </div>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="gap-2"
+                                                    disabled={!visualGuide.trim() || isGeneratingImage}
+                                                    onClick={handleGenerateImage}
+                                                >
+                                                    <Sparkles className="w-3.5 h-3.5" />
+                                                    {isGeneratingImage ? 'Generating...' : 'Generate Image'}
+                                                </Button>
+                                            </div>
+                                            <Textarea
+                                                placeholder="e.g. Premium paid social image, confident subject, clean negative space, brand-safe palette, no dense text, clear CTA area."
+                                                value={visualGuide}
+                                                onChange={(e) => setVisualGuide(e.target.value)}
+                                                className="min-h-[120px] resize-none"
+                                            />
                                         </CardContent>
                                     </Card>
 

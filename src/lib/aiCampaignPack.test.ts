@@ -54,6 +54,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
 
     expect(pack.strategy?.title).toBe('Naruvi Free Preventive Checkup Launch');
     expect(pack.socialPosts).toHaveLength(1);
+    expect(pack.socialPosts?.[0].visualGuide).toBe('Clean teal carousel.');
     expect(pack.googleAds[0].headlines).toContain('Free Health Checkup');
     expect(pack.socialAds).toHaveLength(1);
     expect(pack.blogOutlines[0].outline).toEqual(['What is preventive care?', 'How to book']);
@@ -82,7 +83,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
         { name: 'Awareness Post', headline: 'Know your options', post_copy: 'Know your options. Ask questions and stay informed.', platform: 'Instagram' },
       ],
       socialAds: [
-        { name: 'Engagement Ad', primary_copy: 'Learn the signs and start a conversation.', hook: 'Breast health awareness', platform: 'Meta' },
+        { name: 'Engagement Ad', primary_copy: 'Learn the signs and start a conversation.', hook: 'Breast health awareness', image_prompt: 'Warm community visual with soft pink accents.', platform: 'Meta' },
       ],
     });
 
@@ -90,6 +91,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
     expect(pack.socialAds?.[0]).toMatchObject({
       primaryText: 'Learn the signs and start a conversation.',
       headline: 'Breast health awareness',
+      visualGuide: 'Warm community visual with soft pink accents.',
       platform: 'facebook',
     });
   });

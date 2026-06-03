@@ -55,6 +55,7 @@ export interface SocialPost {
   name?: string; // Custom title
   topic?: string; // Topic/Idea for the post
   creativeBrief: string;
+  visualGuide?: string;
   caption: string;
   hashtags: string[];
   image?: string;
@@ -90,6 +91,7 @@ export interface SocialAd {
   primaryText: string;      // 125-150 chars recommended
   headline: string;         // 40-70 chars
   description?: string;     // 30 chars (FB only)
+  visualGuide?: string;
   image?: string;
   cta: 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
   destinationUrl: string;

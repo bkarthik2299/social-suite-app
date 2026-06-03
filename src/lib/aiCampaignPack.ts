@@ -93,6 +93,16 @@ function normalizeSocialPosts(input: unknown): SocialPostDraft[] {
       platforms,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
       creativeBrief: stringValue(item.creativeBrief ?? item.creative_brief ?? item.visual_description ?? item.visual) || undefined,
+      visualGuide: stringValue(
+        item.visualGuide
+        ?? item.visual_guide
+        ?? item.imagePrompt
+        ?? item.image_prompt
+        ?? item.visualPrompt
+        ?? item.visual_prompt
+        ?? item.visual_description
+        ?? item.visual,
+      ) || undefined,
     };
   });
 }
@@ -153,7 +163,17 @@ function normalizeSocialAds(input: unknown): SocialAdDraft[] {
       platform: normalizeSocialAdPlatform(item.platform ?? item.channel),
       primaryText,
       headline,
-      description: stringValue(item.description ?? item.visual_description ?? item.supporting_text) || undefined,
+      description: stringValue(item.description ?? item.supporting_text) || undefined,
+      visualGuide: stringValue(
+        item.visualGuide
+        ?? item.visual_guide
+        ?? item.imagePrompt
+        ?? item.image_prompt
+        ?? item.visualPrompt
+        ?? item.visual_prompt
+        ?? item.visual_description
+        ?? item.visual,
+      ) || undefined,
       cta: normalizeSocialAdCta(item.cta),
       destinationUrl: stringValue(item.destinationUrl ?? item.destination_url ?? item.final_url ?? item.link) || undefined,
       scheduledDate: normalizeOptionalDate(item.scheduledDate ?? item.scheduled_date ?? item.date),
