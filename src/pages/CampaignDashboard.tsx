@@ -193,7 +193,20 @@ const generateVisualAsset = async (
         body: { visualGuide: guide, context },
     });
 
-    if (error) throw error;
+    if (error) {
+        const contextResponse = (error as { context?: Response }).context;
+        if (contextResponse && typeof contextResponse.clone === 'function') {
+            try {
+                const payload = await contextResponse.clone().json() as { error?: string };
+                if (payload?.error) throw new Error(payload.error);
+            } catch (payloadError) {
+                if (payloadError instanceof Error && payloadError.message !== 'Unexpected end of JSON input') {
+                    throw payloadError;
+                }
+            }
+        }
+        throw error;
+    }
 
     const payload = data as { imageUrl?: string; error?: string };
     if (payload?.error) throw new Error(payload.error);

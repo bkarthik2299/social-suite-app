@@ -123,7 +123,7 @@ function buildPredictionInput(model: string, prompt: string, context: Record<str
     input.output_format = 'jpeg';
     input.aspect_ratio = aspectRatio;
 
-    const inputImages = brandGuideImageUrls(context).slice(0, 4);
+    const inputImages = shouldUseBrandReferenceImages() ? brandGuideImageUrls(context).slice(0, 4) : [];
     if (inputImages.length) {
       input.input_images = inputImages;
     }
@@ -254,6 +254,10 @@ function brandGuideImageUrls(context: Record<string, unknown>) {
     : [];
 }
 
+function shouldUseBrandReferenceImages() {
+  return cleanText(Deno.env.get('REPLICATE_USE_BRAND_REFERENCE_IMAGES')).toLowerCase() === 'true';
+}
+
 function modelEndpoint(model: string) {
   const parts = model.split('/').map((part) => part.trim()).filter(Boolean);
   if (parts.length !== 2) return undefined;
@@ -266,9 +270,17 @@ function cleanText(value: unknown) {
 }
 
 function readError(payload: unknown) {
+  if (typeof payload === 'string') return payload;
+  if (Array.isArray(payload)) return payload.map(readError).filter(Boolean).join(' ');
   if (!payload || typeof payload !== 'object') return '';
   const record = payload as Record<string, unknown>;
-  return cleanText(record.detail) || cleanText(record.error) || cleanText(record.message);
+  return cleanText(record.detail)
+    || cleanText(record.error)
+    || cleanText(record.message)
+    || readError(record.detail)
+    || readError(record.error)
+    || readError(record.message)
+    || JSON.stringify(payload).slice(0, 500);
 }
 
 function delay(ms: number) {
