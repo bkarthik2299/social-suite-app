@@ -77,6 +77,7 @@ Set these in the Supabase dashboard or with `supabase secrets set`:
 - `OPENROUTER_API_KEY`
 - `TAVILY_API_KEY`
 - `SUPADATA_API_KEY`
+- `FIRECRAWL_API_KEY`
 - `TRIGGER_SECRET_KEY` (reserved for the durable workflow phase)
 - `AI_DEFAULT_MODEL`
 - `AI_FAST_MODEL`
