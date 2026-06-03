@@ -10,6 +10,13 @@ export type CampaignPack = {
 type JsonRecord = Record<string, unknown>;
 
 const calendarTypes = ['socials', 'google-ad', 'meta-ad', 'blogs'] as const;
+const googleAdLimits = {
+  maxHeadlines: 15,
+  maxDescriptions: 4,
+  headline: 30,
+  description: 90,
+  displayPath: 15,
+} as const;
 
 export function normalizeCampaignPack(input: unknown): CampaignPack {
   const source = unwrapCampaignPack(input);
@@ -123,22 +130,22 @@ function normalizeGoogleAds(input: unknown): CampaignPack['googleAds'] {
       item.headline_1,
       item.headline_2,
       item.headline_3,
-    ]);
+    ].map((value) => trimGoogleAdText(value, googleAdLimits.headline))).slice(0, googleAdLimits.maxHeadlines);
     const descriptions = uniqueStrings([
       ...stringArray(item.descriptions),
       item.description,
       item.description_1,
       item.description_2,
       item.body,
-    ]);
+    ].map((value) => trimGoogleAdText(value, googleAdLimits.description))).slice(0, googleAdLimits.maxDescriptions);
 
     return {
       name: stringValue(item.name ?? item.ad_name ?? item.ad_type) || `Google Ad ${index + 1}`,
       topic: stringValue(item.topic ?? item.ad_type) || 'Search campaign concept',
       startDate: normalizeOptionalDate(item.startDate ?? item.start_date ?? item.date),
       finalUrl: stringValue(item.finalUrl ?? item.final_url ?? item.link) || undefined,
-      path1: stringValue(item.path1 ?? item.path_1) || undefined,
-      path2: stringValue(item.path2 ?? item.path_2) || undefined,
+      path1: trimGoogleAdText(item.path1 ?? item.path_1, googleAdLimits.displayPath) || undefined,
+      path2: trimGoogleAdText(item.path2 ?? item.path_2, googleAdLimits.displayPath) || undefined,
       headlines,
       descriptions,
       callouts: stringArray(item.callouts).length ? stringArray(item.callouts) : undefined,
@@ -382,6 +389,22 @@ function stringValue(input: unknown): string {
 
 function joinText(parts: unknown[]): string {
   return parts.map(stringValue).filter(Boolean).join('\n\n');
+}
+
+function trimGoogleAdText(input: unknown, maxLength: number): string {
+  const value = stringValue(input).replace(/\s+/g, ' ').trim();
+  if (value.length <= maxLength) return value;
+
+  const clipped = value.slice(0, maxLength + 1);
+  const wordBoundary = clipped.lastIndexOf(' ');
+  const candidate = wordBoundary >= Math.floor(maxLength * 0.55)
+    ? clipped.slice(0, wordBoundary)
+    : clipped.slice(0, maxLength);
+
+  return candidate
+    .replace(/[\s,;:|/\\-]+$/g, '')
+    .trim()
+    .slice(0, maxLength);
 }
 
 function stripCaptionTitlePrefix(caption: string, candidates: string[]): string {
