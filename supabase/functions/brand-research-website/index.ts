@@ -78,9 +78,18 @@ type ResearchExtraction = {
 };
 
 const maxPages = () => {
-  const parsed = Number.parseInt(Deno.env.get('FIRECRAWL_MAX_PAGES') || '5', 10);
-  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 8) : 5;
+  const parsed = Number.parseInt(Deno.env.get('FIRECRAWL_MAX_PAGES') || '3', 10);
+  return Number.isFinite(parsed) ? Math.min(Math.max(parsed, 1), 4) : 3;
 };
+
+const boundedNumberFromEnv = (key: string, fallback: number, min: number, max: number) => {
+  const parsed = Number.parseInt(Deno.env.get(key) || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, min), max);
+};
+
+const firecrawlTimeoutMs = () => boundedNumberFromEnv('FIRECRAWL_TIMEOUT_MS', 12000, 5000, 18000);
+const modelTimeoutMs = () => boundedNumberFromEnv('BRAND_RESEARCH_MODEL_TIMEOUT_MS', 16000, 8000, 25000);
 
 const instantModel = () =>
   Deno.env.get('OPENROUTER_INSTANT_MODEL') ||
@@ -185,15 +194,47 @@ const logoVariant = (value: unknown, fallback: ExtractedLogo['variant']) => {
 
 const endpoint = (path: string) => `https://api.firecrawl.dev/v2/${path}`;
 
-async function firecrawlPost<T>(path: string, body: Record<string, unknown>) {
-  const response = await fetch(endpoint(path), {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+async function firecrawlPost<T>(path: string, body: Record<string, unknown>, requestTimeoutMs = firecrawlTimeoutMs()) {
+  const response = await fetchWithTimeout(endpoint(path), {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('FIRECRAWL_API_KEY')}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify(body),
-  });
+    body: JSON.stringify({
+      ...body,
+      timeout: Math.min(Number(body.timeout || requestTimeoutMs), requestTimeoutMs),
+    }),
+  }, requestTimeoutMs + 1500);
   const text = await response.text();
   if (!response.ok) {
     throw new Error(`Website research failed: ${response.status} ${text.slice(0, 300)}`);
@@ -203,14 +244,15 @@ async function firecrawlPost<T>(path: string, body: Record<string, unknown>) {
 
 async function mapWebsite(url: string) {
   try {
+    const timeout = firecrawlTimeoutMs();
     const data = await firecrawlPost<{ success?: boolean; links?: Array<string | { url?: string; title?: string; description?: string }> }>('map', {
       url,
       sitemap: 'include',
       includeSubdomains: false,
       ignoreQueryParameters: true,
-      limit: 24,
-      timeout: 60000,
-    });
+      limit: 12,
+      timeout,
+    }, timeout);
     return (data.links || [])
       .map((link) => typeof link === 'string' ? { url: link, title: '', description: '' } : {
         url: String(link.url || ''),
@@ -248,6 +290,7 @@ const pageScore = (url: string, title = '', description = '') => {
 
 async function scrapePage(url: string): Promise<ScrapedPage | null> {
   try {
+    const timeout = firecrawlTimeoutMs();
     const data = await firecrawlPost<{
       success?: boolean;
       data?: {
@@ -261,16 +304,16 @@ async function scrapePage(url: string): Promise<ScrapedPage | null> {
       };
     }>('scrape', {
       url,
-      formats: ['markdown', 'links', 'branding', 'html', 'rawHtml'],
+      formats: ['markdown', 'links', 'branding', 'html'],
       onlyMainContent: false,
       onlyCleanContent: false,
       removeBase64Images: true,
       blockAds: true,
-      timeout: 60000,
-    });
+      timeout,
+    }, timeout);
     const page = data.data || {};
     const metadata = page.metadata || {};
-    const markdown = cleanText(page.markdown || page.summary, 7000);
+    const markdown = cleanText(page.markdown || page.summary, 5000);
     if (!markdown) return null;
     return {
       url,
@@ -278,7 +321,7 @@ async function scrapePage(url: string): Promise<ScrapedPage | null> {
       description: cleanText(metadata.description, 420) || '',
       markdown,
       links: Array.isArray(page.links) ? page.links.filter((link): link is string => typeof link === 'string') : [],
-      html: cleanText(page.rawHtml || page.html, 250000) || '',
+      html: cleanText(page.rawHtml || page.html, 120000) || '',
       branding: page.branding || null,
     };
   } catch {
@@ -357,17 +400,17 @@ const extractCssUrls = (pages: ScrapedPage[]) => {
 
 const fetchCssText = async (pages: ScrapedPage[]) => {
   const stylesheets = extractCssUrls(pages);
-  const cssParts: string[] = [];
-  for (const url of stylesheets) {
+  const cssParts = await Promise.all(stylesheets.map(async (url) => {
     try {
-      const response = await fetch(url, { headers: { Accept: 'text/css,*/*' } });
-      if (!response.ok) continue;
-      cssParts.push((await response.text()).slice(0, 250000));
+      const response = await fetchWithTimeout(url, { headers: { Accept: 'text/css,*/*' } }, 2500);
+      if (!response.ok) return '';
+      return (await response.text()).slice(0, 120000);
     } catch {
       // Stylesheets are helpful but not required.
+      return '';
     }
-  }
-  return cssParts.join('\n');
+  }));
+  return cssParts.filter(Boolean).join('\n');
 };
 
 const extractHexColors = (value: string) => {
@@ -490,13 +533,41 @@ async function collectWebsiteContext(websiteUrl: string) {
     .slice(0, maxPages())
     .map((link) => link.url);
 
-  const pages: ScrapedPage[] = [];
-  for (const url of urls) {
-    const page = await scrapePage(url);
-    if (page) pages.push(page);
-  }
-  return pages;
+  const settled = await Promise.allSettled(urls.map((url) => scrapePage(url)));
+  return settled
+    .map((result) => result.status === 'fulfilled' ? result.value : null)
+    .filter((page): page is ScrapedPage => Boolean(page));
 }
+
+const fallbackExtraction = (pages: ScrapedPage[], brandName: string, websiteUrl: string): ResearchExtraction => {
+  const homepage = pages[0];
+  const proofPoints = pages
+    .map((page) => cleanText(`${page.title || page.url}: ${page.description || page.markdown.slice(0, 220)}`, 260))
+    .filter(Boolean) as string[];
+
+  return {
+    brand_name: brandName,
+    tagline: homepage?.title && !homepage.title.toLowerCase().includes(brandName.toLowerCase()) ? homepage.title : undefined,
+    elevator_pitch: homepage?.description || homepage?.markdown.slice(0, 420),
+    research_summary: `Website research reviewed ${pages.length} readable page${pages.length === 1 ? '' : 's'} from ${websiteUrl}. Detailed AI extraction was skipped or timed out, so these fields were filled from the scraped website text and detected assets.`,
+    proof_points: proofPoints.slice(0, 6),
+    unknowns: ['Review tone, audience, and positioning manually if the scraped pages did not state them clearly.'],
+  };
+};
+
+const compactGuideForModel = (guide: Record<string, unknown>) => ({
+  brand_name: guide.brand_name,
+  website_url: guide.website_url,
+  tagline: guide.tagline,
+  industry: guide.industry,
+  target_audience: guide.target_audience,
+  elevator_pitch: guide.elevator_pitch,
+  mission: guide.mission,
+  vision: guide.vision,
+  brand_values: guide.brand_values,
+  personality: guide.personality,
+  content_pillars: guide.content_pillars,
+});
 
 const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown>, brandName: string, websiteUrl: string) => {
   const updates: Record<string, unknown> = {
@@ -702,65 +773,71 @@ Deno.serve(async (req) => {
     const pages = await collectWebsiteContext(normalizedWebsiteUrl);
     if (!pages.length) return jsonResponse({ error: 'No readable website pages were found.' }, 422);
 
-    const extraction = await openRouterJson<ResearchExtraction>({
-      model: instantModel(),
-      temperature: 0.2,
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You extract brand guide facts for a social media agency.',
-            'Return only valid JSON. Do not invent details that are not supported by the scraped pages.',
-            'Prefer concise, specific field values that can be pasted into a brand guide.',
-            'If a field is unknown, omit it or add the gap under unknowns.',
-          ].join(' '),
-        },
-        {
-          role: 'user',
-          content: JSON.stringify({
-            task: 'Extract and normalize brand guide fields from website research.',
-            requestedBrandName: normalizedBrandName,
-            websiteUrl: normalizedWebsiteUrl,
-            currentGuide: guide,
-            requiredShape: {
-              brand_name: 'string',
-              tagline: 'string',
-              industry: 'string',
-              target_audience: 'string',
-              elevator_pitch: 'string',
-              mission: 'string',
-              vision: 'string',
-              brand_values: ['string'],
-              personality: ['string'],
-              writing_dos: ['string'],
-              writing_donts: ['string'],
-              preferred_terms: ['string'],
-              avoided_terms: ['string'],
-              sample_copy: ['string'],
-              content_pillars: ['string'],
-              photography_style: 'string',
-              illustration_style: 'string',
-              iconography_rules: 'string',
-              social_rules: 'string',
-              ad_rules: 'string',
-              research_summary: 'string',
-              proof_points: ['string'],
-              unknowns: ['string'],
-              colors: [{ name: 'string', role: 'primary|secondary|accent|neutral|background', hex: '#RRGGBB' }],
-              fonts: [{ family: 'string', category: 'heading|body|accent|code', source_url: 'string' }],
-              logos: [{ label: 'string', file_url: 'string', variant: 'primary|secondary|icon|monochrome|reversed' }],
-            },
-            pages: pages.map((page) => ({
-              url: page.url,
-              title: page.title,
-              description: page.description,
-              markdown: page.markdown,
-              branding: page.branding,
-            })),
-          }),
-        },
-      ],
-    });
+    let extraction: ResearchExtraction;
+    try {
+      extraction = await withTimeout(openRouterJson<ResearchExtraction>({
+        model: instantModel(),
+        temperature: 0.2,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You extract brand guide facts for a social media agency.',
+              'Return only valid JSON. Do not invent details that are not supported by the scraped pages.',
+              'Prefer concise, specific field values that can be pasted into a brand guide.',
+              'If a field is unknown, omit it or add the gap under unknowns.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              task: 'Extract and normalize brand guide fields from website research.',
+              requestedBrandName: normalizedBrandName,
+              websiteUrl: normalizedWebsiteUrl,
+              currentGuide: compactGuideForModel(guide as Record<string, unknown>),
+              requiredShape: {
+                brand_name: 'string',
+                tagline: 'string',
+                industry: 'string',
+                target_audience: 'string',
+                elevator_pitch: 'string',
+                mission: 'string',
+                vision: 'string',
+                brand_values: ['string'],
+                personality: ['string'],
+                writing_dos: ['string'],
+                writing_donts: ['string'],
+                preferred_terms: ['string'],
+                avoided_terms: ['string'],
+                sample_copy: ['string'],
+                content_pillars: ['string'],
+                photography_style: 'string',
+                illustration_style: 'string',
+                iconography_rules: 'string',
+                social_rules: 'string',
+                ad_rules: 'string',
+                research_summary: 'string',
+                proof_points: ['string'],
+                unknowns: ['string'],
+                colors: [{ name: 'string', role: 'primary|secondary|accent|neutral|background', hex: '#RRGGBB' }],
+                fonts: [{ family: 'string', category: 'heading|body|accent|code', source_url: 'string' }],
+                logos: [{ label: 'string', file_url: 'string', variant: 'primary|secondary|icon|monochrome|reversed' }],
+              },
+              pages: pages.map((page) => ({
+                url: page.url,
+                title: page.title,
+                description: page.description,
+                markdown: page.markdown.slice(0, 3000),
+                branding: page.branding,
+              })),
+            }),
+          },
+        ],
+      }), modelTimeoutMs(), 'Brand field extraction timed out.');
+    } catch (error) {
+      console.warn('Brand field extraction fallback:', error instanceof Error ? error.message : error);
+      extraction = fallbackExtraction(pages, normalizedBrandName, normalizedWebsiteUrl);
+    }
 
     const socialLinks = extractSocialLinks(pages);
     const detectedColors = await buildDetectedPalette(pages, extraction);
