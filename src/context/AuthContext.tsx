@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 
@@ -42,6 +42,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [organization, setOrganization] = useState<Organization | null>(null);
     const [membership, setMembership] = useState<OrgMember | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const currentUserIdRef = useRef<string | null>(null);
+    const organizationRef = useRef<Organization | null>(null);
+    const loadingOrgForUserRef = useRef<string | null>(null);
+
+    useEffect(() => {
+        organizationRef.current = organization;
+    }, [organization]);
 
     // Load the user's organization and membership
     const loadOrgData = async (userId: string) => {
@@ -101,15 +108,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 console.log("Auth state change:", event, newSession?.user?.email);
 
                 hasAuthCallbackRun = true;
+                const nextUser = newSession?.user ?? null;
+                const nextUserId = nextUser?.id ?? null;
+                const isSameUser = !!nextUserId && currentUserIdRef.current === nextUserId;
+                const isFocusRefreshEvent = event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN';
+
+                if (
+                    isFocusRefreshEvent
+                    && isSameUser
+                    && (organizationRef.current || loadingOrgForUserRef.current === nextUserId)
+                ) {
+                    setSession(newSession);
+                    setUser(nextUser);
+                    if (isInitialLoad && organizationRef.current) {
+                        isInitialLoad = false;
+                        clearTimeout(timeoutId);
+                        setIsLoading(false);
+                    }
+                    return;
+                }
+
+                currentUserIdRef.current = nextUserId;
                 const requestId = ++authRequestId;
                 
                 setSession(newSession);
-                setUser(newSession?.user ?? null);
+                setUser(nextUser);
                 
-                if (newSession?.user) {
+                if (nextUser) {
                     setIsLoading(true);
+                    loadingOrgForUserRef.current = nextUser.id;
                     window.setTimeout(() => {
-                        loadOrgData(newSession.user.id).finally(() => {
+                        loadOrgData(nextUser.id).finally(() => {
+                            if (loadingOrgForUserRef.current === nextUser.id) {
+                                loadingOrgForUserRef.current = null;
+                            }
                             if (requestId === authRequestId) {
                                 if (isInitialLoad) {
                                     isInitialLoad = false;
@@ -121,6 +153,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     }, 0);
                     return;
                 } else {
+                    currentUserIdRef.current = null;
+                    loadingOrgForUserRef.current = null;
                     setOrganization(null);
                     setMembership(null);
                 }
