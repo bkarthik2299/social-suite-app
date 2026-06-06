@@ -471,6 +471,84 @@ const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: st
     );
 };
 
+const PlatformMark = ({ platform, className }: { platform: string; className?: string }) => {
+    const normalized = normalizeSocialPlatform(platform);
+    const icons = {
+        instagram: Instagram,
+        facebook: Facebook,
+        linkedin: Linkedin,
+        twitter: Twitter,
+    };
+    const styles = {
+        instagram: 'bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 text-white',
+        facebook: 'bg-[#1877F2] text-white',
+        linkedin: 'bg-[#0A66C2] text-white',
+        twitter: 'bg-black text-white',
+    };
+    const Icon = icons[normalized];
+
+    return (
+        <span
+            className={cn(
+                'flex h-6 w-6 items-center justify-center rounded-full border-2 border-white shadow-sm',
+                styles[normalized],
+                className,
+            )}
+            title={PLATFORM_SPECS[normalized].name}
+        >
+            <Icon className="h-3.5 w-3.5" />
+        </span>
+    );
+};
+
+const PlatformMarkStack = ({ platforms }: { platforms?: string[] }) => {
+    const normalizedPlatforms = Array.from(new Set((platforms || []).map((platform) => normalizeSocialPlatform(platform))));
+    const visiblePlatforms = normalizedPlatforms.length ? normalizedPlatforms : ['facebook'];
+
+    return (
+        <div className="flex -space-x-1.5">
+            {visiblePlatforms.slice(0, 4).map((platform) => (
+                <PlatformMark key={platform} platform={platform} />
+            ))}
+        </div>
+    );
+};
+
+const ContentEmptyState = ({
+    icon: Icon,
+    title,
+    description,
+    actionLabel,
+    onAction,
+    tone = 'blue',
+}: {
+    icon: typeof FileText;
+    title: string;
+    description: string;
+    actionLabel: string;
+    onAction: () => void;
+    tone?: 'blue' | 'emerald' | 'sky';
+}) => {
+    const toneClass = {
+        blue: 'bg-blue-50 text-blue-600',
+        emerald: 'bg-emerald-50 text-emerald-600',
+        sky: 'bg-sky-50 text-sky-600',
+    }[tone];
+
+    return (
+        <div className="soft-card flex flex-col items-center justify-center px-6 py-16 text-center">
+            <div className={cn('mb-5 flex h-12 w-12 items-center justify-center rounded-2xl shadow-sm', toneClass)}>
+                <Icon className="h-5 w-5" />
+            </div>
+            <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-slate-500">{description}</p>
+            <Button onClick={onAction} variant="outline" className="mt-6 rounded-full bg-white px-5">
+                {actionLabel}
+            </Button>
+        </div>
+    );
+};
+
 const VisualGuideControls = ({
     selectedAspectRatio,
     onAspectRatioChange,
@@ -1108,37 +1186,47 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
             </div>
 
             {posts.length === 0 ? (
-                <div className="text-center py-20 border-2 border-dashed rounded-xl bg-slate-50/50">
-                    <p className="text-muted-foreground mb-4">No posts yet. Create your first social media post!</p>
-                    <Button onClick={() => handleOpen()} variant="outline">Create Post</Button>
-                </div>
+                <ContentEmptyState
+                    icon={ImageIcon}
+                    title="No posts yet"
+                    description="Create your first social media post and plan the platform creative from here."
+                    actionLabel="Create Post"
+                    onAction={() => handleOpen()}
+                    tone="sky"
+                />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {posts.map(post => (
-                        <Card key={post.id} className="overflow-hidden hover:shadow-md transition-all cursor-pointer group border-muted relative" onClick={() => handleOpen(post)}>
-                            <div className="bg-muted h-48 flex items-center justify-center text-muted-foreground relative overflow-hidden">
+                        <Card key={post.id} className="soft-card soft-card-interactive overflow-hidden cursor-pointer group relative" onClick={() => handleOpen(post)}>
+                            <div className="h-48 flex items-center justify-center text-muted-foreground relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
                                 {post.image ? (
-                                    <img src={post.image} alt="Post asset" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                                    <img src={post.image} alt="Post asset" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
                                 ) : (
-                                    <div className="flex flex-col items-center gap-2">
-                                        <ImageIcon className="w-8 h-8 opacity-20" />
-                                        <span className="text-xs opacity-50">No Image</span>
+                                    <div className="flex h-full w-full flex-col justify-between p-5">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
+                                                <ImageIcon className="h-5 w-5" />
+                                            </div>
+                                            <PlatformMarkStack platforms={post.platforms} />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Creative Brief</p>
+                                            <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">
+                                                {post.visualGuide || post.topic || post.caption || 'Visual direction can be added when editing this post.'}
+                                            </p>
+                                        </div>
                                     </div>
                                 )}
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <Button variant="secondary" size="sm" className="gap-2">Edit Post</Button>
+                                <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <Button variant="secondary" size="sm" className="gap-2 bg-white shadow-sm hover:bg-slate-50">Edit Post</Button>
                                 </div>
                             </div>
                             <CardContent className="p-4">
                                 <div className="flex justify-between items-start mb-2">
-                                    <Badge variant="outline" className="text-[10px] font-normal">
+                                    <Badge variant="outline" className="border-blue-100 bg-blue-50 text-[10px] font-normal text-blue-600">
                                         {formatDateLabel(post.scheduledDate, 'MMM d', 'Unscheduled')}
                                     </Badge>
-                                    <div className="flex -space-x-1">
-                                        {post.platforms?.includes('linkedin') && <div className="w-5 h-5 rounded-full bg-[#0A66C2] flex items-center justify-center text-[8px] border-2 border-white text-white">Li</div>}
-                                        {post.platforms?.includes('instagram') && <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-yellow-400 via-red-500 flex items-center justify-center text-[8px] border-2 border-white text-white">IG</div>}
-                                        {(!post.platforms || post.platforms.length === 0) && <div className="w-5 h-5 rounded-full bg-gray-400 flex items-center justify-center text-[8px] border-2 border-white text-white">?</div>}
-                                    </div>
+                                    {post.image && <PlatformMarkStack platforms={post.platforms} />}
                                 </div>
                                 <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
                                     {post.name || "Untitled Post"}
@@ -1822,50 +1910,65 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             </div>
 
             {ads.length === 0 ? (
-                <div className="text-center py-20 border-2 border-dashed rounded-xl bg-slate-50/50">
-                    <p className="text-muted-foreground mb-4">No ads created yet. Start your first search campaign!</p>
-                    <Button onClick={() => handleOpen()} variant="outline">Create Google Ad</Button>
-                </div>
+                <ContentEmptyState
+                    icon={Search}
+                    title="No ads created yet"
+                    description="Start your first search campaign and keep the ad set organized in list view."
+                    actionLabel="Create Google Ad"
+                    onAction={() => handleOpen()}
+                    tone="blue"
+                />
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <div className="soft-card overflow-hidden rounded-xl animate-fade-in">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                                <TableHead className="font-semibold text-foreground">Ad</TableHead>
+                                <TableHead className="font-semibold text-foreground">URL</TableHead>
+                                <TableHead className="font-semibold text-foreground">Date</TableHead>
+                                <TableHead className="font-semibold text-foreground">Status</TableHead>
+                                <TableHead className="w-16 font-semibold text-foreground">Action</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
                     {ads.map(ad => (
-                        <Card key={ad.id} className="overflow-hidden hover:shadow-md transition-all cursor-pointer group border-muted relative" onClick={() => handleOpen(ad)}>
-                            {/* Visual Header (Mimics Image Placeholder) */}
-                            <div className="bg-blue-50/50 h-48 flex items-center justify-center text-blue-200 relative overflow-hidden text-center p-4">
-                                <div className="flex flex-col items-center gap-3 transition-transform group-hover:scale-105">
-                                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                                        <Search className="w-6 h-6 text-blue-500" />
+                        <TableRow
+                            key={ad.id}
+                            className="cursor-pointer hover:bg-muted/20"
+                            onClick={() => handleOpen(ad)}
+                        >
+                            <TableCell className="pl-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                                        <Search className="h-4 w-4" />
                                     </div>
-                                    <p className="text-xs font-medium text-blue-400">Google Search Ad</p>
-                                </div>
-                                <div className="absolute inset-0 bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <Button variant="secondary" size="sm" className="gap-2 shadow-sm bg-white hover:bg-slate-50">Edit Ad</Button>
-                                </div>
-                            </div>
-
-                            <CardContent className="p-4">
-                                <div className="flex justify-between items-start mb-3">
-                                    <Badge variant="outline" className="text-[10px] font-normal bg-blue-50 text-blue-600 border-blue-100">
-                                        {formatDateLabel(ad.startDate || ad.createdAt, 'MMM d, yyyy', 'No date')}
-                                    </Badge>
-                                    <div className="w-5 h-5 rounded-full bg-green-500 flex items-center justify-center text-[8px] border-2 border-white text-white" title="Active">
-                                        G
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-semibold text-slate-900">{ad.name || 'Untitled Ad'}</p>
+                                        <p className="truncate text-xs text-slate-500">{(ad.headlines || []).filter(Boolean)[0] || ad.topic || 'Responsive search ad'}</p>
                                     </div>
                                 </div>
-                                <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
-                                    {ad.name || 'Untitled Ad'}
-                                </h4>
-                            </CardContent>
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                onClick={(e) => { e.stopPropagation(); deleteContentItem.mutate(ad.id); }}
-                            >
-                                <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                            </Button>
-                        </Card>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate text-xs text-slate-500">{ad.finalUrl || '-'}</TableCell>
+                            <TableCell className="text-muted-foreground">{formatDateLabel(ad.startDate || ad.createdAt, 'MMM d, yyyy', 'No date')}</TableCell>
+                            <TableCell>
+                                <Badge variant="outline" className="border-blue-100 bg-blue-50 text-[10px] font-normal text-blue-600">
+                                    {ad.status || 'active'}
+                                </Badge>
+                            </TableCell>
+                            <TableCell>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                                    onClick={(e) => { e.stopPropagation(); deleteContentItem.mutate(ad.id); }}
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                            </TableCell>
+                        </TableRow>
                     ))}
+                        </TableBody>
+                    </Table>
                 </div>
             )}
 
@@ -2996,35 +3099,47 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
             {/* Cards Grid */}
             {campaignAds.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-20 text-muted-foreground border-2 border-dashed rounded-xl">
-                    <div className="w-16 h-16 bg-muted/50 rounded-full flex items-center justify-center mb-4">
-                        <Share2 className="w-8 h-8 opacity-50" />
-                    </div>
-                    <h3 className="text-lg font-medium text-foreground">No Social Ads Created</h3>
-                    <p className="mb-6 max-w-sm text-center">Create high-converting ads for Facebook, Instagram, LinkedIn, and X.</p>
-                    <Button onClick={() => handleOpen()}>Create Social Ad</Button>
-                </div>
+                <ContentEmptyState
+                    icon={Share2}
+                    title="No social ads created"
+                    description="Create high-converting ads for Facebook, Instagram, LinkedIn, and X."
+                    actionLabel="Create Social Ad"
+                    onAction={() => handleOpen()}
+                    tone="blue"
+                />
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                     {campaignAds.map((ad) => {
                         const adPlatform = normalizeSocialPlatform(ad.platform);
-                        const adPlatformSpec = platformSpecs[adPlatform];
 
                         return (
                         <Card
                             key={ad.id}
-                            className="overflow-hidden hover:shadow-md transition-all cursor-pointer group border-muted relative"
+                            className="soft-card soft-card-interactive overflow-hidden cursor-pointer group relative"
                             onClick={() => handleOpen(ad)}
                         >
                             {/* Image */}
-                            <div className="aspect-square bg-slate-100 flex items-center justify-center relative">
+                            <div className="aspect-square flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
                                 {ad.image ? (
-                                    <img src={ad.image} alt={ad.name} className="w-full h-full object-cover" />
+                                    <img src={ad.image} alt={ad.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
                                 ) : (
-                                    <Share2 className="w-12 h-12 text-slate-300" />
+                                    <div className="flex h-full w-full flex-col justify-between p-5">
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-primary shadow-sm">
+                                                <Share2 className="h-5 w-5" />
+                                            </div>
+                                            <PlatformMark platform={adPlatform} />
+                                        </div>
+                                        <div>
+                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Ad Creative</p>
+                                            <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">
+                                                {ad.visualGuide || ad.topic || ad.headline || 'Creative direction can be added when editing this ad.'}
+                                            </p>
+                                        </div>
+                                    </div>
                                 )}
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <Button variant="secondary" size="sm">Edit Ad</Button>
+                                <div className="absolute inset-0 bg-slate-950/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <Button variant="secondary" size="sm" className="bg-white shadow-sm hover:bg-slate-50">Edit Ad</Button>
                                 </div>
                             </div>
                             <CardContent className="p-4">
@@ -3040,10 +3155,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                                     <Badge variant="outline" className="text-[10px] font-normal">
                                         {formatDateLabel(ad.scheduledDate, 'MMM d', 'Unscheduled')}
                                     </Badge>
-                                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] border-2 border-white text-white"
-                                        style={{ backgroundColor: adPlatformSpec.color }}>
-                                        {adPlatform.charAt(0).toUpperCase()}
-                                    </div>
+                                    {ad.image && <PlatformMark platform={adPlatform} />}
                                 </div>
                                 <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
                                     {ad.name || "Untitled Ad"}
@@ -3175,35 +3287,63 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
             </div>
 
             {campaignBlogs.length === 0 ? (
-                <div className="text-center py-20 border-2 border-dashed rounded-xl bg-slate-50/50">
-                    <FileText className="w-12 h-12 mx-auto text-slate-300 mb-4" />
-                    <p className="text-muted-foreground mb-4">No blog articles yet. Create your first blog post!</p>
-                    <Button onClick={() => handleOpen()} variant="outline">Create Blog</Button>
-                </div>
+                <ContentEmptyState
+                    icon={FileText}
+                    title="No blog articles yet"
+                    description="Create your first blog post and it will appear here in the clean list view."
+                    actionLabel="Create Blog"
+                    onAction={() => handleOpen()}
+                    tone="emerald"
+                />
             ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <div className="soft-card overflow-hidden rounded-xl animate-fade-in">
+                    <Table>
+                        <TableHeader>
+                            <TableRow className="bg-muted/30 hover:bg-muted/30">
+                                <TableHead className="font-semibold text-foreground">Blog</TableHead>
+                                <TableHead className="font-semibold text-foreground">Status</TableHead>
+                                <TableHead className="font-semibold text-foreground">Publish Date</TableHead>
+                                <TableHead className="font-semibold text-foreground">SEO</TableHead>
+                                <TableHead className="w-16 font-semibold text-foreground">Action</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
                     {campaignBlogs.map(blog => (
-                        <Card key={blog.id} className="overflow-hidden hover:shadow-md transition-all cursor-pointer group border-muted relative" onClick={() => handleOpen(blog)}>
-                            <div className="bg-muted h-40 flex items-center justify-center text-muted-foreground relative overflow-hidden">
-                                <div className="flex flex-col items-center gap-2">
-                                    <FileText className="w-8 h-8 opacity-20" />
+                        <TableRow
+                            key={blog.id}
+                            className="cursor-pointer hover:bg-muted/20"
+                            onClick={() => handleOpen(blog)}
+                        >
+                            <TableCell className="pl-6">
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                                        <FileText className="h-4 w-4" />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="truncate text-sm font-semibold text-slate-900">{blog.title || "Untitled Blog"}</p>
+                                        <p className="truncate text-xs text-slate-500">{blog.slug || blog.metaDescription || 'Blog draft'}</p>
+                                    </div>
                                 </div>
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <Button variant="secondary" size="sm">Edit Blog</Button>
-                                </div>
-                            </div>
-                            <CardContent className="p-4">
-                                <div className="flex justify-between items-start mb-2">
-                                    <Badge variant={blog.status === 'published' ? 'default' : 'secondary'} className="text-[10px]">{blog.status}</Badge>
-                                    <span className="text-[10px] text-slate-400">{formatDateLabel(blog.publishDate, 'MMM d', 'Unscheduled')}</span>
-                                </div>
-                                <h4 className="text-sm font-semibold text-gray-900 line-clamp-2">{blog.title || "Untitled Blog"}</h4>
-                            </CardContent>
-                            <Button variant="ghost" size="icon" className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100" onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(blog.id); }}>
-                                <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                            </Button>
-                        </Card>
+                            </TableCell>
+                            <TableCell>
+                                <Badge variant={blog.status === 'published' ? 'default' : 'secondary'} className="text-[10px]">{blog.status}</Badge>
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">{formatDateLabel(blog.publishDate, 'MMM d, yyyy', 'Unscheduled')}</TableCell>
+                            <TableCell className="max-w-[260px] truncate text-xs text-slate-500">{blog.metaTitle || blog.metaDescription || '-'}</TableCell>
+                            <TableCell>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
+                                    onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(blog.id); }}
+                                >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                            </TableCell>
+                        </TableRow>
                     ))}
+                        </TableBody>
+                    </Table>
                 </div>
             )}
 
