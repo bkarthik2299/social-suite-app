@@ -160,6 +160,31 @@ export function useAiRuns(limit = 5) {
   });
 }
 
+export function useDeleteAiRun() {
+  const qc = useQueryClient();
+  const { organization } = useAuth();
+  const orgId = organization?.id || '';
+
+  return useMutation({
+    mutationFn: async (runId: string) => {
+      const { error } = await db
+        .from('ai_runs')
+        .delete()
+        .eq('id', runId)
+        .eq('org_id', orgId);
+      if (error) throw error;
+      return runId;
+    },
+    onSuccess: (runId) => {
+      void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
+      void qc.removeQueries({ queryKey: ['ai_run', runId] });
+      void qc.removeQueries({ queryKey: ['ai_run_steps', runId] });
+      void qc.removeQueries({ queryKey: ['ai_run_events', runId] });
+      void qc.removeQueries({ queryKey: ['ai_artifacts', runId] });
+    },
+  });
+}
+
 export function useAiAgents() {
   const qc = useQueryClient();
   const { organization, user } = useAuth();

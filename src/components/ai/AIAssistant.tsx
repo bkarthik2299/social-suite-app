@@ -387,9 +387,9 @@ export function AIAssistant() {
   return (
     <>
       <Button
-        variant="outline"
+        variant="ghost"
         size="sm"
-        className="h-9 gap-2 rounded-full border-primary/20 bg-primary/5 px-3 text-primary hover:bg-primary/10"
+        className="soft-card ai-trigger-card h-9 gap-2 rounded-full px-3 text-primary hover:bg-white hover:text-primary"
         onClick={() => setPanelOpen(true)}
       >
         <Sparkles className="h-4 w-4" />

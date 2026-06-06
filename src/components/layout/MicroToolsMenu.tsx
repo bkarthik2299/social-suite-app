@@ -77,20 +77,28 @@ export function MicroToolsMenu() {
     return (
         <Popover>
             <PopoverTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-9 w-9 text-muted-foreground hover:text-foreground">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    className="soft-card h-9 w-9 rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
+                >
                     <LayoutGrid className="h-5 w-5" />
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="w-80 p-4" align="end" sideOffset={8}>
+            <PopoverContent
+                className="soft-card w-80 rounded-2xl border-0 p-4 !shadow-[0_8px_24px_-20px_rgb(37_99_235_/_0.35),0_1px_3px_0_rgb(15_23_42_/_0.05)]"
+                align="end"
+                sideOffset={8}
+            >
                 <div className="grid grid-cols-3 gap-2">
                     {tools.map((tool) => (
                         <Button
                             key={tool.name}
                             variant="ghost"
-                            className="flex flex-col items-center justify-center h-24 gap-2 hover:bg-muted/50 transition-all duration-200 group"
+                            className="flex h-24 flex-col items-center justify-center gap-2 rounded-xl px-2 text-center whitespace-normal shadow-none hover:bg-blue-50/60 focus-visible:ring-0 focus-visible:ring-offset-0 group"
                             onClick={() => handleToolClick(tool.name)}
                         >
-                            <div className={cn("p-2.5 rounded-xl transition-transform group-hover:scale-110", tool.bg)}>
+                            <div className={cn("p-2.5 rounded-xl", tool.bg)}>
                                 <tool.icon className={cn("h-6 w-6", tool.color)} />
                             </div>
                             <span className="text-xs font-medium text-center leading-tight text-muted-foreground group-hover:text-foreground">

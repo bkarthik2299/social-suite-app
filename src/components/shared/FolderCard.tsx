@@ -28,16 +28,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 
 interface FolderCardProps {
   id: string;
   name: string;
   href: string;
+  variant?: 'default' | 'soft';
   onRename?: (id: string, newName: string) => void;
   onDelete?: (id: string) => void;
 }
 
-export function FolderCard({ id, name, href, onRename, onDelete }: FolderCardProps) {
+export function FolderCard({ id, name, href, variant = 'default', onRename, onDelete }: FolderCardProps) {
   const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [newName, setNewName] = useState(name);
@@ -60,7 +62,13 @@ export function FolderCard({ id, name, href, onRename, onDelete }: FolderCardPro
     <>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <Link to={href} className="folder-card group">
+          <Link
+            to={href}
+            className={cn(
+              "folder-card group",
+              variant === 'soft' && "folder-card-soft"
+            )}
+          >
             <div className="w-10 h-10 bg-primary/10 rounded-lg flex items-center justify-center group-hover:bg-primary/20 transition-colors">
               <Folder className="w-5 h-5 text-primary" />
             </div>
