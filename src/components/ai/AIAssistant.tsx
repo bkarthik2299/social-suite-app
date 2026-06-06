@@ -284,6 +284,7 @@ export function AIAssistant() {
         title: 'Drafts created',
         description: `${result.inserted.contentCount} content drafts and ${result.inserted.calendarCount} calendar items were added.`,
       });
+      setMissionOpen(false);
     } catch (error) {
       toast({ title: 'Could not create drafts', description: errorMessage(error), variant: 'destructive' });
     }
@@ -549,16 +550,20 @@ export function AIAssistant() {
                 <DialogTitle className="text-xl">Mission Mode</DialogTitle>
                 <DialogDescription>{missionDescription(currentRun, running)}</DialogDescription>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {researchEvent && <ResearchNotesButton onClick={() => setResearchNotesOpen(true)} />}
-                <Button variant="outline" size="sm" className="h-8 gap-2 rounded-lg px-3" onClick={() => setSkillsOpen(true)}>
-                  <Settings2 className="h-3.5 w-3.5" />
-                  Customize Agent
-                </Button>
-                <Badge variant="outline">{selectedProject?.name || 'Project'}</Badge>
-                <Badge variant="outline">{selectedFolder?.name || 'Auto folder'}</Badge>
-                {selectedGuide?.brand_name && <Badge variant="outline">{selectedGuide.brand_name}</Badge>}
-                <Badge variant="outline">{workMode === 'deep' ? 'Deep Work' : 'Instant'}</Badge>
+              <div className="flex flex-col items-start gap-2 md:items-end">
+                <div className="flex flex-wrap gap-2">
+                  {researchEvent && <ResearchNotesButton onClick={() => setResearchNotesOpen(true)} />}
+                  <Button variant="outline" size="sm" className="h-8 gap-2 rounded-lg px-3" onClick={() => setSkillsOpen(true)}>
+                    <Settings2 className="h-3.5 w-3.5" />
+                    Customize Agent
+                  </Button>
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                  <MissionContextLabel label="Project" value={selectedProject?.name || 'Project'} />
+                  <MissionContextLabel label="Folder" value={selectedFolder?.name || 'Auto folder'} />
+                  {selectedGuide?.brand_name && <MissionContextLabel label="Brand" value={selectedGuide.brand_name} />}
+                  <MissionContextLabel label="Mode" value={workMode === 'deep' ? 'Deep Work' : 'Instant'} />
+                </div>
               </div>
             </div>
             <Progress value={progress} className="mt-4 h-2" />
@@ -588,7 +593,6 @@ export function AIAssistant() {
                     pack={pack}
                     artifact={artifact}
                     events={events}
-                    onOpenResearchNotes={researchEvent ? () => setResearchNotesOpen(true) : undefined}
                     selectedKeys={selectedDraftKeySet}
                     onToggleDraft={(key, checked) => {
                       setSelectedDraftKeys((current) => checked
@@ -1348,6 +1352,15 @@ function ResearchNotesButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+function MissionContextLabel({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-baseline gap-1.5">
+      <span className="shrink-0 font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+      <span className="max-w-[12rem] truncate font-medium text-slate-700">{value}</span>
+    </span>
+  );
+}
+
 function ResearchNotesSheet({
   event,
   open,
@@ -1467,7 +1480,6 @@ function ArtifactPreview({
   pack,
   artifact,
   events,
-  onOpenResearchNotes,
   selectedKeys,
   onToggleDraft,
   onToggleDrafts,
@@ -1475,7 +1487,6 @@ function ArtifactPreview({
   pack: BriefToCampaignArtifact;
   artifact: AiArtifact;
   events: AiRunEvent[];
-  onOpenResearchNotes?: () => void;
   selectedKeys: Set<string>;
   onToggleDraft: (key: string, checked: boolean) => void;
   onToggleDrafts: (keys: string[], checked: boolean) => void;
@@ -1491,19 +1502,6 @@ function ArtifactPreview({
 
   return (
     <div className="w-full min-w-0 max-w-full space-y-5 overflow-hidden">
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h3 className="text-lg font-semibold text-slate-900">{artifact.title}</h3>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">{pack.strategy?.summary || 'Campaign pack is ready for review.'}</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {onOpenResearchNotes && <ResearchNotesButton onClick={onOpenResearchNotes} />}
-          <Badge variant={artifact.status === 'inserted' ? 'default' : 'secondary'} className="w-fit capitalize">
-            {artifact.status}
-          </Badge>
-        </div>
-      </div>
-
       <RunActivityTrail
         key={`activity-${artifact.id}`}
         title="Activity Trail"

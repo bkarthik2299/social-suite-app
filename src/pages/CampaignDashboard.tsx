@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Twitter, Sparkles, Lightbulb, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft, Download } from 'lucide-react';
+import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Twitter, Sparkles, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft, Download } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -127,6 +127,79 @@ const IMAGE_ASPECT_RATIOS = [
     { value: '9:16', label: 'Story' },
     { value: '16:9', label: 'Landscape' },
 ] as const;
+
+type NormalizedImageAspectRatio = '1.91:1' | '16:9' | '9:16' | '4:5' | '1:1';
+type PlatformMediaAspectProfile = {
+    defaultClass: string;
+    classByRatio: Partial<Record<NormalizedImageAspectRatio, string>>;
+};
+
+const SOCIAL_POST_MEDIA_ASPECTS: Record<SocialPlatform, PlatformMediaAspectProfile> = {
+    linkedin: {
+        defaultClass: 'aspect-[1.91/1]',
+        classByRatio: {
+            '1.91:1': 'aspect-[1.91/1]',
+            '16:9': 'aspect-[1.91/1]',
+            '4:5': 'aspect-[4/5]',
+            '1:1': 'aspect-square',
+        },
+    },
+    twitter: {
+        defaultClass: 'aspect-[16/9]',
+        classByRatio: {
+            '16:9': 'aspect-[16/9]',
+            '1:1': 'aspect-square',
+        },
+    },
+    instagram: {
+        defaultClass: 'aspect-square',
+        classByRatio: {
+            '4:5': 'aspect-[4/5]',
+            '1:1': 'aspect-square',
+        },
+    },
+    facebook: {
+        defaultClass: 'aspect-square',
+        classByRatio: {
+            '4:5': 'aspect-[4/5]',
+            '1:1': 'aspect-square',
+        },
+    },
+};
+
+const SOCIAL_AD_MEDIA_ASPECTS: Record<SocialPlatform, PlatformMediaAspectProfile> = {
+    ...SOCIAL_POST_MEDIA_ASPECTS,
+    twitter: {
+        defaultClass: 'aspect-[1.91/1]',
+        classByRatio: {
+            '1.91:1': 'aspect-[1.91/1]',
+            '16:9': 'aspect-[1.91/1]',
+            '1:1': 'aspect-square',
+        },
+    },
+};
+
+const normalizeImageAspectRatio = (value: unknown): NormalizedImageAspectRatio | null => {
+    const ratio = String(value || '').toLowerCase();
+
+    if (ratio.includes('1.91') || ratio.includes('1.9:1')) return '1.91:1';
+    if (ratio.includes('16:9') || ratio.includes('16/9') || ratio.includes('landscape')) return '16:9';
+    if (ratio.includes('9:16') || ratio.includes('9/16') || ratio.includes('story')) return '9:16';
+    if (ratio.includes('4:5') || ratio.includes('4/5') || ratio.includes('portrait')) return '4:5';
+    if (ratio.includes('1:1') || ratio.includes('1/1') || ratio.includes('square')) return '1:1';
+
+    return null;
+};
+
+const platformMediaAspectClass = (
+    platform: SocialPlatform,
+    selectedAspectRatio: unknown,
+    profiles: Record<SocialPlatform, PlatformMediaAspectProfile> = SOCIAL_POST_MEDIA_ASPECTS,
+) => {
+    const profile = profiles[platform];
+    const normalizedRatio = normalizeImageAspectRatio(selectedAspectRatio);
+    return (normalizedRatio && profile.classByRatio[normalizedRatio]) || profile.defaultClass;
+};
 
 const normalizeSocialPlatform = (value: unknown): SocialPlatform => {
     const platform = String(value || '').toLowerCase();
@@ -534,6 +607,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
     const displayAccountName = previewAccountName(accountName);
     const displayAccountHandle = previewAccountHandle(accountName);
     const displayAccountInitials = previewAccountInitials(accountName);
+    const mediaAspectClass = platformMediaAspectClass(platform, post.imageAspectRatio);
 
     useEffect(() => {
         setCaptionExpanded(false);
@@ -567,16 +641,6 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                 </button>
             </>
         );
-    };
-
-    const getAspectRatioClass = () => {
-        switch (platform) {
-            case 'twitter': return "aspect-[16/9]";
-            case 'instagram': return "aspect-square"; // 1:1 default for classic feed
-            case 'linkedin': return "aspect-[1.91/1]";
-            case 'facebook': return "aspect-square"; // 1:1 is very safe for FB Mobile
-            default: return "aspect-video";
-        }
     };
 
     // --- RENDERERS ---
@@ -624,7 +688,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
 
     const RenderMedia = () => (
         post.image ? (
-            <div className={cn("w-full bg-white overflow-hidden relative group border-y border-slate-100", getAspectRatioClass())}>
+            <div className={cn("w-full bg-white overflow-hidden relative group border-y border-slate-100", mediaAspectClass)}>
                 <button
                     type="button"
                     onClick={() => post.image && onImageClick?.(post.image)}
@@ -649,7 +713,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                 </button>
             </div>
         ) : (
-            <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", getAspectRatioClass())}>
+            <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
                 <ImageIcon className="w-8 h-8 text-slate-300" />
                 <p className="text-xs text-slate-400">No media</p>
             </div>
@@ -907,7 +971,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
 
     // Form State
-    const [brief, setBrief] = useState('');
     const [visualGuide, setVisualGuide] = useState('');
     const [caption, setCaption] = useState('');
     const [image, setImage] = useState('');
@@ -933,7 +996,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
         if (post) {
             setEditingPost(post);
             setName(post.name || 'New Social Post');
-            setBrief(post.creativeBrief || '');
             setVisualGuide(post.visualGuide || post.creativeBrief || '');
             setCaption(post.caption);
             setImage(post.image || '');
@@ -946,7 +1008,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
         } else {
             setEditingPost(null);
             setName('New Social Post');
-            setBrief('');
             setVisualGuide('');
             setCaption('');
             setImage('');
@@ -964,7 +1025,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
         const postData = {
             campaignId,
             name,
-            creativeBrief: brief,
+            creativeBrief: topic,
             visualGuide,
             caption,
             hashtags: [], // Hashtags implicity in caption now
@@ -1194,22 +1255,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                                     </CardContent>
                                 </Card>
 
-                                {/* Creative Brief */}
-                                <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
-                                    <CardContent className="p-6">
-                                        <Label className="text-sm font-semibold text-slate-700 mb-3 block">Creative Brief</Label>
-                                        <div className="relative group">
-                                            <Lightbulb className="absolute left-3 top-3 w-4 h-4 text-amber-500 transition-transform group-hover:scale-110" />
-                                            <Input
-                                                className="pl-10 bg-slate-50 border-slate-200 focus:bg-white transition-colors"
-                                                placeholder="e.g. campaign objective, offer, tone, and constraints..."
-                                                value={brief}
-                                                onChange={(e) => setBrief(e.target.value)}
-                                            />
-                                        </div>
-                                    </CardContent>
-                                </Card>
-
                                 {/* Visual Guide */}
                                 <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
                                     <CardContent className="p-6 space-y-3">
@@ -1324,7 +1369,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                         {/* Right Column: Preview */}
                         <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
                             <div className="p-8 h-full flex items-center justify-center">
-                                <SocialPreview post={{ caption, hashtags: [], image, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
+                                <SocialPreview post={{ caption, hashtags: [], image, imageAspectRatio: selectedAspectRatio, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
                             </div>
                         </div>
                     </div>
@@ -2271,7 +2316,10 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
     const displayAccountHandle = previewAccountHandle(projectName);
     const displayAccountInitials = previewAccountInitials(projectName);
 
-    const AdPreview = () => (
+    const AdPreview = () => {
+        const mediaAspectClass = platformMediaAspectClass(platform, selectedAspectRatio, SOCIAL_AD_MEDIA_ASPECTS);
+
+        return (
         <div className="flex flex-col h-full bg-slate-50/50 rounded-xl overflow-hidden border border-slate-100">
             {/* Preview Header / Navbar */}
             <div className="flex flex-col gap-4 items-center justify-center p-4 border-b bg-white/50 backdrop-blur-sm sticky top-0 z-10">
@@ -2392,11 +2440,11 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
                                             {/* Media FIRST for Instagram */}
                                             {image ? (
-                                                <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
+                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
-                                                <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3">
+                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3", mediaAspectClass)}>
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
                                                     <p className="text-xs text-slate-400">No media</p>
                                                 </div>
@@ -2457,11 +2505,11 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
                                             {/* Media */}
                                             {image ? (
-                                                <button type="button" className="w-full aspect-square bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
+                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
-                                                <div className="w-full aspect-square bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
+                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
                                                     <p className="text-xs text-slate-400">No media</p>
                                                 </div>
@@ -2530,11 +2578,11 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
                                             {/* Media */}
                                             {image ? (
-                                                <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in" onClick={() => setLightboxImage(image)}>
+                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
                                                     <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                 </button>
                                             ) : (
-                                                <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100">
+                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
                                                     <ImageIcon className="w-8 h-8 text-slate-300" />
                                                     <p className="text-xs text-slate-400">No media</p>
                                                 </div>
@@ -2596,11 +2644,11 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                                                     {/* Website Card - Twitter style (media + headline as card) */}
                                                     <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                                                         {image ? (
-                                                            <button type="button" className="w-full aspect-[1.91/1] bg-slate-100 overflow-hidden cursor-zoom-in" onClick={() => setLightboxImage(image)}>
+                                                            <button type="button" className={cn("w-full bg-slate-100 overflow-hidden cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
                                                                 <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
                                                             </button>
                                                         ) : (
-                                                            <div className="w-full aspect-[1.91/1] bg-slate-50 flex flex-col items-center justify-center gap-3">
+                                                            <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3", mediaAspectClass)}>
                                                                 <ImageIcon className="w-8 h-8 text-slate-300" />
                                                                 <p className="text-xs text-slate-400">No media</p>
                                                             </div>
@@ -2655,7 +2703,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                 <span>{previewDevice}</span>
             </div>
         </div>
-    );
+        );
+    };
 
     return (
         <div className="space-y-6 animate-fade-in">
