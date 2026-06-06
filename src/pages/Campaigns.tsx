@@ -226,7 +226,7 @@ export default function Campaigns() {
                 <button
                   key={option.id}
                   onClick={() => handleTypeSelect(option.id)}
-                  className="w-full flex items-center gap-5 p-5 bg-white rounded-xl border border-slate-200 text-left transition-all duration-200 group hover:border-blue-500 hover:shadow-md hover:ring-1 hover:ring-blue-500"
+                  className="soft-card soft-card-interactive w-full flex items-center gap-5 p-5 rounded-xl text-left group"
                 >
                   <div className={cn("w-12 h-12 rounded-full flex items-center justify-center transition-colors duration-200", option.color, option.hoverColor)}>
                     <option.icon className="w-6 h-6" strokeWidth={2} />
@@ -243,7 +243,7 @@ export default function Campaigns() {
         </Dialog>
       </div>
 
-      <div className="bg-card rounded-xl border border-border overflow-hidden animate-fade-in shadow-sm">
+      <div className="soft-card rounded-xl overflow-hidden animate-fade-in">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/30 hover:bg-muted/30">

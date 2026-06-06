@@ -137,6 +137,7 @@ export default function Folders() {
               id={folder.id}
               name={folder.name}
               href={folderPath(project, folder, projects, projectFolders)}
+              variant="soft"
               onRename={handleRename}
               onDelete={handleDelete}
             />

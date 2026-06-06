@@ -108,6 +108,7 @@ export default function Projects() {
               id={project.id}
               name={project.name}
               href={projectPath(project, projects)}
+              variant="soft"
               onRename={handleRename}
               onDelete={handleDelete}
             />

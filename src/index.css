@@ -4,6 +4,11 @@
 @tailwind components;
 @tailwind utilities;
 
+@property --ai-border-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
 
 @layer base {
   :root {
@@ -101,15 +106,71 @@
 
 @layer components {
   .sidebar-nav-item {
-    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-muted-foreground transition-all duration-200 hover:bg-sidebar-active-bg/50;
+    @apply flex h-11 items-center gap-3 rounded-2xl px-3.5 text-[14px] font-medium text-slate-600 transition-all duration-200 hover:bg-white/70 hover:text-slate-900;
   }
   
   .sidebar-nav-item.active {
-    @apply bg-sidebar-active-bg text-primary font-medium;
+    @apply bg-white text-primary;
+    box-shadow: 0 8px 24px -20px rgb(37 99 235 / 0.35), 0 1px 3px rgb(15 23 42 / 0.05);
   }
 
   .folder-card {
     @apply flex items-center gap-3 px-4 py-4 bg-card border border-border rounded-xl hover:shadow-md transition-all duration-200 cursor-pointer;
+  }
+
+  .soft-card {
+    @apply border-0 bg-white;
+    box-shadow: 0 8px 24px -20px rgb(37 99 235 / 0.35), 0 1px 3px rgb(15 23 42 / 0.05);
+  }
+
+  .soft-card-interactive {
+    @apply transition-all duration-200;
+  }
+
+  .soft-card-interactive:hover {
+    @apply -translate-y-0.5;
+    box-shadow: 0 18px 42px -22px rgb(37 99 235 / 0.5), 0 10px 24px -18px rgb(15 23 42 / 0.2);
+  }
+
+  .folder-card-soft {
+    @apply soft-card soft-card-interactive;
+  }
+
+  .ai-trigger-card {
+    @apply relative overflow-hidden transition-colors duration-200;
+    isolation: isolate;
+  }
+
+  .ai-trigger-card:hover {
+    transform: none;
+  }
+
+  .ai-trigger-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: conic-gradient(
+      from var(--ai-border-angle, 0deg),
+      rgb(37 99 235 / 0.14),
+      rgb(99 102 241 / 0.34),
+      rgb(14 165 233 / 0.2),
+      rgb(37 99 235 / 0.14)
+    );
+    pointer-events: none;
+    animation: ai-border-flow 7s linear infinite;
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  @keyframes ai-border-flow {
+    to {
+      --ai-border-angle: 360deg;
+    }
   }
 
   .campaign-badge {
