@@ -427,7 +427,7 @@ const PasswordVault = () => {
                         <h1 className="text-3xl font-bold tracking-tight text-gray-900">Credentials Vault</h1>
                     </div>
                     <div className="flex items-center gap-3 w-full md:w-auto">
-                        <Button variant="outline" className="gap-2 rounded-full bg-white px-6" onClick={() => setIsGeneratorOpen(true)}>
+                        <Button variant="outline" className="tool-surface tool-surface-interactive gap-2 rounded-full px-6 hover:bg-white" onClick={() => setIsGeneratorOpen(true)}>
                             <ShieldCheck className="w-4 h-4 text-blue-600" />
                             Generate Password
                         </Button>
@@ -443,7 +443,7 @@ const PasswordVault = () => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
                         placeholder="Search Credentials..."
-                        className="pl-10 h-10 text-sm bg-white shadow-sm border-slate-200 rounded-lg"
+                        className="tool-surface h-10 rounded-xl pl-10 text-sm"
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                     />
@@ -461,7 +461,7 @@ const PasswordVault = () => {
                         return (
                             <Card
                                 key={cred.id}
-                                className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1"
+                                className="tool-surface tool-surface-interactive group relative overflow-hidden rounded-xl"
                             >
                                 <CardContent className="p-5">
                                     {/* Minimal Header Row */}
@@ -515,7 +515,7 @@ const PasswordVault = () => {
                                         {/* Username Group */}
                                         <div className="space-y-1">
                                             <Label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider pl-1">Username</Label>
-                                            <div className="flex items-center justify-between p-2.5 bg-slate-50/50 rounded-lg border border-slate-100 group/field hover:border-slate-200 transition-colors">
+                                            <div className="flex items-center justify-between rounded-lg bg-slate-50/70 p-2.5 transition-colors group/field hover:bg-blue-50/45">
                                                 <span className="text-sm font-medium text-slate-700 truncate select-all">{cred.username}</span>
                                                 <Button
                                                     variant="ghost"
@@ -531,7 +531,7 @@ const PasswordVault = () => {
                                         {/* Password Group */}
                                         <div className="space-y-1">
                                             <Label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider pl-1">Password</Label>
-                                            <div className="flex items-center justify-between p-2.5 bg-slate-50/50 rounded-lg border border-slate-100 group/field hover:border-slate-200 transition-colors">
+                                            <div className="flex items-center justify-between rounded-lg bg-slate-50/70 p-2.5 transition-colors group/field hover:bg-blue-50/45">
                                                 <span className="text-sm font-mono text-slate-700 truncate select-all">
                                                     {isVisible ? decryptString(cred.encrypted_password) : '••••••••••••'}
                                                 </span>
@@ -559,7 +559,7 @@ const PasswordVault = () => {
 
                                     <Button
                                         variant="outline"
-                                        className="w-full mt-5 border-slate-200 hover:bg-slate-50 text-slate-700"
+                                        className="mt-5 w-full rounded-xl border-0 bg-slate-50 text-slate-700 hover:bg-blue-50/70"
                                         onClick={() => openEditDialog(cred)}
                                     >
                                         Edit Details
@@ -568,7 +568,7 @@ const PasswordVault = () => {
                             </Card>
                         );
                     })}
-                    {filteredCredentials.length === 0 && (
+                    {!isLoading && filteredCredentials.length === 0 && (
                         <div className="text-center col-span-full py-10 text-muted-foreground flex flex-col items-center gap-3">
                             <Search className="w-12 h-12 opacity-20" />
                             <p>No credentials found matching your search.</p>

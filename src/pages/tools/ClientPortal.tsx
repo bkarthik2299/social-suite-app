@@ -684,17 +684,17 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
             <ContextMenu>
                 <ContextMenuTrigger asChild>
                     <Card
-                        className="group hover:shadow-lg transition-all cursor-pointer border-slate-200 overflow-hidden relative"
+                        className="tool-surface tool-surface-interactive group relative cursor-pointer overflow-hidden rounded-xl"
                         onClick={onSelect}
                     >
-                        <CardHeader className="flex flex-row items-center gap-4 pb-4 bg-slate-50/50 border-b border-slate-100">
-                            <Avatar className="h-14 w-14 border border-slate-200 bg-slate-100 shadow-none">
+                        <CardHeader className="flex flex-row items-center gap-4 bg-white pb-4">
+                            <Avatar className="h-14 w-14 bg-slate-100 shadow-none">
                                 <AvatarFallback className="bg-slate-100 text-base font-semibold text-slate-700">
                                     {client.logo}
                                 </AvatarFallback>
                             </Avatar>
                             <div className="min-w-0 flex-1">
-                                <CardTitle className="text-lg group-hover:text-primary transition-colors">{client.name}</CardTitle>
+                                <CardTitle className="text-lg text-slate-950 transition-colors group-hover:text-primary">{client.name}</CardTitle>
                                 <CardDescription>
                                     {client.company && client.company !== client.name ? client.company : 'Client review workspace'}
                                 </CardDescription>
@@ -713,7 +713,7 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
                                 <Trash2 className="h-4 w-4" />
                             </Button>
                         </CardHeader>
-                        <CardContent className="pt-6">
+                        <CardContent className="pt-2">
                             <div className="flex items-center justify-between text-sm">
                                 <span className="text-slate-500 font-medium">Pending Reviews</span>
                                 <Badge variant={client.pendingCount > 0 ? "secondary" : "outline"} className={cn(
@@ -840,7 +840,7 @@ function ClientGrid({ clients, onSelectClient, onRenameClient, onDeleteClient, o
                         <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                         <Input
                             placeholder="Search clients..."
-                            className="pl-9 bg-white"
+                            className="tool-surface h-10 rounded-xl pl-9"
                             value={searchQuery}
                             onChange={(e) => setSearchQuery(e.target.value)}
                         />
@@ -1050,13 +1050,13 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
     return (
         <div className="flex h-[calc(100vh-120px)] gap-6">
             {/* Sidebar */}
-            <div className="w-72 flex flex-col gap-4 border-r pr-6">
+            <div className="tool-surface flex w-72 flex-col gap-4 rounded-xl p-4">
                 <Button variant="ghost" className="self-start -ml-2 text-slate-500 hover:text-slate-900 gap-2 mb-2" onClick={onBack}>
                     <ArrowLeft className="w-4 h-4" /> Back to Clients
                 </Button>
 
                 <div className="flex items-center gap-3 px-1 mb-2">
-                    <Avatar className="h-10 w-10 border border-slate-200 bg-slate-100 shadow-none">
+                    <Avatar className="h-10 w-10 bg-slate-100 shadow-none">
                         <AvatarFallback className="bg-slate-100 text-sm font-semibold text-slate-700">
                             {client.logo}
                         </AvatarFallback>
@@ -1089,7 +1089,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                     className={cn(
                                         "group/feed flex items-center rounded-lg transition-all",
                                         selectedFeedId === feed.id
-                                            ? "bg-primary/10 text-primary shadow-sm ring-1 ring-primary/20"
+                                            ? "bg-primary/10 text-primary shadow-sm"
                                             : "text-slate-600 hover:bg-slate-50"
                                     )}
                                 >
@@ -1124,7 +1124,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                     </div>
                 </ScrollArea>
 
-                <div className="mt-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                <div className="mt-auto rounded-xl bg-slate-50/80 p-3 text-xs text-slate-500">
                     <p className="font-semibold text-slate-700">Client review access</p>
                     <p className="mt-1 leading-5">Share a feed link from the header. Clients only see the selected review feed.</p>
                 </div>
@@ -1134,7 +1134,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
             <div className="flex-1 flex flex-col min-w-0">
                 {selectedFeedId ? (
                     <>
-                        <div className="flex flex-col gap-4 pb-6 border-b border-slate-100 mb-6 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="mb-6 flex flex-col gap-4 pb-2 xl:flex-row xl:items-start xl:justify-between">
                             <div className="min-w-0">
                                 <h1 className="text-2xl font-bold text-slate-900">{selectedFeed?.name}</h1>
                                 <p className="text-slate-500 text-sm mt-1">{feedPosts.length} posts in this feed</p>
@@ -1142,7 +1142,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                             <div className="flex flex-wrap items-center gap-3">
                                 <Button
                                     variant="outline"
-                                    className="gap-2 rounded-full border-slate-200"
+                                    className="tool-surface tool-surface-interactive gap-2 rounded-full"
                                     onClick={handleCopyShareLink}
                                     disabled={!selectedFeedId || copyingLink}
                                 >
@@ -1153,7 +1153,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                     <Button
                                         variant="outline"
                                         size="icon"
-                                        className="rounded-full border-slate-200"
+                                        className="tool-surface tool-surface-interactive rounded-full"
                                         onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
                                         aria-label="Open client review link"
                                         title="Open client review link"
@@ -1161,7 +1161,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                         <ExternalLink className="w-4 h-4" />
                                     </Button>
                                 )}
-                                <Button variant="outline" className="gap-2 rounded-full border-slate-200">
+                                <Button variant="outline" className="tool-surface tool-surface-interactive gap-2 rounded-full">
                                     <Filter className="w-4 h-4" /> Filter
                                 </Button>
                                 <PostPicker
@@ -1175,8 +1175,8 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                         <ScrollArea className="flex-1 pr-6">
                             <div className="space-y-8 max-w-4xl mx-auto pb-20">
                                 {feedPosts.length === 0 ? (
-                                    <div className="text-center py-24 bg-slate-50/50 rounded-2xl border border-dashed border-slate-200">
-                                        <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-sm border border-slate-100">
+                                    <div className="tool-surface rounded-xl py-24 text-center">
+                                        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-xl bg-primary/10 text-primary">
                                             <ImageIcon className="w-8 h-8 text-slate-300" />
                                         </div>
                                         <h3 className="text-slate-900 font-medium mb-1">No posts here yet</h3>
@@ -1501,7 +1501,7 @@ function PostCard({
     };
 
     return (
-        <Card className="overflow-hidden border-slate-200 shadow-sm hover:shadow-md transition-shadow group bg-white">
+        <Card className="tool-surface tool-surface-interactive group overflow-hidden rounded-xl bg-white">
             {/* Header */}
             <div className="flex flex-row items-center justify-between py-3 px-4 border-b border-slate-100 bg-slate-50/50">
                 <div className="flex items-center gap-3">
@@ -1622,7 +1622,7 @@ function PostCard({
                             )}
                         </ScrollArea>
 
-                        <div className="mt-auto bg-white rounded-xl border border-slate-200 shadow-sm p-1 flex items-end focus-within:ring-2 focus-within:ring-primary/20 focus-within:border-primary transition-all">
+                        <div className="mt-auto flex items-end rounded-xl bg-white p-1 shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary/20">
                             <Textarea
                                 placeholder="Add a comment..."
                                 className="min-h-[40px] max-h-[100px] border-0 focus-visible:ring-0 resize-none text-sm bg-transparent placeholder:text-slate-400"
@@ -2128,7 +2128,7 @@ function SocialPostViewer({ post }: { post: ReviewPost }) {
     const title = post.name || post.topic || 'Social post preview';
 
     return (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden max-w-[520px] mx-auto">
+        <div className="tool-surface mx-auto max-w-[520px] overflow-hidden rounded-xl">
             <div className="p-4 border-b border-slate-100">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -2193,7 +2193,7 @@ function SocialPostViewer({ post }: { post: ReviewPost }) {
 
 function GoogleAdViewer({ post }: { post: ReviewPost }) {
     return (
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 w-full hover:shadow-md transition-shadow">
+        <div className="tool-surface tool-surface-interactive w-full rounded-xl p-5">
             <div className="flex items-center gap-3 mb-3">
                 <div className="w-7 h-7 rounded-full bg-slate-100 border border-slate-200 p-1">
                     <div className="w-full h-full rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">G</div>
@@ -2235,7 +2235,7 @@ function SocialAdViewer({ post }: { post: ReviewPost }) {
     const cta = formatLabel(post.ctaText || post.cta) || 'Learn More';
 
     return (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm max-w-[560px] mx-auto overflow-hidden">
+        <div className="tool-surface mx-auto max-w-[560px] overflow-hidden rounded-xl">
             <div className="flex items-start justify-between p-4">
                 <div className="flex items-center gap-3">
                     <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm", getPlatformTone(platform))}>
@@ -2305,7 +2305,7 @@ function BlogViewer({ post }: { post: ReviewPost }) {
     const paragraphs = articleBody.split('\n').map(para => para.trim()).filter(Boolean);
 
     return (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm w-full overflow-hidden hover:shadow-md transition-all group/blog">
+        <div className="tool-surface tool-surface-interactive w-full overflow-hidden rounded-xl group/blog">
             {image ? (
                 <div className="h-48 sm:h-64 overflow-hidden relative">
                     <img src={image} alt="Article cover" className="w-full h-full object-cover group-hover/blog:scale-105 transition-transform duration-700" />
@@ -2447,7 +2447,7 @@ function CampaignViewer({ post }: { post: ReviewPost }) {
     }
 
     return (
-        <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden w-full max-w-[620px] mx-auto">
+        <div className="tool-surface mx-auto w-full max-w-[620px] overflow-hidden rounded-xl">
             <div className="p-6 border-b border-slate-100 bg-gradient-to-b from-primary/5 to-white">
                 <div className="flex items-start gap-4">
                     <div className={cn("flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border", accentClass)}>
@@ -2519,7 +2519,7 @@ function LegacyBlogViewer({ post }: { post: ReviewPost }) {
     const [expanded, setExpanded] = useState(false);
 
     return (
-        <div className="bg-white border border-slate-200 rounded-xl shadow-sm w-full hover:shadow-md transition-all group/blog">
+        <div className="tool-surface tool-surface-interactive w-full rounded-xl group/blog">
             <div className="relative">
                 {post.image && (
                     <div className="h-48 sm:h-64 overflow-hidden rounded-t-xl relative">
@@ -2571,7 +2571,7 @@ function LegacyBlogViewer({ post }: { post: ReviewPost }) {
 
 function LegacyCampaignViewer({ post }: { post: ReviewPost }) {
     return (
-        <div className="flex flex-col items-center justify-center h-full p-12 text-center bg-white border border-slate-200 rounded-2xl border-dashed">
+        <div className="tool-surface flex h-full flex-col items-center justify-center rounded-xl p-12 text-center">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-br from-primary/10 to-primary/5 border border-slate-100 flex items-center justify-center mb-6 shadow-notebook">
                 <Layers className="w-10 h-10 text-primary" />
             </div>

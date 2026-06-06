@@ -14,6 +14,16 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useFeedFolders, useFeedPosts } from '@/hooks/useDatabase';
 import { Label } from "@/components/ui/label"; // Ensure Label is imported or use standard label
 import { useToast } from "@/components/ui/use-toast";
@@ -286,6 +296,12 @@ const formatDate = (date: Date) => {
 
 const initialPosts: SavedPost[] = [];
 
+type FeedDeleteTarget = {
+    type: 'folder' | 'post';
+    id: string;
+    name: string;
+};
+
 // --- Sub-components ---
 
 const FeedFolderCard = ({ folder, onDelete, onRename, onClick, isSelected }: {
@@ -298,9 +314,9 @@ const FeedFolderCard = ({ folder, onDelete, onRename, onClick, isSelected }: {
     <div
         onClick={onClick}
         className={cn(
-            "min-w-[280px] p-4 rounded-xl border flex flex-col justify-between h-32 relative group cursor-pointer transition-all hover:shadow-md",
+            "group relative flex h-32 min-w-[280px] cursor-pointer flex-col justify-between rounded-xl p-4 shadow-[0_8px_24px_-22px_rgba(15,23,42,0.18)] transition-colors duration-150 hover:shadow-[0_8px_24px_-22px_rgba(15,23,42,0.18)]",
             folder.color,
-            isSelected ? "ring-2 ring-offset-2 ring-blue-500 shadow-md" : ""
+            isSelected ? "shadow-[inset_0_0_0_1px_rgba(15,23,42,0.08),0_8px_24px_-22px_rgba(15,23,42,0.18)]" : ""
         )}
     >
         <div className="flex justify-between items-start">
@@ -447,9 +463,9 @@ const SocialPostCard = ({ post, folders, onDelete, onAssignFolder, onRefresh }: 
     };
 
     return (
-        <div className="break-inside-avoid mb-6 rounded-xl border bg-white shadow-sm hover:shadow-md transition-all overflow-hidden group relative">
+        <div className="tool-surface tool-surface-interactive group relative mb-6 break-inside-avoid overflow-hidden rounded-xl">
             {/* Action Overlay (Visible on Hover) */}
-            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 bg-white/90 backdrop-blur-sm p-1 rounded-full shadow-sm border">
+            <div className="absolute right-2 top-2 z-10 flex gap-1 rounded-full bg-white/90 p-1 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100">
                 {/* Refresh OG Data Button */}
                 {!post.ogImage && !post.ogTitle && (
                     <Button
@@ -543,6 +559,7 @@ const FeedMonitor = () => {
     const [editingFolder, setEditingFolder] = useState<FeedFolder | null>(null);
     const [renameName, setRenameName] = useState('');
     const [isRenameOpen, setIsRenameOpen] = useState(false);
+    const [deleteTarget, setDeleteTarget] = useState<FeedDeleteTarget | null>(null);
 
     const handleAddPost = async () => {
         if (!searchUrl) {
@@ -583,10 +600,11 @@ const FeedMonitor = () => {
     };
 
     const handleDeletePost = (postId: string) => {
-        deletePost.mutate(postId);
-        toast({
-            title: "Post Deleted",
-            description: "The post has been removed from your feed.",
+        const post = posts.find(p => p.id === postId);
+        setDeleteTarget({
+            type: 'post',
+            id: postId,
+            name: post?.ogTitle || post?.content || 'this saved post',
         });
     };
 
@@ -599,8 +617,27 @@ const FeedMonitor = () => {
     };
 
     const handleDeleteFolder = (folderId: string) => {
-        deleteFolder.mutate(folderId);
-        toast({ title: "Folder Deleted", description: "Folder and associations removed." });
+        const folder = folders.find(f => f.id === folderId);
+        setDeleteTarget({
+            type: 'folder',
+            id: folderId,
+            name: folder?.name || 'this folder',
+        });
+    };
+
+    const confirmDeleteTarget = () => {
+        if (!deleteTarget) return;
+        if (deleteTarget.type === 'post') {
+            deletePost.mutate(deleteTarget.id);
+            toast({
+                title: "Post Deleted",
+                description: "The post has been removed from your feed.",
+            });
+        } else {
+            deleteFolder.mutate(deleteTarget.id);
+            toast({ title: "Folder Deleted", description: "Folder and associations removed." });
+        }
+        setDeleteTarget(null);
     };
 
     const handleRefreshPost = async (postId: string) => {
@@ -663,15 +700,15 @@ const FeedMonitor = () => {
                 </div>
 
                 {/* Input Bar */}
-                <div className="flex gap-4 items-center bg-white p-2 rounded-2xl shadow-sm border">
+                <div className="tool-surface flex items-center gap-4 rounded-2xl p-2">
                     <Input
                         placeholder="Paste the URL Here"
-                        className="flex-1 border-0 shadow-none focus-visible:ring-0 text-lg h-12 bg-transparent"
+                        className="h-12 flex-1 border-0 bg-transparent text-base shadow-none focus-visible:ring-0"
                         value={searchUrl}
                         onChange={(e) => setSearchUrl(e.target.value)}
                     />
                     <Select value={selectedFolderFilter} onValueChange={setSelectedFolderFilter}>
-                        <SelectTrigger className="w-[180px] bg-slate-50 border-0 h-10 rounded-xl max-w-[200px]">
+                        <SelectTrigger className="h-10 w-[180px] max-w-[200px] rounded-xl border-0 bg-slate-50">
                             <SelectValue placeholder="Assign to Folder" />
                         </SelectTrigger>
                         <SelectContent>
@@ -702,10 +739,10 @@ const FeedMonitor = () => {
                                         onChange={(e) => setSearchQuery(e.target.value)}
                                         onBlur={() => !searchQuery && setIsSearchExpanded(false)}
                                         placeholder="Search..."
-                                        className="h-9 rounded-full bg-white"
+                                        className="tool-surface h-9 rounded-full"
                                     />
                                 ) : (
-                                    <Button variant="outline" size="icon" className="h-9 w-9 rounded-full" onClick={() => setIsSearchExpanded(true)}>
+                                    <Button variant="outline" size="icon" className="tool-surface tool-surface-interactive h-9 w-9 rounded-full" onClick={() => setIsSearchExpanded(true)}>
                                         <Search className="w-4 h-4" />
                                     </Button>
                                 )}
@@ -767,7 +804,7 @@ const FeedMonitor = () => {
                             ))}
                             {/* Empty Add Card */}
                             <div className="min-w-[100px] p-4 flex items-center justify-center h-32">
-                                <Button variant="outline" size="icon" className="h-10 w-10 rounded-full border-dashed border-2" onClick={() => setIsNewFolderOpen(true)}>
+                                <Button variant="outline" size="icon" className="tool-surface tool-surface-interactive h-10 w-10 rounded-full border-0" onClick={() => setIsNewFolderOpen(true)}>
                                     <Plus className="w-4 h-4 text-muted-foreground" />
                                 </Button>
                             </div>
@@ -784,7 +821,7 @@ const FeedMonitor = () => {
                     </div>
 
                     {/* Tabs / Filters */}
-                    <div className="flex gap-4 border-b pb-1">
+                    <div className="pb-1">
                         {[
                             { id: 'all', label: 'All Posts', icon: null }, // Hidden in design but good for logic, using custom buttons instead as per design
                         ].map(t => null)}
@@ -793,28 +830,28 @@ const FeedMonitor = () => {
                         <div className="grid grid-cols-4 w-full gap-4">
                             <Button
                                 variant={activeTab === 'facebook' ? 'default' : 'outline'}
-                                className={cn("h-12 text-md gap-2", activeTab === 'facebook' ? 'bg-blue-600' : 'bg-white hover:bg-slate-50 border-slate-200')}
+                                className={cn("h-12 gap-2 text-sm", activeTab === 'facebook' ? 'bg-blue-600' : 'tool-surface tool-surface-interactive bg-white hover:bg-blue-50/40')}
                                 onClick={() => setActiveTab(activeTab === 'facebook' ? 'all' : 'facebook')}
                             >
                                 <Facebook className={cn("w-5 h-5", activeTab === 'facebook' ? 'text-white' : 'text-blue-600')} /> Facebook
                             </Button>
                             <Button
                                 variant={activeTab === 'instagram' ? 'default' : 'outline'}
-                                className={cn("h-12 text-md gap-2", activeTab === 'instagram' ? 'bg-pink-600' : 'bg-white hover:bg-slate-50 border-slate-200')}
+                                className={cn("h-12 gap-2 text-sm", activeTab === 'instagram' ? 'bg-pink-600' : 'tool-surface tool-surface-interactive bg-white hover:bg-pink-50/40')}
                                 onClick={() => setActiveTab(activeTab === 'instagram' ? 'all' : 'instagram')}
                             >
                                 <Instagram className={cn("w-5 h-5", activeTab === 'instagram' ? 'text-white' : 'text-pink-600')} /> Instagram
                             </Button>
                             <Button
                                 variant={activeTab === 'twitter' ? 'default' : 'outline'}
-                                className={cn("h-12 text-md gap-2", activeTab === 'twitter' ? 'bg-slate-900' : 'bg-white hover:bg-slate-50 border-slate-200')}
+                                className={cn("h-12 gap-2 text-sm", activeTab === 'twitter' ? 'bg-slate-900' : 'tool-surface tool-surface-interactive bg-white hover:bg-slate-50')}
                                 onClick={() => setActiveTab(activeTab === 'twitter' ? 'all' : 'twitter')}
                             >
                                 <Twitter className={cn("w-5 h-5", activeTab === 'twitter' ? 'text-white' : 'text-slate-900')} /> X (Twitter)
                             </Button>
                             <Button
                                 variant={activeTab === 'linkedin' ? 'default' : 'outline'}
-                                className={cn("h-12 text-md gap-2", activeTab === 'linkedin' ? 'bg-blue-700' : 'bg-white hover:bg-slate-50 border-slate-200')}
+                                className={cn("h-12 gap-2 text-sm", activeTab === 'linkedin' ? 'bg-blue-700' : 'tool-surface tool-surface-interactive bg-white hover:bg-blue-50/40')}
                                 onClick={() => setActiveTab(activeTab === 'linkedin' ? 'all' : 'linkedin')}
                             >
                                 <Linkedin className={cn("w-5 h-5", activeTab === 'linkedin' ? 'text-white' : 'text-blue-700')} /> LinkedIn
@@ -833,6 +870,28 @@ const FeedMonitor = () => {
                 </div>
 
             </div>
+            <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+                <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>
+                            Delete {deleteTarget?.type === 'folder' ? 'folder' : 'saved post'}?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently delete "{deleteTarget?.name || 'this item'}". This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deletePost.isPending || deleteFolder.isPending}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={confirmDeleteTarget}
+                            disabled={deletePost.isPending || deleteFolder.isPending}
+                            className="bg-red-600 text-white hover:bg-red-700"
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </AppLayout>
     );
 };

@@ -137,8 +137,8 @@ export default function SocialPreview() {
     return (
         <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'SM Preview', path: '/tools/sm-preview' }]} noPadding>
             <div className="flex h-[calc(100vh-4rem)] min-h-0 flex-col overflow-hidden bg-slate-50 lg:flex-row">
-                <aside className="flex min-h-0 border-b border-slate-200 bg-white lg:w-[360px] lg:flex-col lg:border-b-0 lg:border-r">
-                    <div className="hidden border-b border-slate-200 p-5 lg:block">
+                <aside className="flex min-h-0 bg-white shadow-[8px_0_28px_-30px_rgba(37,99,235,0.45),1px_0_3px_rgba(15,23,42,0.04)] lg:w-[360px] lg:flex-col">
+                    <div className="hidden p-5 lg:block">
                         <div className="flex items-center gap-3">
                             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
                                 <ScanEye className="h-5 w-5" />
@@ -189,12 +189,12 @@ export default function SocialPreview() {
                     />
                 </main>
 
-                <aside className="min-h-0 border-t border-slate-200 bg-white lg:w-[340px] lg:border-l lg:border-t-0">
+                <aside className="min-h-0 bg-white shadow-[-8px_0_28px_-30px_rgba(37,99,235,0.45),-1px_0_3px_rgba(15,23,42,0.04)] lg:w-[340px]">
                     <div className="h-full overflow-y-auto p-5">
                         <div className="space-y-6">
                             <FitStatusCard assessment={assessment} />
 
-                            <section className="rounded-lg border border-slate-200 bg-white p-4">
+                            <section className="tool-surface rounded-xl p-4">
                                 <div className="mb-4 flex items-center justify-between gap-3">
                                     <div>
                                         <h2 className="text-sm font-semibold text-slate-950">Format details</h2>
@@ -230,7 +230,7 @@ export default function SocialPreview() {
                                 </div>
                             </section>
 
-                            <section className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                            <section className="tool-surface rounded-xl p-4">
                                 <DeviceToolbar
                                     deviceMode={deviceMode}
                                     setDeviceMode={setDeviceMode}
@@ -256,7 +256,7 @@ function FitStatusCard({ assessment }: { assessment: FitAssessment }) {
     const Icon = styles.icon;
 
     return (
-        <section className={cn('rounded-lg border p-4', styles.panel)}>
+        <section className={cn('rounded-xl border-0 p-4 shadow-[0_10px_28px_-24px_rgba(37,99,235,0.35),0_1px_3px_rgba(15,23,42,0.05)]', styles.panel)}>
             <div className="flex items-start justify-between gap-4">
                 <div className="flex items-start gap-3">
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white shadow-sm">
@@ -283,10 +283,9 @@ function FitStatusCard({ assessment }: { assessment: FitAssessment }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
     return (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <div className="rounded-lg bg-slate-50/80 p-3">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</p>
             <p className="mt-1 truncate font-mono text-sm font-semibold text-slate-950" title={value}>{value}</p>
         </div>
     );
 }
-

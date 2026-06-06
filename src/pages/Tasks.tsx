@@ -15,6 +15,16 @@ import {
   DialogTrigger,
   DialogFooter
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -272,6 +282,8 @@ export default function Tasks() {
   const [open, setOpen] = useState(false);
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
+  const [columnToDelete, setColumnToDelete] = useState<TaskColumn | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
 
   // Filter state - now with arrays for multi-select
@@ -432,6 +444,15 @@ export default function Tasks() {
     setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
   };
 
+  const confirmDeleteTask = () => {
+    if (!taskToDelete) return;
+    deleteTask.mutate(taskToDelete.id);
+    if (editingTask?.id === taskToDelete.id) {
+      closeEditDialog();
+    }
+    setTaskToDelete(null);
+  };
+
   // Column customization handlers
   const openColumnsDialog = () => {
     setEditingColumns([...columns]);
@@ -455,6 +476,17 @@ export default function Tasks() {
     if (editingColumns.length > 1) {
       setEditingColumns(editingColumns.filter(c => c.id !== id));
     }
+  };
+
+  const requestRemoveColumn = (id: string) => {
+    const column = editingColumns.find(c => c.id === id);
+    if (column) setColumnToDelete(column);
+  };
+
+  const confirmRemoveColumn = () => {
+    if (!columnToDelete) return;
+    removeColumn(columnToDelete.id);
+    setColumnToDelete(null);
   };
 
   const saveColumns = () => {
@@ -592,7 +624,7 @@ export default function Tasks() {
                 project={project}
                 campaign={campaign}
                 onEdit={openEditDialog}
-                onDelete={() => deleteTask.mutate(task.id)}
+                onDelete={() => setTaskToDelete(task)}
                 onDragStart={handleDragStart}
                 onDragEnd={handleDragEnd}
                 onDrop={handleTaskDrop}
@@ -967,8 +999,7 @@ export default function Tasks() {
               className="mr-auto"
               onClick={() => {
                 if (editingTask) {
-                  deleteTask.mutate(editingTask.id);
-                  closeEditDialog();
+                  setTaskToDelete(editingTask);
                 }
               }}
             >
@@ -1005,7 +1036,7 @@ export default function Tasks() {
                       column={col}
                       onColorChange={updateColumnColor}
                       onTitleChange={updateColumnTitle}
-                      onRemove={removeColumn}
+                      onRemove={requestRemoveColumn}
                       canRemove={editingColumns.length > 1}
                     />
                   ))}
@@ -1032,6 +1063,45 @@ export default function Tasks() {
           <StatusColumn key={column.id} column={column} />
         ))}
       </div>
+      <AlertDialog open={!!taskToDelete} onOpenChange={(open) => !open && setTaskToDelete(null)}>
+        <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete task?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete "{taskToDelete?.title || 'this task'}". This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteTask.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteTask}
+              disabled={deleteTask.isPending}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={!!columnToDelete} onOpenChange={(open) => !open && setColumnToDelete(null)}>
+        <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove column?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will remove "{columnToDelete?.title || 'this column'}" from your task board layout.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmRemoveColumn}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </AppLayout>
   );
 }

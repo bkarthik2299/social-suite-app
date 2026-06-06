@@ -6,12 +6,23 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Building2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export default function AuthPage() {
-    const { signIn, signUp, createOrganization, isAuthenticated, organization } = useAuth();
+    const { signIn, signUp, signOut, createOrganization, isAuthenticated, organization } = useAuth();
     const { toast } = useToast();
     const [isLoading, setIsLoading] = useState(false);
     const [isLogin, setIsLogin] = useState(true);
+    const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
 
     // Form state
     const [email, setEmail] = useState('');
@@ -67,52 +78,73 @@ export default function AuthPage() {
     // If authenticated but no org, show org creation
     if (isAuthenticated && !organization) {
         return (
-            <div className="min-h-screen w-full relative overflow-hidden bg-gradient-to-br from-[#62aaff] via-[#e6f2ff] to-[#429dff] flex items-center justify-center p-4">
-                <Card className="w-full max-w-[450px] bg-white/95 backdrop-blur-sm border-white/20 shadow-2xl rounded-[2rem] p-6 sm:p-10 relative">
-                    <CardHeader className="text-center space-y-3 px-0 pt-0">
-                        <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center border border-blue-100">
-                            <Building2 className="w-8 h-8 text-[#007AFF]" />
-                        </div>
-                        <CardTitle className="text-2xl font-bold text-slate-900">Create Organization</CardTitle>
-                        <CardDescription className="text-slate-500">
-                            Set up your agency workspace to get started
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="px-0 pb-0">
-                        <form onSubmit={handleCreateOrg} className="space-y-5">
-                            <div className="space-y-2">
-                                <Label htmlFor="org-name" className="text-slate-700">Organization Name</Label>
-                                <Input
-                                    id="org-name"
-                                    placeholder="e.g. My Agency"
-                                    value={orgName}
-                                    onChange={(e) => setOrgName(e.target.value)}
-                                    className="bg-slate-50/50 border-slate-200 focus:border-slate-300 focus:ring-0"
-                                    required
-                                />
+            <>
+                <div className="min-h-screen w-full relative overflow-hidden bg-gradient-to-br from-[#62aaff] via-[#e6f2ff] to-[#429dff] flex items-center justify-center p-4">
+                    <Card className="w-full max-w-[450px] bg-white/95 backdrop-blur-sm border-white/20 shadow-2xl rounded-[2rem] p-6 sm:p-10 relative">
+                        <CardHeader className="text-center space-y-3 px-0 pt-0">
+                            <div className="mx-auto w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center border border-blue-100">
+                                <Building2 className="w-8 h-8 text-[#007AFF]" />
                             </div>
-                            <Button
-                                type="submit"
-                                className="w-full bg-[#007AFF] hover:bg-blue-600 text-white shadow-md rounded-xl h-11"
-                                disabled={isLoading}
-                            >
-                                {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Building2 className="w-4 h-4 mr-2" />}
-                                Create Organization
-                            </Button>
-                            
-                            <div className="pt-2 text-center">
-                                <button 
-                                    type="button"
-                                    onClick={() => signOut()}
-                                    className="text-sm text-slate-500 hover:text-slate-800 transition-colors"
+                            <CardTitle className="text-2xl font-bold text-slate-900">Create Organization</CardTitle>
+                            <CardDescription className="text-slate-500">
+                                Set up your agency workspace to get started
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="px-0 pb-0">
+                            <form onSubmit={handleCreateOrg} className="space-y-5">
+                                <div className="space-y-2">
+                                    <Label htmlFor="org-name" className="text-slate-700">Organization Name</Label>
+                                    <Input
+                                        id="org-name"
+                                        placeholder="e.g. My Agency"
+                                        value={orgName}
+                                        onChange={(e) => setOrgName(e.target.value)}
+                                        className="bg-slate-50/50 border-slate-200 focus:border-slate-300 focus:ring-0"
+                                        required
+                                    />
+                                </div>
+                                <Button
+                                    type="submit"
+                                    className="w-full bg-[#007AFF] hover:bg-blue-600 text-white shadow-md rounded-xl h-11"
+                                    disabled={isLoading}
                                 >
-                                    Log out and use a different account
-                                </button>
-                            </div>
-                        </form>
-                    </CardContent>
-                </Card>
-            </div>
+                                    {isLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Building2 className="w-4 h-4 mr-2" />}
+                                    Create Organization
+                                </Button>
+
+                                <div className="pt-2 text-center">
+                                    <button
+                                        type="button"
+                                        onClick={() => setLogoutDialogOpen(true)}
+                                        className="text-sm text-slate-500 hover:text-slate-800 transition-colors"
+                                    >
+                                        Log out and use a different account
+                                    </button>
+                                </div>
+                            </form>
+                        </CardContent>
+                    </Card>
+                </div>
+                <AlertDialog open={logoutDialogOpen} onOpenChange={setLogoutDialogOpen}>
+                    <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Log out?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                You will need to sign in again to continue setup with another account.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={() => void signOut()}
+                                className="bg-red-600 text-white hover:bg-red-700"
+                            >
+                                Log out
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+            </>
         );
     }
 
