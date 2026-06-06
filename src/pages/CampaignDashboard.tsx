@@ -25,6 +25,16 @@ import {
     DialogFooter
 } from "@/components/ui/dialog";
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
     Popover,
     PopoverContent,
     PopoverTrigger,
@@ -549,6 +559,46 @@ const ContentEmptyState = ({
     );
 };
 
+type ContentDeleteTarget = {
+    id: string;
+    title: string;
+    description: string;
+    name: string;
+};
+
+const ContentDeleteDialog = ({
+    target,
+    onTargetChange,
+    onConfirm,
+    disabled = false,
+}: {
+    target: ContentDeleteTarget | null;
+    onTargetChange: (target: ContentDeleteTarget | null) => void;
+    onConfirm: () => void;
+    disabled?: boolean;
+}) => (
+    <AlertDialog open={!!target} onOpenChange={(open) => !open && onTargetChange(null)}>
+        <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+            <AlertDialogHeader>
+                <AlertDialogTitle>{target?.title || 'Delete item?'}</AlertDialogTitle>
+                <AlertDialogDescription>
+                    {target?.description || 'This action cannot be undone.'}
+                </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+                <AlertDialogCancel disabled={disabled}>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                    onClick={onConfirm}
+                    disabled={disabled}
+                    className="bg-red-600 text-white hover:bg-red-700"
+                >
+                    Delete
+                </AlertDialogAction>
+            </AlertDialogFooter>
+        </AlertDialogContent>
+    </AlertDialog>
+);
+
 const VisualGuideControls = ({
     selectedAspectRatio,
     onAspectRatioChange,
@@ -1047,6 +1097,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
     const { toast } = useToast();
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
+    const [postToDelete, setPostToDelete] = useState<ContentDeleteTarget | null>(null);
 
     // Form State
     const [visualGuide, setVisualGuide] = useState('');
@@ -1123,6 +1174,12 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
             addContentItem.mutate({ type: 'social-post', name, payload: postData });
         }
         setIsDialogOpen(false);
+    };
+
+    const handleConfirmDelete = () => {
+        if (!postToDelete) return;
+        deleteContentItem.mutate(postToDelete.id);
+        setPostToDelete(null);
     };
 
     const togglePlatform = (p: string) => {
@@ -1210,9 +1267,9 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                                             <PlatformMarkStack platforms={post.platforms} />
                                         </div>
                                         <div>
-                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Creative Brief</p>
+                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Topic / Idea</p>
                                             <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">
-                                                {post.visualGuide || post.topic || post.caption || 'Visual direction can be added when editing this post.'}
+                                                {post.topic || post.creativeBrief || post.name || post.caption || post.visualGuide || 'Add a topic or idea when editing this post.'}
                                             </p>
                                         </div>
                                     </div>
@@ -1236,7 +1293,15 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                                 variant="ghost"
                                 size="icon"
                                 className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                onClick={(e) => { e.stopPropagation(); deleteContentItem.mutate(post.id); }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setPostToDelete({
+                                        id: post.id,
+                                        name: post.name || 'Untitled Post',
+                                        title: 'Delete social post?',
+                                        description: `This will permanently delete "${post.name || 'Untitled Post'}". This action cannot be undone.`,
+                                    });
+                                }}
                             >
                                 <Trash2 className="w-3.5 h-3.5 text-red-500" />
                             </Button>
@@ -1464,6 +1529,12 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                 </DialogContent>
             </Dialog>
             <ImageLightbox image={lightboxImage} onClose={() => setLightboxImage('')} />
+            <ContentDeleteDialog
+                target={postToDelete}
+                onTargetChange={setPostToDelete}
+                onConfirm={handleConfirmDelete}
+                disabled={deleteContentItem.isPending}
+            />
         </div>
     );
 };
@@ -1788,6 +1859,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     // State
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingAd, setEditingAd] = useState<GoogleAd | null>(null);
+    const [adToDelete, setAdToDelete] = useState<ContentDeleteTarget | null>(null);
     const [name, setName] = useState('New Search Ad');
     const [isEditingName, setIsEditingName] = useState(false);
     const [startDate, setStartDate] = useState<Date | undefined>(undefined);
@@ -1852,6 +1924,12 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
             addContentItem.mutate({ type: 'google-ad', name, payload: adData });
         }
         setIsDialogOpen(false);
+    };
+
+    const handleConfirmDelete = () => {
+        if (!adToDelete) return;
+        deleteContentItem.mutate(adToDelete.id);
+        setAdToDelete(null);
     };
 
     // Helper to update specific index needed for array inputs
@@ -1960,7 +2038,15 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                                    onClick={(e) => { e.stopPropagation(); deleteContentItem.mutate(ad.id); }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setAdToDelete({
+                                            id: ad.id,
+                                            name: ad.name || 'Untitled Ad',
+                                            title: 'Delete Google ad?',
+                                            description: `This will permanently delete "${ad.name || 'Untitled Ad'}". This action cannot be undone.`,
+                                        });
+                                    }}
                                 >
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
@@ -2232,6 +2318,12 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
                     </div>
                 </DialogContent>
             </Dialog>
+            <ContentDeleteDialog
+                target={adToDelete}
+                onTargetChange={setAdToDelete}
+                onConfirm={handleConfirmDelete}
+                disabled={deleteContentItem.isPending}
+            />
         </div>
     );
 };
@@ -2259,6 +2351,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingAd, setEditingAd] = useState<SocialAd | null>(null);
+    const [adToDelete, setAdToDelete] = useState<ContentDeleteTarget | null>(null);
 
     // Form state
     const [name, setName] = useState('New Social Ad');
@@ -2344,6 +2437,12 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
             addContentItem.mutate({ type: 'social-ad', name, payload: adData });
         }
         setIsDialogOpen(false);
+    };
+
+    const handleConfirmDelete = () => {
+        if (!adToDelete) return;
+        deleteContentItem.mutate(adToDelete.id);
+        setAdToDelete(null);
     };
 
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3131,9 +3230,9 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                                             <PlatformMark platform={adPlatform} />
                                         </div>
                                         <div>
-                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Ad Creative</p>
+                                            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-blue-500">Topic / Idea</p>
                                             <p className="mt-1 line-clamp-2 text-sm font-medium leading-5 text-slate-700">
-                                                {ad.visualGuide || ad.topic || ad.headline || 'Creative direction can be added when editing this ad.'}
+                                                {ad.topic || ad.name || ad.headline || ad.visualGuide || 'Add a topic or idea when editing this ad.'}
                                             </p>
                                         </div>
                                     </div>
@@ -3147,7 +3246,15 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                                     variant="ghost"
                                     size="icon"
                                     className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
-                                    onClick={(e) => { e.stopPropagation(); deleteContentItem.mutate(ad.id); }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setAdToDelete({
+                                            id: ad.id,
+                                            name: ad.name || 'Untitled Ad',
+                                            title: 'Delete social ad?',
+                                            description: `This will permanently delete "${ad.name || 'Untitled Ad'}". This action cannot be undone.`,
+                                        });
+                                    }}
                                 >
                                     <Trash2 className="w-3.5 h-3.5 text-red-500" />
                                 </Button>
@@ -3166,6 +3273,12 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
                     })}
                 </div>
             )}
+            <ContentDeleteDialog
+                target={adToDelete}
+                onTargetChange={setAdToDelete}
+                onConfirm={handleConfirmDelete}
+                disabled={deleteContentItem.isPending}
+            />
         </div>
     );
 };
@@ -3175,7 +3288,7 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
     const blogs = (dbItems || []).filter(i => i.type === 'blog' || i.type === 'blogs').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingBlog, setEditingBlog] = useState<typeof blogs[0] | null>(null);
-    const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+    const [blogToDelete, setBlogToDelete] = useState<ContentDeleteTarget | null>(null);
     const [isSeoPanelOpen, setIsSeoPanelOpen] = useState(false);
 
     // Editor State
@@ -3221,10 +3334,9 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
     };
 
     const handleDeleteConfirm = () => {
-        if (deleteConfirmId) {
-            deleteContentItem.mutate(deleteConfirmId);
-            setDeleteConfirmId(null);
-        }
+        if (!blogToDelete) return;
+        deleteContentItem.mutate(blogToDelete.id);
+        setBlogToDelete(null);
     };
 
     const handleOpen = (blog?: typeof blogs[0]) => {
@@ -3335,7 +3447,15 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
                                     variant="ghost"
                                     size="icon"
                                     className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                                    onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(blog.id); }}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setBlogToDelete({
+                                            id: blog.id,
+                                            name: blog.title || 'Untitled Blog',
+                                            title: 'Delete blog article?',
+                                            description: `This will permanently delete "${blog.title || 'Untitled Blog'}". This action cannot be undone.`,
+                                        });
+                                    }}
                                 >
                                     <Trash2 className="h-3.5 w-3.5" />
                                 </Button>
@@ -3399,19 +3519,12 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
                     </div>
                 </DialogContent>
             </Dialog>
-
-            {deleteConfirmId && (
-                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                    <div className="bg-white rounded-xl p-6 max-w-sm w-full mx-4 shadow-2xl">
-                        <h3 className="text-lg font-semibold mb-2">Delete Article?</h3>
-                        <p className="text-sm text-slate-600 mb-6">This cannot be undone.</p>
-                        <div className="flex gap-3 justify-end">
-                            <Button variant="ghost" onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
-                            <Button variant="destructive" onClick={handleDeleteConfirm}>Delete</Button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ContentDeleteDialog
+                target={blogToDelete}
+                onTargetChange={setBlogToDelete}
+                onConfirm={handleDeleteConfirm}
+                disabled={deleteContentItem.isPending}
+            />
         </div>
     );
 };

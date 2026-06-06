@@ -494,7 +494,7 @@ export default function BrandGuidePage() {
 
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <Select value={selectedGuideId} onValueChange={setSelectedGuideId} disabled={guides.length === 0}>
-                            <SelectTrigger className="h-11 w-full rounded-xl bg-white shadow-sm sm:w-[280px]">
+                            <SelectTrigger className="tool-surface h-11 w-full rounded-xl sm:w-[280px]">
                                 <SelectValue placeholder="Select brand guide" />
                             </SelectTrigger>
                             <SelectContent>
@@ -522,7 +522,7 @@ export default function BrandGuidePage() {
                         onAction={openCreateGuide}
                     />
                 ) : isLoading ? (
-                    <div className="flex min-h-[360px] items-center justify-center rounded-xl border border-slate-200 bg-white">
+                    <div className="tool-surface flex min-h-[360px] items-center justify-center rounded-xl">
                         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
                     </div>
                 ) : guide ? (
@@ -552,7 +552,7 @@ export default function BrandGuidePage() {
                         </aside>
 
                         <Accordion type="multiple" value={openSections} onValueChange={setOpenSections} className="space-y-4">
-                            <AccordionItem value="identity" id="identity" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="identity" id="identity" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={BadgeInfo} title="Brand Identity" description="The simple brand context your team needs before writing or designing." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <div className="grid gap-5 md:grid-cols-2">
@@ -581,7 +581,7 @@ export default function BrandGuidePage() {
                                             <GuideTextField label="About the Brand" value={stringValue(draft.elevator_pitch)} disabled={false} textarea placeholder="Describe the brand in plain language: what they do, who they serve, what makes them different, and anything a social media manager should know before creating content." onChange={(value) => updateDraft('elevator_pitch', value)} onBlur={() => commitGuideField('elevator_pitch')} />
                                         </div>
                                     </div>
-                                    <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-4">
+                                    <div className="rounded-xl bg-blue-50/70 p-4">
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                                             <div className="min-w-0 space-y-1">
                                                 <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
@@ -605,10 +605,10 @@ export default function BrandGuidePage() {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="knowledge" id="knowledge" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="knowledge" id="knowledge" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={FileText} title="Brand Knowledge Base" description="A single markdown source for Social Suite AI runs." />
                                 <AccordionContent className="space-y-5 pb-6 pt-2">
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                                    <div className="rounded-xl bg-slate-50/80 p-4">
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                                             <div className="min-w-0 space-y-2">
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -678,7 +678,7 @@ export default function BrandGuidePage() {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="social" id="social" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="social" id="social" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={Link2} title="Social Links" description="Keep the brand's live social profiles close to the guide." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <SocialLinksEditor
@@ -688,10 +688,10 @@ export default function BrandGuidePage() {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="logos" id="logos" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="logos" id="logos" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={Shapes} title="Logos" description="Upload the logo files your team needs in different sizes or layouts." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                                    <div className="rounded-xl bg-slate-50/80 p-4">
                                         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_220px_minmax(0,1fr)]">
                                             <GuideTextField label="Logo Name" value={logoForm.label} placeholder="Primary logo, icon logo, story logo..." onChange={(value) => setLogoForm((form) => ({ ...form, label: value }))} />
                                             <GuideTextField label="Dimension / Use" value={stringValue(logoForm.dimensions)} placeholder="Square, wide, 1080x1080..." onChange={(value) => setLogoForm((form) => ({ ...form, dimensions: value }))} />
@@ -737,15 +737,19 @@ export default function BrandGuidePage() {
                                         rules={logoRules}
                                         onAdd={(rule) => addLogoRule.mutate(rule)}
                                         onUpdate={(rule, updates) => updateLogoRule.mutate({ id: rule.id, updates })}
-                                        onDelete={(rule) => deleteLogoRule.mutate(rule.id)}
+                                        onDelete={(rule) => setDeleteConfirm({
+                                            title: 'Delete logo rule?',
+                                            description: 'This removes the logo usage rule from the Brand Guide.',
+                                            action: () => deleteLogoRule.mutate(rule.id),
+                                        })}
                                     />
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="colors" id="colors" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="colors" id="colors" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={Palette} title="Colors" description="Add brand colors with a picker or by pasting a color code." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
-                                    <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                                    <div className="rounded-xl bg-slate-50/80 p-4">
                                         <div className="grid gap-3 md:grid-cols-[64px_minmax(0,1fr)_180px_auto] md:items-end">
                                             <div className="grid gap-2.5">
                                                 <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Pick</Label>
@@ -767,7 +771,7 @@ export default function BrandGuidePage() {
                                             </Button>
                                         </div>
                                     </div>
-                                    <div className="h-12 overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                                    <div className="h-12 overflow-hidden rounded-xl bg-slate-100 shadow-inner">
                                         {colors.length > 0 ? (
                                             <div className="flex h-full">
                                                 {colors.map((color) => (
@@ -799,7 +803,7 @@ export default function BrandGuidePage() {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="typography" id="typography" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="typography" id="typography" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={Type} title="Typography" description="Keep only the everyday font choices and text rules." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <SimpleTypographyEditor
@@ -812,7 +816,7 @@ export default function BrandGuidePage() {
                                 </AccordionContent>
                             </AccordionItem>
 
-                            <AccordionItem value="voice" id="voice" className="scroll-mt-24 rounded-xl border border-slate-200 bg-white px-6 shadow-sm">
+                            <AccordionItem value="voice" id="voice" className="tool-surface scroll-mt-24 rounded-xl px-6">
                                 <SectionTrigger icon={Mic2} title="Voice and Tone" description="Capture how the brand should sound and the visual mood it should keep." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <ToneSpectrumEditor
@@ -828,7 +832,7 @@ export default function BrandGuidePage() {
                                         </div>
                                     </div>
 
-                                    <div className="space-y-5 rounded-xl border border-slate-200 p-5">
+                                    <div className="space-y-5 rounded-xl bg-slate-50/70 p-5">
                                         <div>
                                             <h3 className="text-sm font-semibold text-slate-900">Visual Direction</h3>
                                             <p className="text-sm text-slate-500">The look and feel for images, graphics, icons, and references.</p>
@@ -1043,7 +1047,7 @@ function TagEditor({
     };
 
     return (
-        <div className="rounded-xl border border-slate-200 p-5">
+        <div className="rounded-xl bg-slate-50/75 p-5">
             <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</Label>
             <div className="mt-3 flex flex-wrap gap-2">
                 {values.length === 0 && <span className="text-sm text-slate-400">No tags yet.</span>}
@@ -1127,7 +1131,7 @@ function ToneSpectrumEditor({ value, disabled, onChange }: { value: ToneSpectrum
     }, [JSON.stringify(value)]);
 
     const slider = (key: keyof ToneSpectrum, left: string, right: string) => (
-        <div className="grid gap-3 rounded-lg border border-slate-200 p-4 shadow-sm">
+        <div className="grid gap-3 rounded-xl bg-white p-4 shadow-sm">
             <div className="flex justify-between text-sm font-medium text-slate-600">
                 <span>{left}</span>
                 <span className="font-semibold text-slate-900">{local[key] ?? 50}</span>
@@ -1233,7 +1237,7 @@ function CompactColorCard({
     };
 
     return (
-        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="tool-surface rounded-xl p-3">
             <div className="flex gap-3">
                 <Input
                     type="color"
@@ -1353,7 +1357,7 @@ function ColorCard({
     };
 
     return (
-        <div className="group relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1">
+        <div className="tool-surface tool-surface-interactive group relative overflow-hidden rounded-xl">
             <div className="flex min-h-[120px] items-end justify-between p-4" style={{ backgroundColor: hex, color: textTone }}>
                 <div>
                     <p className="text-lg font-semibold">{local.name || 'Untitled Color'}</p>
@@ -1432,7 +1436,7 @@ function FontCard({ font, disabled, onUpdate, onDelete }: { font: BrandFont; dis
     const scale = safeTypeScale(local.type_scale);
 
     return (
-        <div className="group relative rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1">
+        <div className="tool-surface tool-surface-interactive group relative rounded-xl p-5">
             <div className="mb-5 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{local.category}</p>
@@ -1520,7 +1524,7 @@ function PairingPreview({ fonts, guide }: { fonts: BrandFont[]; guide: BrandGuid
     if (!heading && !body) return null;
 
     return (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-6">
+        <div className="rounded-xl bg-slate-50/80 p-6">
             <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">Pairing Preview</p>
             <h3 className="mb-3 text-3xl font-semibold text-slate-950" style={{ fontFamily: heading?.font_family }}>
                 {guide.brand_name || 'Brand Name'} launches the next campaign standard
@@ -1550,7 +1554,7 @@ function LogoCard({ logo, disabled, onUpdate, onDelete }: { logo: BrandLogo; dis
     };
 
     return (
-        <div className="group relative rounded-xl border border-slate-200 bg-white p-5 shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1">
+        <div className="tool-surface tool-surface-interactive group relative rounded-xl p-5">
             <div className="mb-4 flex aspect-[5/3] items-center justify-center rounded-lg border border-slate-100 bg-slate-50 p-4">
                 {local.file_url ? (
                     <img src={local.file_url} alt={local.label} className="max-h-full max-w-full object-contain" />
@@ -1659,7 +1663,7 @@ function MoodImageCard({ image, disabled, onUpdate, onDelete }: { image: BrandMo
     }, [image.id, image.caption]);
 
     return (
-        <div className="group relative mb-4 break-inside-avoid overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-all duration-300 hover:shadow-md hover:-translate-y-1">
+        <div className="tool-surface tool-surface-interactive group relative mb-4 break-inside-avoid overflow-hidden rounded-xl">
             <img src={image.image_url} alt={caption || 'Mood board reference'} className="w-full bg-slate-100 object-cover" />
             <div className="p-4">
                 {disabled ? (
@@ -1691,9 +1695,9 @@ function EmptyPanel({
     onAction?: () => void;
 }) {
     return (
-        <div className="flex min-h-[420px] items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50/50 p-8 text-center">
+        <div className="tool-surface flex min-h-[420px] items-center justify-center rounded-xl p-8 text-center">
             <div className="max-w-md flex flex-col items-center">
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-white shadow-sm border border-slate-200 text-slate-400">
+                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-xl bg-primary/10 text-primary">
                     <Icon className="h-8 w-8" />
                 </div>
                 <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
@@ -1711,7 +1715,7 @@ function EmptyPanel({
 
 function MutedState({ text }: { text: string }) {
     return (
-        <div className="rounded-lg border border-dashed border-slate-200 p-4 text-sm text-slate-400">
+        <div className="rounded-xl bg-slate-50/80 p-4 text-sm text-slate-400">
             {text}
         </div>
     );

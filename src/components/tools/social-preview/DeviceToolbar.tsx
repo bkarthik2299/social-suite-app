@@ -113,7 +113,7 @@ function SwitchRow({
     onCheckedChange: (checked: boolean) => void;
 }) {
     return (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50/80 p-3">
             <div className="flex min-w-0 items-center gap-3">
                 <Tooltip>
                     <TooltipTrigger asChild>
@@ -125,11 +125,10 @@ function SwitchRow({
                 </Tooltip>
                 <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-950">{label}</p>
-                    <p className="truncate text-xs text-slate-500">{description}</p>
+                    <p className="text-xs leading-4 text-slate-500">{description}</p>
                 </div>
             </div>
             <Switch checked={checked} onCheckedChange={onCheckedChange} />
         </div>
     );
 }
-

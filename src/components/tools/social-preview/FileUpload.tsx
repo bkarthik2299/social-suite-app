@@ -35,9 +35,9 @@ export function FileUpload({ file, previewUrl, metadata, onFileSelect }: FileUpl
 
     if (file) {
         return (
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="tool-surface overflow-hidden rounded-xl">
                 <div className="flex gap-3 p-3">
-                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-slate-100">
                         {previewUrl && isVideo ? (
                             <video src={previewUrl} className="h-full w-full object-cover" muted playsInline />
                         ) : previewUrl ? (
@@ -79,7 +79,7 @@ export function FileUpload({ file, previewUrl, metadata, onFileSelect }: FileUpl
                                 type="button"
                                 variant="outline"
                                 size="sm"
-                                className="h-8 rounded-md"
+                                className="h-8 rounded-lg border-0 bg-slate-50 hover:bg-blue-50"
                                 onClick={open}
                             >
                                 <Replace className="mr-2 h-3.5 w-3.5" />
@@ -96,10 +96,10 @@ export function FileUpload({ file, previewUrl, metadata, onFileSelect }: FileUpl
         <div
             {...getRootProps()}
             className={cn(
-                'group cursor-pointer rounded-lg border border-dashed p-6 text-center transition-all',
+                'group cursor-pointer rounded-xl border border-dashed p-6 text-center transition-all',
                 isDragActive
                     ? 'border-primary bg-primary/5'
-                    : 'border-slate-300 bg-white hover:border-primary/60 hover:bg-slate-50',
+                    : 'border-slate-200 bg-white shadow-[0_10px_28px_-24px_rgba(37,99,235,0.35),0_1px_3px_rgba(15,23,42,0.05)] hover:border-primary/40 hover:bg-blue-50/30',
             )}
         >
             <input {...getInputProps()} />
@@ -113,4 +113,3 @@ export function FileUpload({ file, previewUrl, metadata, onFileSelect }: FileUpl
         </div>
     );
 }
-

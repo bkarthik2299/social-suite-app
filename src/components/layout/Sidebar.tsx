@@ -39,6 +39,7 @@ export function Sidebar() {
   const { toast } = useToast();
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [runToDelete, setRunToDelete] = useState<AiRun | null>(null);
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const { data: aiRuns = [] } = useAiRuns(historyExpanded ? 18 : 5);
   const deleteAiRun = useDeleteAiRun();
 
@@ -180,7 +181,13 @@ export function Sidebar() {
               <span>My Account</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => signOut()} className="text-red-600 focus:text-red-600 cursor-pointer">
+            <DropdownMenuItem
+              onSelect={(event) => {
+                event.preventDefault();
+                setLogoutDialogOpen(true);
+              }}
+              className="text-red-600 focus:text-red-600 cursor-pointer"
+            >
               <LogOut className="mr-2 h-4 w-4" />
               <span>Log out</span>
             </DropdownMenuItem>
@@ -204,6 +211,25 @@ export function Sidebar() {
             className="bg-red-600 text-white hover:bg-red-700"
           >
             Delete
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={logoutDialogOpen} onOpenChange={setLogoutDialogOpen}>
+      <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Log out?</AlertDialogTitle>
+          <AlertDialogDescription>
+            You will need to sign in again to access this workspace.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={() => void signOut()}
+            className="bg-red-600 text-white hover:bg-red-700"
+          >
+            Log out
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -35,10 +35,10 @@ export function PlatformSelector({
                                     onSelectFormat(platform.formats[0].id);
                                 }}
                                 className={cn(
-                                    'flex items-center gap-2 rounded-lg border p-3 text-left transition-all',
+                                    'flex items-center gap-2 rounded-xl p-3 text-left transition-all',
                                     isSelected
-                                        ? 'border-primary/30 bg-primary/5 text-primary shadow-sm'
-                                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50',
+                                        ? 'bg-primary/10 text-primary shadow-sm'
+                                        : 'bg-white text-slate-600 shadow-[0_10px_28px_-26px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.04)] hover:bg-blue-50/35',
                                 )}
                             >
                                 <span className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-md border', platform.accentClass)}>
@@ -66,10 +66,10 @@ export function PlatformSelector({
                                 type="button"
                                 onClick={() => onSelectFormat(format.id)}
                                 className={cn(
-                                    'w-full rounded-lg border p-3 text-left transition-all',
+                                    'w-full rounded-xl p-3 text-left transition-all',
                                     isSelected
-                                        ? 'border-primary/30 bg-white shadow-sm ring-1 ring-primary/10'
-                                        : 'border-transparent text-slate-600 hover:border-slate-200 hover:bg-white',
+                                        ? 'bg-white shadow-[0_10px_28px_-24px_rgba(37,99,235,0.4),0_1px_3px_rgba(15,23,42,0.05)] ring-1 ring-primary/10'
+                                        : 'text-slate-600 hover:bg-white',
                                 )}
                             >
                                 <span className="flex items-start justify-between gap-3">
@@ -102,4 +102,3 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
         </h2>
     );
 }
-

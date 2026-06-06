@@ -48,7 +48,7 @@ export function PreviewCanvas({
                 }}
             />
 
-            <div className="relative z-10 flex items-center justify-between border-b border-slate-200/70 bg-white/80 px-5 py-3 backdrop-blur">
+            <div className="relative z-10 flex items-center justify-between bg-white/85 px-5 py-3 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)] backdrop-blur">
                 <div>
                     <p className="text-sm font-semibold text-slate-950">{format.label}</p>
                     <p className="text-xs text-slate-500">{format.width}x{format.height}px / {format.aspectLabel}</p>
@@ -130,7 +130,7 @@ export function PreviewCanvas({
 
 function EmptyPreview() {
     return (
-        <div className="flex max-w-sm flex-col items-center rounded-lg border border-dashed border-slate-300 bg-white/75 p-8 text-center shadow-sm">
+        <div className="tool-surface flex max-w-sm flex-col items-center rounded-xl p-8 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <ImagePlus className="h-7 w-7" />
             </div>
@@ -184,4 +184,3 @@ function GridPreview({ previewUrl, isVideo, maxWidth }: { previewUrl: string; is
         </div>
     );
 }
-

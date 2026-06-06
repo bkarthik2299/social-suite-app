@@ -41,6 +41,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
@@ -823,6 +833,7 @@ function CustomizeAgentSheet({
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentDescription, setNewAgentDescription] = useState('');
   const [newAgentSkill, setNewAgentSkill] = useState(newAgentSkillTemplate('Custom Agent'));
+  const [agentToDelete, setAgentToDelete] = useState<AiAgent | null>(null);
   const selectedAgent = agents.find((agent) => agent.slug === selectedSlug) || agents[0] || null;
   const flowAgents = workflowSlugs
     .map((slug) => agents.find((agent) => agent.slug === slug))
@@ -882,8 +893,9 @@ function CustomizeAgentSheet({
   };
 
   const deleteCustomAgent = async () => {
-    if (!selectedAgent || !selectedAgent.org_id || defaultAiAgentFlow.includes(selectedAgent.slug)) return;
-    await onDeleteAgent(selectedAgent);
+    if (!agentToDelete || !agentToDelete.org_id || defaultAiAgentFlow.includes(agentToDelete.slug)) return;
+    await onDeleteAgent(agentToDelete);
+    setAgentToDelete(null);
     setSelectedSlug('');
   };
 
@@ -1041,7 +1053,7 @@ function CustomizeAgentSheet({
                       </Button>
                     )}
                     {!!selectedAgent.org_id && !defaultAiAgentFlow.includes(selectedAgent.slug) && (
-                      <Button type="button" variant="outline" className="w-full gap-2 rounded-xl text-destructive hover:text-destructive" disabled={deleting} onClick={() => void deleteCustomAgent().catch(() => undefined)}>
+                      <Button type="button" variant="outline" className="w-full gap-2 rounded-xl text-destructive hover:text-destructive" disabled={deleting} onClick={() => setAgentToDelete(selectedAgent)}>
                         {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         Delete custom agent
                       </Button>
@@ -1133,6 +1145,26 @@ function CustomizeAgentSheet({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={!!agentToDelete} onOpenChange={(open) => !open && setAgentToDelete(null)}>
+        <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete custom agent?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete "{agentToDelete?.name || 'this custom agent'}" from the workspace. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void deleteCustomAgent().catch(() => undefined)}
+              disabled={deleting}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

@@ -10,6 +10,16 @@ import { Plus, Search, Trash2, FileText } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { cn } from '@/lib/utils';
 import { useDebounce } from '@/hooks/useDebounce';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // BlockNote imports
 import "@blocknote/core/fonts/inter.css";
@@ -26,6 +36,7 @@ export default function Notes() {
     const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [projectFilter, setProjectFilter] = useState<string>('all');
+    const [noteToDelete, setNoteToDelete] = useState<Note | null>(null);
     
     const activeNote = notes.find(n => n.id === activeNoteId);
 
@@ -56,26 +67,37 @@ export default function Notes() {
         }
     };
 
-    const handleDeleteNote = async (id: string, e: React.MouseEvent) => {
+    const handleDeleteNote = (note: Note, e: React.MouseEvent) => {
         e.stopPropagation();
-        await deleteNote.mutateAsync(id);
-        if (activeNoteId === id) {
+        setNoteToDelete(note);
+    };
+
+    const confirmDeleteNote = async () => {
+        if (!noteToDelete) return;
+        await deleteNote.mutateAsync(noteToDelete.id);
+        if (activeNoteId === noteToDelete.id) {
             setActiveNoteId(null);
         }
+        setNoteToDelete(null);
     };
 
     return (
         <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Notes', path: '/tools/notes' }]} noPadding={true}>
-            <div className="flex h-[calc(100vh-4rem)] bg-background overflow-hidden">
+            <div className="flex h-[calc(100vh-4rem)] overflow-hidden bg-slate-50">
                 {/* Left Sidebar - List of Notes */}
-                <div className="w-80 border-r bg-muted/20 flex flex-col">
-                    <div className="p-4 border-b space-y-4">
+                <div className="flex w-80 flex-col bg-white shadow-[8px_0_28px_-30px_rgba(37,99,235,0.45),1px_0_3px_rgba(15,23,42,0.04)]">
+                    <div className="space-y-4 p-4">
                         <div className="flex items-center justify-between">
-                            <h2 className="text-lg font-semibold flex items-center gap-2">
-                                <FileText className="w-5 h-5 text-indigo-500" />
-                                Notes
-                            </h2>
-                            <Button size="icon" variant="ghost" onClick={handleCreateNote}>
+                            <div className="flex items-center gap-3">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                    <FileText className="h-4 w-4" />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-semibold text-slate-950">Notes</h2>
+                                    <p className="text-xs text-slate-500">Ideas and drafts</p>
+                                </div>
+                            </div>
+                            <Button size="icon" variant="ghost" className="rounded-full text-slate-500 hover:bg-blue-50 hover:text-primary" onClick={handleCreateNote}>
                                 <Plus className="w-4 h-4" />
                             </Button>
                         </div>
@@ -83,13 +105,13 @@ export default function Notes() {
                             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                             <Input
                                 placeholder="Search notes..."
-                                className="pl-8 bg-background"
+                                className="tool-surface h-10 rounded-xl pl-8"
                                 value={searchQuery}
                                 onChange={(e) => setSearchQuery(e.target.value)}
                             />
                         </div>
                         <Select value={projectFilter} onValueChange={setProjectFilter}>
-                            <SelectTrigger className="bg-background">
+                            <SelectTrigger className="tool-surface h-10 rounded-xl">
                                 <SelectValue placeholder="Filter by Project" />
                             </SelectTrigger>
                             <SelectContent>
@@ -102,7 +124,7 @@ export default function Notes() {
                     </div>
 
                     <ScrollArea className="flex-1">
-                        <div className="p-2 space-y-1">
+                        <div className="space-y-1 p-2">
                             {filteredNotes.length === 0 ? (
                                 <div className="text-center p-4 text-sm text-muted-foreground">
                                     No notes found.
@@ -113,14 +135,14 @@ export default function Notes() {
                                         key={note.id}
                                         onClick={() => setActiveNoteId(note.id)}
                                         className={cn(
-                                            "p-3 rounded-md cursor-pointer transition-colors group flex items-start justify-between",
-                                            activeNoteId === note.id ? "bg-indigo-50 dark:bg-indigo-500/10" : "hover:bg-muted"
+                                            "group flex cursor-pointer items-start justify-between rounded-lg p-3 transition-colors",
+                                            activeNoteId === note.id ? "bg-blue-50 text-primary shadow-sm" : "text-slate-700 hover:bg-slate-50"
                                         )}
                                     >
                                         <div className="overflow-hidden">
                                             <p className={cn(
                                                 "font-medium truncate text-sm",
-                                                activeNoteId === note.id ? "text-indigo-700 dark:text-indigo-300" : "text-foreground"
+                                                activeNoteId === note.id ? "text-primary" : "text-slate-900"
                                             )}>
                                                 {note.title || 'Untitled Note'}
                                             </p>
@@ -131,8 +153,8 @@ export default function Notes() {
                                         <Button
                                             size="icon"
                                             variant="ghost"
-                                            className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                                            onClick={(e) => handleDeleteNote(note.id, e)}
+                                            className="h-6 w-6 text-slate-400 opacity-0 hover:bg-rose-50 hover:text-destructive group-hover:opacity-100"
+                                            onClick={(e) => handleDeleteNote(note, e)}
                                         >
                                             <Trash2 className="w-3 h-3" />
                                         </Button>
@@ -144,7 +166,7 @@ export default function Notes() {
                 </div>
 
                 {/* Main Content - Editor */}
-                <div className="flex-1 flex flex-col bg-background min-w-0">
+                <div className="flex min-w-0 flex-1 flex-col bg-slate-50">
                     {activeNote ? (
                         <NoteEditor
                             key={activeNote.id}
@@ -153,12 +175,37 @@ export default function Notes() {
                             onUpdate={(id, updates) => updateNote.mutate({ id, updates })}
                         />
                     ) : (
-                        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                            Select a note or create a new one
+                        <div className="flex flex-1 items-center justify-center p-8 text-muted-foreground">
+                            <div className="tool-surface flex max-w-sm flex-col items-center rounded-xl p-8 text-center">
+                                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                                    <FileText className="h-7 w-7" />
+                                </div>
+                                <p className="text-sm font-medium text-slate-700">Select a note or create a new one</p>
+                            </div>
                         </div>
                     )}
                 </div>
             </div>
+            <AlertDialog open={!!noteToDelete} onOpenChange={(open) => !open && setNoteToDelete(null)}>
+                <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete note?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently delete "{noteToDelete?.title || 'Untitled Note'}". This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deleteNote.isPending}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={() => void confirmDeleteNote()}
+                            disabled={deleteNote.isPending}
+                            className="bg-red-600 text-white hover:bg-red-700"
+                        >
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </AppLayout>
     );
 }
@@ -202,19 +249,19 @@ function NoteEditor({ note, projects, onUpdate }: { note: Note, projects: Projec
 
     // Key to force remount of editor if the active note completely changes
     return (
-        <div className="flex flex-col h-full overflow-hidden p-8 max-w-4xl mx-auto w-full">
-            <div className="mb-8 space-y-4">
+        <div className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-hidden p-8">
+            <div className="mb-6 space-y-4">
                 <input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     placeholder="Untitled Note"
-                    className="w-full text-4xl font-bold bg-transparent border-none outline-none placeholder:text-muted-foreground/50 focus:ring-0 p-0"
+                    className="w-full border-none bg-transparent p-0 text-3xl font-bold text-slate-950 outline-none placeholder:text-muted-foreground/50 focus:ring-0"
                 />
                 <div className="flex items-center gap-2">
                     <span className="text-sm text-muted-foreground">Project:</span>
                     <Select value={projectId} onValueChange={handleProjectChange}>
-                        <SelectTrigger className="w-[200px] h-8 text-xs bg-transparent border-dashed">
+                        <SelectTrigger className="tool-surface h-9 w-[200px] rounded-xl text-xs">
                             <SelectValue placeholder="No Project" />
                         </SelectTrigger>
                         <SelectContent>
@@ -226,7 +273,7 @@ function NoteEditor({ note, projects, onUpdate }: { note: Note, projects: Projec
                     </Select>
                 </div>
             </div>
-            <div className="flex-1 overflow-y-auto -mx-12 px-12 pb-24 cursor-text blocknote-wrapper">
+            <div className="tool-surface blocknote-wrapper flex-1 cursor-text overflow-y-auto rounded-xl px-7 py-6">
                 <BlockNoteView
                     editor={editor}
                     onChange={handleContentChange}
