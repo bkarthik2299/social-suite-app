@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target, Copy, ExternalLink, Loader2, User } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
@@ -688,9 +688,10 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
                         onClick={onSelect}
                     >
                         <CardHeader className="flex flex-row items-center gap-4 pb-4 bg-slate-50/50 border-b border-slate-100">
-                            <Avatar className="h-14 w-14 border border-white shadow-sm">
-                                <AvatarImage src={`https://avatar.vercel.sh/${client.logo}.png?text=${client.logo}`} />
-                                <AvatarFallback>{client.logo}</AvatarFallback>
+                            <Avatar className="h-14 w-14 border border-slate-200 bg-slate-100 shadow-none">
+                                <AvatarFallback className="bg-slate-100 text-base font-semibold text-slate-700">
+                                    {client.logo}
+                                </AvatarFallback>
                             </Avatar>
                             <div className="min-w-0 flex-1">
                                 <CardTitle className="text-lg group-hover:text-primary transition-colors">{client.name}</CardTitle>
@@ -1055,9 +1056,10 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                 </Button>
 
                 <div className="flex items-center gap-3 px-1 mb-2">
-                    <Avatar className="h-10 w-10 border border-slate-200">
-                        <AvatarImage src={`https://avatar.vercel.sh/${client.logo}.png?text=${client.logo}`} />
-                        <AvatarFallback>{client.logo}</AvatarFallback>
+                    <Avatar className="h-10 w-10 border border-slate-200 bg-slate-100 shadow-none">
+                        <AvatarFallback className="bg-slate-100 text-sm font-semibold text-slate-700">
+                            {client.logo}
+                        </AvatarFallback>
                     </Avatar>
                     <div>
                         <h2 className="font-bold text-slate-900">{client.name}</h2>
