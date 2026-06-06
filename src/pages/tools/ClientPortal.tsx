@@ -692,12 +692,25 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
                                 <AvatarImage src={`https://avatar.vercel.sh/${client.logo}.png?text=${client.logo}`} />
                                 <AvatarFallback>{client.logo}</AvatarFallback>
                             </Avatar>
-                            <div>
+                            <div className="min-w-0 flex-1">
                                 <CardTitle className="text-lg group-hover:text-primary transition-colors">{client.name}</CardTitle>
                                 <CardDescription>
                                     {client.company && client.company !== client.name ? client.company : 'Client review workspace'}
                                 </CardDescription>
                             </div>
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 shrink-0 text-slate-400 hover:bg-rose-50 hover:text-destructive"
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setDeleteDialogOpen(true);
+                                }}
+                                aria-label={`Delete client ${client.name}`}
+                                title="Delete client"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
                         </CardHeader>
                         <CardContent className="pt-6">
                             <div className="flex items-center justify-between text-sm">
@@ -771,7 +784,7 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
             <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
                 <AlertDialogContent onClick={(e) => e.stopPropagation()}>
                     <AlertDialogHeader>
-                        <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                        <AlertDialogTitle>Delete client?</AlertDialogTitle>
                         <AlertDialogDescription>
                             This will permanently delete "{client.name}" and all associated data. This action cannot be undone.
                         </AlertDialogDescription>
@@ -911,7 +924,7 @@ interface ClientWorkspaceProps {
 
 function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken }: ClientWorkspaceProps) {
     const { toast } = useToast();
-    const { data: dbFeeds = [], addFeed } = usePortalFeeds(clientId);
+    const { data: dbFeeds = [], addFeed, deleteFeed } = usePortalFeeds(clientId);
     const clientFeeds = useMemo(
         () => dbFeeds.map(f => ({ id: f.id, clientId: f.client_id, name: f.name, postCount: 0 })),
         [dbFeeds]
@@ -938,6 +951,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
     const [accessToken, setAccessToken] = useState(client.accessToken || '');
     const [copyingLink, setCopyingLink] = useState(false);
     const [manualShareUrl, setManualShareUrl] = useState('');
+    const [feedPendingDelete, setFeedPendingDelete] = useState<ClientFeed | null>(null);
 
     useEffect(() => {
         setAccessToken(client.accessToken || '');
@@ -957,6 +971,31 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
         if (!newFeedName.trim()) return;
         addFeed.mutate(newFeedName);
         setIsCreateFeedOpen(false);
+    };
+
+    const handleDeleteFeed = () => {
+        if (!feedPendingDelete) return;
+        const deletedFeed = feedPendingDelete;
+
+        deleteFeed.mutate(deletedFeed.id, {
+            onSuccess: () => {
+                if (selectedFeedId === deletedFeed.id) {
+                    setSelectedFeedId(null);
+                }
+                setFeedPendingDelete(null);
+                toast({
+                    title: 'Feed deleted',
+                    description: `"${deletedFeed.name}" and its review items were removed.`,
+                });
+            },
+            onError: (error) => {
+                toast({
+                    title: 'Could not delete feed',
+                    description: error instanceof Error ? error.message : 'Please try again.',
+                    variant: 'destructive',
+                });
+            },
+        });
     };
 
     const handleImportPosts = (newPosts: ReviewPost[]) => {
@@ -1042,27 +1081,41 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
 
                 <ScrollArea className="flex-1 -mr-2 pr-2">
                     <div className="space-y-1">
-                        {clientFeeds.map(feed => {
-                            const displayPostCount = selectedFeedId === feed.id ? feedPosts.length : feed.postCount;
-
-                            return (
-                                <button
+                        {clientFeeds.map(feed => (
+                                <div
                                     key={feed.id}
-                                    onClick={() => setSelectedFeedId(feed.id)}
                                     className={cn(
-                                        "w-full flex items-center justify-between text-left px-3 py-2.5 rounded-lg text-sm transition-all",
+                                        "group/feed flex items-center rounded-lg transition-all",
                                         selectedFeedId === feed.id
-                                            ? "bg-primary/10 text-primary font-medium shadow-sm ring-1 ring-primary/20"
+                                            ? "bg-primary/10 text-primary shadow-sm ring-1 ring-primary/20"
                                             : "text-slate-600 hover:bg-slate-50"
                                     )}
                                 >
-                                    <span className="truncate">{feed.name}</span>
-                                    <Badge variant="secondary" className={cn("text-[10px] h-5 px-1.5", selectedFeedId === feed.id ? "bg-white text-primary" : "bg-slate-100")}>
-                                        {displayPostCount > 0 ? displayPostCount : '-'}
-                                    </Badge>
-                                </button>
-                            );
-                        })}
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedFeedId(feed.id)}
+                                        className={cn(
+                                            "min-w-0 flex-1 px-3 py-2.5 text-left text-sm transition-colors",
+                                            selectedFeedId === feed.id && "font-medium"
+                                        )}
+                                    >
+                                        <span className="block truncate">{feed.name}</span>
+                                    </button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="mr-1 h-7 w-7 shrink-0 text-slate-400 hover:bg-rose-50 hover:text-destructive"
+                                        onClick={(event) => {
+                                            event.stopPropagation();
+                                            setFeedPendingDelete(feed);
+                                        }}
+                                        aria-label={`Delete feed ${feed.name}`}
+                                        title="Delete feed"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                </div>
+                            ))}
                         {clientFeeds.length === 0 && (
                             <p className="text-sm text-muted-foreground px-3 py-2 italic text-center">No feeds yet.</p>
                         )}
@@ -1186,6 +1239,26 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            <AlertDialog open={!!feedPendingDelete} onOpenChange={(open) => !open && setFeedPendingDelete(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Delete feed?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This will permanently delete "{feedPendingDelete?.name}" and all posts, approvals, and comments in this feed. This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleDeleteFeed}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            Delete Feed
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
 
             <Dialog open={!!manualShareUrl} onOpenChange={(open) => !open && setManualShareUrl('')}>
                 <DialogContent className="sm:max-w-xl">

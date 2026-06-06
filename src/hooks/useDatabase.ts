@@ -788,6 +788,42 @@ export function usePortalClients() {
 
     const deleteClient = useMutation({
         mutationFn: async (id: string) => {
+            const { data: feeds, error: feedsError } = await supabase
+                .from('portal_feeds')
+                .select('id')
+                .eq('client_id', id);
+            if (feedsError) throw feedsError;
+
+            const feedIds = (feeds || []).map(feed => feed.id);
+            if (feedIds.length > 0) {
+                const { data: posts, error: postsError } = await supabase
+                    .from('portal_review_posts')
+                    .select('id')
+                    .in('feed_id', feedIds);
+                if (postsError) throw postsError;
+
+                const postIds = (posts || []).map(post => post.id);
+                if (postIds.length > 0) {
+                    const { error: commentsError } = await supabase
+                        .from('portal_comments')
+                        .delete()
+                        .in('post_id', postIds);
+                    if (commentsError) throw commentsError;
+
+                    const { error: postsDeleteError } = await supabase
+                        .from('portal_review_posts')
+                        .delete()
+                        .in('id', postIds);
+                    if (postsDeleteError) throw postsDeleteError;
+                }
+
+                const { error: feedsDeleteError } = await supabase
+                    .from('portal_feeds')
+                    .delete()
+                    .in('id', feedIds);
+                if (feedsDeleteError) throw feedsDeleteError;
+            }
+
             const { error } = await supabase.from('portal_clients').delete().eq('id', id);
             if (error) throw error;
         },
@@ -826,10 +862,34 @@ export function usePortalFeeds(clientId: string) {
 
     const deleteFeed = useMutation({
         mutationFn: async (id: string) => {
+            const { data: posts, error: postsError } = await supabase
+                .from('portal_review_posts')
+                .select('id')
+                .eq('feed_id', id);
+            if (postsError) throw postsError;
+
+            const postIds = (posts || []).map(post => post.id);
+            if (postIds.length > 0) {
+                const { error: commentsError } = await supabase
+                    .from('portal_comments')
+                    .delete()
+                    .in('post_id', postIds);
+                if (commentsError) throw commentsError;
+
+                const { error: postsDeleteError } = await supabase
+                    .from('portal_review_posts')
+                    .delete()
+                    .in('id', postIds);
+                if (postsDeleteError) throw postsDeleteError;
+            }
+
             const { error } = await supabase.from('portal_feeds').delete().eq('id', id);
             if (error) throw error;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalFeeds(clientId) }),
+        onSuccess: (_data, id) => {
+            qc.invalidateQueries({ queryKey: keys.portalFeeds(clientId) });
+            qc.invalidateQueries({ queryKey: keys.portalReviewPosts(id) });
+        },
     });
 
     return { ...query, addFeed, deleteFeed };
