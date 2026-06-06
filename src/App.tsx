@@ -17,7 +17,7 @@ import Teams from "./pages/Teams";
 import NotFound from "./pages/NotFound";
 import PasswordVault from "./pages/tools/PasswordVault";
 import FeedMonitor from "./pages/tools/FeedMonitor";
-import ClientPortal from "./pages/tools/ClientPortal";
+import ClientPortal, { ClientPortalPublicReview } from "./pages/tools/ClientPortal";
 import BrandGuide from "./pages/tools/BrandGuide";
 import SocialPreview from '@/pages/tools/SocialPreview';
 import Notes from './pages/tools/Notes';
@@ -84,6 +84,8 @@ const App = () => {
               <Routes>
                 {/* Public route */}
                 <Route path="/auth" element={<AuthRoute />} />
+                <Route path="/client-review/:token" element={<ClientPortalPublicReview />} />
+                <Route path="/client-review/:token/:feedId" element={<ClientPortalPublicReview />} />
 
                 {/* Protected routes */}
                 <Route path="/" element={<ProtectedRoute><Index /></ProtectedRoute>} />

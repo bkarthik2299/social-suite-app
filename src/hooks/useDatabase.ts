@@ -769,9 +769,10 @@ export function usePortalClients() {
 
     const addClient = useMutation({
         mutationFn: async (client: { name: string; company?: string }) => {
+            const accessToken = crypto.randomUUID();
             const { error } = await supabase
                 .from('portal_clients')
-                .insert({ ...client, org_id: orgId });
+                .insert({ ...client, access_token: accessToken, org_id: orgId });
             if (error) throw error;
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalClients(orgId) }),

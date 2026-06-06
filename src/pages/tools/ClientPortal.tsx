@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useParams } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target } from 'lucide-react';
+import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target, Copy, ExternalLink, Loader2, User } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -30,6 +31,8 @@ import { cn } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
 import { ContentItem, useProjects, useAllFolders, useAllCampaigns, useAllContentItems, usePortalClients, usePortalFeeds, usePortalReviewPosts } from '@/hooks/useDatabase';
 import { GoogleAd, SocialAd, BlogPost } from '@/types';
+import { supabase } from '@/lib/supabase';
+import { useToast } from '@/components/ui/use-toast';
 
 // Types
 type Client = {
@@ -38,6 +41,7 @@ type Client = {
     company: string;
     logo: string;
     pendingCount: number;
+    accessToken?: string | null;
 };
 
 type ClientFeed = {
@@ -116,6 +120,24 @@ type TreeItem = {
     originalGoogleAd?: GoogleAd;
     originalSocialAd?: SocialAd;
     originalBlog?: BlogPost;
+};
+
+type PublicPortalFeed = {
+    id: string;
+    name: string;
+};
+
+type PublicPortalClient = {
+    name: string;
+    company?: string | null;
+    logo?: string | null;
+};
+
+type PublicPortalPayload = {
+    client: PublicPortalClient;
+    feeds: PublicPortalFeed[];
+    selectedFeedId: string | null;
+    posts: unknown[];
 };
 
 const getString = (value: unknown): string => typeof value === 'string' ? value : '';
@@ -223,6 +245,61 @@ const mapPortalComments = (value: unknown): Comment[] =>
         };
     }).filter(comment => comment.text);
 
+const newPortalToken = () => crypto.randomUUID();
+
+const buildClientReviewUrl = (accessToken?: string | null, feedId?: string | null) => {
+    if (!accessToken || typeof window === 'undefined') return '';
+    const base = `${window.location.origin}/client-review/${accessToken}`;
+    return feedId ? `${base}/${feedId}` : base;
+};
+
+const copyTextToClipboard = async (text: string) => {
+    try {
+        if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(text);
+            return true;
+        }
+    } catch {
+        // Fall back below for browsers that deny async clipboard access.
+    }
+
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        textarea.style.top = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return copied;
+    } catch {
+        return false;
+    }
+};
+
+const mapReviewPostRecord = (value: unknown): ReviewPost => {
+    const record = getRecord(value);
+    const snapshot = getRecord(record.snapshot);
+    const contentType = toReviewContentType(record.content_type || snapshot.contentType);
+
+    return {
+        ...snapshot,
+        id: getString(record.id),
+        platform: toReviewPlatform(snapshot.platform || contentType),
+        content: getReviewContent(contentType, snapshot),
+        image: getReviewImage(snapshot),
+        status: toReviewStatus(record.status),
+        date: formatReviewDate(record.created_at),
+        feedId: getString(record.feed_id),
+        comments: mapPortalComments(record.portal_comments),
+        contentType,
+    };
+};
+
 export default function ClientPortal() {
     const { data: projects = [] } = useProjects();
     const { data: folders = [] } = useAllFolders();
@@ -238,7 +315,8 @@ export default function ClientPortal() {
         name: c.name,
         company: c.company || c.name,
         logo: c.logo || c.name.charAt(0).toUpperCase(),
-        pendingCount: 0
+        pendingCount: 0,
+        accessToken: c.access_token,
     }));
     const selectedClient = selectedClientId
         ? clients.find(c => c.id === selectedClientId)
@@ -265,8 +343,14 @@ export default function ClientPortal() {
         }
     };
 
-    const handleAddClient = (name: string, company: string) => {
-        addClient.mutate({ name, company });
+    const handleAddClient = (name: string) => {
+        addClient.mutate({ name, company: name });
+    };
+
+    const handleEnsureClientAccessToken = async (clientId: string) => {
+        const token = newPortalToken();
+        await updateClient.mutateAsync({ id: clientId, updates: { access_token: token } });
+        return token;
     };
 
     // Build the tree data structure including ALL content types
@@ -344,9 +428,226 @@ export default function ClientPortal() {
                     client={selectedClient}
                     onBack={handleBackToGrid}
                     treeData={projectTreeData}
+                    onEnsureAccessToken={handleEnsureClientAccessToken}
                 />
             )}
         </AppLayout>
+    );
+}
+
+export function ClientPortalPublicReview() {
+    const { token = '', feedId } = useParams<{ token: string; feedId?: string }>();
+    const { toast } = useToast();
+    const [payload, setPayload] = useState<PublicPortalPayload | null>(null);
+    const [selectedFeedId, setSelectedFeedId] = useState(feedId || '');
+    const [reviewerName, setReviewerName] = useState(() => {
+        if (typeof window === 'undefined' || !token) return '';
+        return window.localStorage.getItem(`portal-reviewer-${token}`) || '';
+    });
+    const [nameDraft, setNameDraft] = useState(reviewerName);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState('');
+
+    const loadPortal = async (nextFeedId = selectedFeedId) => {
+        if (!token) {
+            setError('This review link is missing a client access token.');
+            setLoading(false);
+            return;
+        }
+
+        setLoading(true);
+        setError('');
+        try {
+            const { data, error: invokeError } = await supabase.functions.invoke('portal-public-review', {
+                body: {
+                    action: 'get',
+                    token,
+                    feedId: nextFeedId || null,
+                },
+            });
+            if (invokeError) throw invokeError;
+            if (data?.error) throw new Error(data.error);
+
+            const nextPayload = data as PublicPortalPayload;
+            setPayload(nextPayload);
+            setSelectedFeedId(nextPayload.selectedFeedId || '');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Could not load this client review feed.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        void loadPortal(feedId || '');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [token, feedId]);
+
+    const posts = useMemo(() => (payload?.posts || []).map(mapReviewPostRecord), [payload?.posts]);
+    const selectedFeed = payload?.feeds.find(feed => feed.id === selectedFeedId) || null;
+
+    const saveReviewerName = () => {
+        const name = nameDraft.trim();
+        if (!name) return;
+        setReviewerName(name);
+        window.localStorage.setItem(`portal-reviewer-${token}`, name);
+    };
+
+    const runClientAction = async (body: Record<string, unknown>, successTitle: string) => {
+        if (!reviewerName.trim()) {
+            toast({ title: 'Add your name first', description: 'Your name is required before approving or commenting.' });
+            return;
+        }
+
+        setSaving(true);
+        try {
+            const { data, error: invokeError } = await supabase.functions.invoke('portal-public-review', {
+                body: {
+                    token,
+                    reviewerName,
+                    ...body,
+                },
+            });
+            if (invokeError) throw invokeError;
+            if (data?.error) throw new Error(data.error);
+
+            toast({ title: successTitle });
+            await loadPortal(selectedFeedId);
+        } catch (err) {
+            toast({
+                title: 'Review action failed',
+                description: err instanceof Error ? err.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (!reviewerName.trim()) {
+        return (
+            <div className="min-h-screen bg-slate-100 px-4 py-10">
+                <div className="mx-auto flex min-h-[calc(100vh-5rem)] max-w-xl items-center">
+                    <Card className="w-full border-slate-200 shadow-xl">
+                        <CardHeader className="space-y-3">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                                <User className="h-6 w-6" />
+                            </div>
+                            <div>
+                                <CardTitle className="text-2xl">Enter your name</CardTitle>
+                                <CardDescription>
+                                    Your name will appear beside approvals and comments in this review feed.
+                                </CardDescription>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <Input
+                                value={nameDraft}
+                                onChange={(event) => setNameDraft(event.target.value)}
+                                onKeyDown={(event) => event.key === 'Enter' && saveReviewerName()}
+                                placeholder="e.g., Sarah Thomas"
+                                autoFocus
+                            />
+                            <Button className="w-full gap-2" onClick={saveReviewerName} disabled={!nameDraft.trim()}>
+                                Continue to Review
+                                <ChevronRight className="h-4 w-4" />
+                            </Button>
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-slate-100">
+            <header className="border-b border-slate-200 bg-white">
+                <div className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-5 sm:px-6 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-slate-400">
+                            <span>Social Suite Review</span>
+                            {payload?.client?.name && <span className="text-slate-300">/</span>}
+                            {payload?.client?.name && <span>{payload.client.name}</span>}
+                        </div>
+                        <h1 className="text-2xl font-bold text-slate-950">{selectedFeed?.name || 'Client Review Feed'}</h1>
+                        <p className="mt-1 text-sm text-slate-500">
+                            Review only. Your workspace data and internal navigation are hidden from this page.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3 rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+                        <User className="h-4 w-4 text-slate-400" />
+                        <span>{reviewerName}</span>
+                        <button
+                            type="button"
+                            className="text-xs font-semibold text-primary hover:underline"
+                            onClick={() => {
+                                setReviewerName('');
+                                setNameDraft('');
+                                window.localStorage.removeItem(`portal-reviewer-${token}`);
+                            }}
+                        >
+                            Change
+                        </button>
+                    </div>
+                </div>
+            </header>
+
+            <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+                {payload && payload.feeds.length > 1 && (
+                    <div className="mb-6 flex flex-wrap gap-2">
+                        {payload.feeds.map(feed => (
+                            <Button
+                                key={feed.id}
+                                variant={feed.id === selectedFeedId ? 'default' : 'outline'}
+                                size="sm"
+                                className="rounded-full"
+                                onClick={() => void loadPortal(feed.id)}
+                            >
+                                {feed.name}
+                            </Button>
+                        ))}
+                    </div>
+                )}
+
+                {loading ? (
+                    <div className="flex min-h-[420px] items-center justify-center rounded-2xl border border-slate-200 bg-white">
+                        <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    </div>
+                ) : error ? (
+                    <div className="rounded-2xl border border-rose-200 bg-white p-8 text-center">
+                        <XCircle className="mx-auto mb-3 h-10 w-10 text-rose-500" />
+                        <h2 className="text-lg font-semibold text-slate-950">Review link unavailable</h2>
+                        <p className="mt-2 text-sm text-slate-500">{error}</p>
+                    </div>
+                ) : posts.length === 0 ? (
+                    <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center">
+                        <ImageIcon className="mx-auto mb-4 h-10 w-10 text-slate-300" />
+                        <h2 className="text-lg font-semibold text-slate-950">No posts to review yet</h2>
+                        <p className="mt-2 text-sm text-slate-500">The Social Suite team has not added content to this feed.</p>
+                    </div>
+                ) : (
+                    <div className={cn("space-y-6", saving && "pointer-events-none opacity-70")}>
+                        {posts.map(post => (
+                            <PostCard
+                                key={post.id}
+                                post={post}
+                                onStatusChange={(postId, status) => runClientAction({
+                                    action: 'status',
+                                    postId,
+                                    status,
+                                }, status === 'approved' ? 'Post approved' : status === 'rejected' ? 'Post rejected' : 'Change request saved')}
+                                onAddComment={(postId, text) => runClientAction({
+                                    action: 'comment',
+                                    postId,
+                                    text,
+                                }, 'Comment added')}
+                            />
+                        ))}
+                    </div>
+                )}
+            </main>
+        </div>
     );
 }
 
@@ -393,7 +694,9 @@ function ClientCard({ client, onSelect, onRename, onDelete }: ClientCardProps) {
                             </Avatar>
                             <div>
                                 <CardTitle className="text-lg group-hover:text-primary transition-colors">{client.name}</CardTitle>
-                                <CardDescription>{client.company}</CardDescription>
+                                <CardDescription>
+                                    {client.company && client.company !== client.name ? client.company : 'Client review workspace'}
+                                </CardDescription>
                             </div>
                         </CardHeader>
                         <CardContent className="pt-6">
@@ -490,14 +793,13 @@ interface ClientGridProps {
     onSelectClient: (id: string) => void;
     onRenameClient: (id: string, newName: string) => void;
     onDeleteClient: (id: string) => void;
-    onAddClient: (name: string, company: string) => void;
+    onAddClient: (name: string) => void;
 }
 
 function ClientGrid({ clients, onSelectClient, onRenameClient, onDeleteClient, onAddClient }: ClientGridProps) {
     const [searchQuery, setSearchQuery] = useState('');
     const [isNewClientOpen, setIsNewClientOpen] = useState(false);
     const [newClientName, setNewClientName] = useState('');
-    const [newClientCompany, setNewClientCompany] = useState('');
 
     const filteredClients = clients.filter(c =>
         c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -506,9 +808,8 @@ function ClientGrid({ clients, onSelectClient, onRenameClient, onDeleteClient, o
 
     const handleAddClient = () => {
         if (newClientName.trim()) {
-            onAddClient(newClientName.trim(), newClientCompany.trim() || newClientName.trim());
+            onAddClient(newClientName.trim());
             setNewClientName('');
-            setNewClientCompany('');
             setIsNewClientOpen(false);
         }
     };
@@ -539,30 +840,20 @@ function ClientGrid({ clients, onSelectClient, onRenameClient, onDeleteClient, o
                         <DialogContent className="sm:max-w-[400px]">
                             <DialogHeader>
                                 <DialogTitle>Add New Client</DialogTitle>
-                                <DialogDescription>
-                                    Create a new client to manage their content reviews.
+                            <DialogDescription>
+                                    Add one client workspace for review feeds and approvals.
                                 </DialogDescription>
                             </DialogHeader>
                             <div className="grid gap-4 py-4">
                                 <div className="grid gap-2">
-                                    <Label htmlFor="client-name">Client Name</Label>
+                                    <Label htmlFor="client-name">Client or company name</Label>
                                     <Input
                                         id="client-name"
-                                        placeholder="e.g., Acme Corp"
+                                        placeholder="e.g., CAAPID Simplified"
                                         value={newClientName}
                                         onChange={(e) => setNewClientName(e.target.value)}
                                         onKeyDown={(e) => e.key === 'Enter' && handleAddClient()}
                                         autoFocus
-                                    />
-                                </div>
-                                <div className="grid gap-2">
-                                    <Label htmlFor="company-name">Company Name</Label>
-                                    <Input
-                                        id="company-name"
-                                        placeholder="e.g., Acme Corporation"
-                                        value={newClientCompany}
-                                        onChange={(e) => setNewClientCompany(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handleAddClient()}
                                     />
                                 </div>
                             </div>
@@ -615,9 +906,11 @@ interface ClientWorkspaceProps {
     client: Client;
     onBack: () => void;
     treeData: TreeItem[];
+    onEnsureAccessToken: (clientId: string) => Promise<string>;
 }
 
-function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspaceProps) {
+function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken }: ClientWorkspaceProps) {
+    const { toast } = useToast();
     const { data: dbFeeds = [], addFeed } = usePortalFeeds(clientId);
     const clientFeeds = useMemo(
         () => dbFeeds.map(f => ({ id: f.id, clientId: f.client_id, name: f.name, postCount: 0 })),
@@ -642,24 +935,18 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
     
     const [isCreateFeedOpen, setIsCreateFeedOpen] = useState(false);
     const [newFeedName, setNewFeedName] = useState('');
+    const [accessToken, setAccessToken] = useState(client.accessToken || '');
+    const [copyingLink, setCopyingLink] = useState(false);
+    const [manualShareUrl, setManualShareUrl] = useState('');
+
+    useEffect(() => {
+        setAccessToken(client.accessToken || '');
+    }, [client.accessToken]);
 
     const { data: dbPosts = [], addReviewPost, updateReviewStatus, addComment } = usePortalReviewPosts(selectedFeedId || '');
-    const feedPosts = dbPosts.map(p => {
-        const snapshot = getRecord(p.snapshot);
-        const contentType = toReviewContentType(p.content_type || snapshot.contentType);
-        return ({
-            ...snapshot,
-            id: p.id,
-            platform: toReviewPlatform(snapshot.platform || contentType),
-            content: getReviewContent(contentType, snapshot),
-            image: getReviewImage(snapshot),
-            status: toReviewStatus(p.status),
-            date: formatReviewDate(p.created_at),
-            feedId: p.feed_id,
-            comments: mapPortalComments((p as Record<string, unknown>).portal_comments),
-            contentType,
-        });
-    });
+    const feedPosts = dbPosts.map(mapReviewPostRecord);
+    const selectedFeed = selectedFeedId ? clientFeeds.find(feed => feed.id === selectedFeedId) : null;
+    const shareUrl = buildClientReviewUrl(accessToken, selectedFeedId);
 
     const handleCreateFeedClick = () => {
         setNewFeedName('');
@@ -688,6 +975,38 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
         });
     };
 
+    const handleCopyShareLink = async () => {
+        if (!selectedFeedId) return;
+        setCopyingLink(true);
+        try {
+            const token = accessToken || await onEnsureAccessToken(clientId);
+            setAccessToken(token);
+            const url = buildClientReviewUrl(token, selectedFeedId);
+            const copied = await copyTextToClipboard(url);
+            if (!copied) {
+                setManualShareUrl(url);
+                toast({
+                    title: 'Copy blocked by browser',
+                    description: 'The feed link is ready. Copy it from the dialog instead.',
+                });
+                return;
+            }
+
+            toast({
+                title: 'Feed link copied',
+                description: 'Anyone with this link can review this feed without logging in.',
+            });
+        } catch (error) {
+            toast({
+                title: 'Could not copy feed link',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setCopyingLink(false);
+        }
+    };
+
     return (
         <div className="flex h-[calc(100vh-120px)] gap-6">
             {/* Sidebar */}
@@ -709,40 +1028,50 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
 
                 <div className="flex items-center justify-between mt-4">
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-widest pl-1">Feeds</h3>
-                    <Button size="icon" variant="ghost" className="h-6 w-6" onClick={handleCreateFeedClick}>
+                    <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-6 w-6"
+                        onClick={handleCreateFeedClick}
+                        aria-label="Create feed"
+                        title="Create feed"
+                    >
                         <Plus className="w-3.5 h-3.5" />
                     </Button>
                 </div>
 
                 <ScrollArea className="flex-1 -mr-2 pr-2">
                     <div className="space-y-1">
-                        {clientFeeds.map(feed => (
-                            <button
-                                key={feed.id}
-                                onClick={() => setSelectedFeedId(feed.id)}
-                                className={cn(
-                                    "w-full flex items-center justify-between text-left px-3 py-2.5 rounded-lg text-sm transition-all",
-                                    selectedFeedId === feed.id
-                                        ? "bg-primary/10 text-primary font-medium shadow-sm ring-1 ring-primary/20"
-                                        : "text-slate-600 hover:bg-slate-50"
-                                )}
-                            >
-                                <span className="truncate">{feed.name}</span>
-                                <Badge variant="secondary" className={cn("text-[10px] h-5 px-1.5", selectedFeedId === feed.id ? "bg-white text-primary" : "bg-slate-100")}>
-                                    {feed.postCount > 0 ? feed.postCount : '-'}
-                                </Badge>
-                            </button>
-                        ))}
+                        {clientFeeds.map(feed => {
+                            const displayPostCount = selectedFeedId === feed.id ? feedPosts.length : feed.postCount;
+
+                            return (
+                                <button
+                                    key={feed.id}
+                                    onClick={() => setSelectedFeedId(feed.id)}
+                                    className={cn(
+                                        "w-full flex items-center justify-between text-left px-3 py-2.5 rounded-lg text-sm transition-all",
+                                        selectedFeedId === feed.id
+                                            ? "bg-primary/10 text-primary font-medium shadow-sm ring-1 ring-primary/20"
+                                            : "text-slate-600 hover:bg-slate-50"
+                                    )}
+                                >
+                                    <span className="truncate">{feed.name}</span>
+                                    <Badge variant="secondary" className={cn("text-[10px] h-5 px-1.5", selectedFeedId === feed.id ? "bg-white text-primary" : "bg-slate-100")}>
+                                        {displayPostCount > 0 ? displayPostCount : '-'}
+                                    </Badge>
+                                </button>
+                            );
+                        })}
                         {clientFeeds.length === 0 && (
                             <p className="text-sm text-muted-foreground px-3 py-2 italic text-center">No feeds yet.</p>
                         )}
                     </div>
                 </ScrollArea>
 
-                <div className="mt-auto pt-4 border-t">
-                    <p className="text-[10px] text-slate-400 text-center">
-                        Client View URL: <span className="font-mono text-slate-500 select-all cursor-pointer hover:text-primary">portal.socialsuite.com/{client.id}</span>
-                    </p>
+                <div className="mt-auto rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                    <p className="font-semibold text-slate-700">Client review access</p>
+                    <p className="mt-1 leading-5">Share a feed link from the header. Clients only see the selected review feed.</p>
                 </div>
             </div>
 
@@ -750,12 +1079,33 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
             <div className="flex-1 flex flex-col min-w-0">
                 {selectedFeedId ? (
                     <>
-                        <div className="flex items-center justify-between pb-6 border-b border-slate-100 mb-6">
-                            <div>
-                                <h1 className="text-2xl font-bold text-slate-900">{clientFeeds.find(f => f.id === selectedFeedId)?.name}</h1>
+                        <div className="flex flex-col gap-4 pb-6 border-b border-slate-100 mb-6 xl:flex-row xl:items-start xl:justify-between">
+                            <div className="min-w-0">
+                                <h1 className="text-2xl font-bold text-slate-900">{selectedFeed?.name}</h1>
                                 <p className="text-slate-500 text-sm mt-1">{feedPosts.length} posts in this feed</p>
                             </div>
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <Button
+                                    variant="outline"
+                                    className="gap-2 rounded-full border-slate-200"
+                                    onClick={handleCopyShareLink}
+                                    disabled={!selectedFeedId || copyingLink}
+                                >
+                                    {copyingLink ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                                    Share feed
+                                </Button>
+                                {shareUrl && (
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="rounded-full border-slate-200"
+                                        onClick={() => window.open(shareUrl, '_blank', 'noopener,noreferrer')}
+                                        aria-label="Open client review link"
+                                        title="Open client review link"
+                                    >
+                                        <ExternalLink className="w-4 h-4" />
+                                    </Button>
+                                )}
                                 <Button variant="outline" className="gap-2 rounded-full border-slate-200">
                                     <Filter className="w-4 h-4" /> Filter
                                 </Button>
@@ -800,9 +1150,15 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
                         </ScrollArea>
                     </>
                 ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-slate-400">
-                        <Folder className="w-16 h-16 mb-4 opacity-20" />
-                        <p>Select a feed to view posts</p>
+                    <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500">
+                        <Folder className="w-16 h-16 mb-4 text-slate-300" />
+                        <h3 className="text-lg font-semibold text-slate-900">Create a review feed</h3>
+                        <p className="mt-1 max-w-sm text-sm">
+                            Feeds group the posts you want this client to review, approve, or comment on.
+                        </p>
+                        <Button className="mt-5 gap-2 rounded-full" onClick={handleCreateFeedClick}>
+                            <Plus className="w-4 h-4" /> New Feed
+                        </Button>
                     </div>
                 )}
             </div>
@@ -827,6 +1183,40 @@ function ClientWorkspace({ clientId, client, onBack, treeData }: ClientWorkspace
                     <DialogFooter>
                         <Button variant="outline" onClick={() => setIsCreateFeedOpen(false)}>Cancel</Button>
                         <Button onClick={handleCreateFeedSubmit}>Create Feed</Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!manualShareUrl} onOpenChange={(open) => !open && setManualShareUrl('')}>
+                <DialogContent className="sm:max-w-xl">
+                    <DialogHeader>
+                        <DialogTitle>Share feed</DialogTitle>
+                        <DialogDescription>
+                            Your browser blocked automatic clipboard access. Select and copy the link below.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="py-3">
+                        <Input
+                            value={manualShareUrl}
+                            readOnly
+                            className="font-mono text-xs"
+                            onFocus={(event) => event.currentTarget.select()}
+                            onClick={(event) => event.currentTarget.select()}
+                        />
+                    </div>
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setManualShareUrl('')}>Close</Button>
+                        <Button
+                            className="gap-2"
+                            onClick={async () => {
+                                if (await copyTextToClipboard(manualShareUrl)) {
+                                    toast({ title: 'Feed link copied' });
+                                    setManualShareUrl('');
+                                }
+                            }}
+                        >
+                            <Copy className="w-4 h-4" /> Try Copy Again
+                        </Button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
@@ -965,14 +1355,16 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
                     <Plus className="w-4 h-4" /> {buttonLabel || "Add Post"}
                 </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-                <DialogHeader>
+            <DialogContent className="grid max-h-[85vh] max-w-3xl grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
+                <DialogHeader className="min-w-0 border-b border-slate-200 px-6 py-5">
                     <DialogTitle>Import Posts</DialogTitle>
                     <DialogDescription>Select posts from your projects to add to this client feed.</DialogDescription>
                 </DialogHeader>
 
-                <div className="border rounded-md mt-4 h-[300px]">
-                    <ScrollArea className="h-full p-4">
+                <div className="min-h-0 min-w-0 px-6 py-4">
+                    <div className="h-[min(54vh,460px)] rounded-xl border border-slate-200 bg-white">
+                    <ScrollArea className="h-full">
+                        <div className="p-4">
                         {treeData.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400">
                                 <p>No posts found in your projects.</p>
@@ -980,10 +1372,12 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
                         ) : (
                             renderTree(treeData)
                         )}
+                        </div>
                     </ScrollArea>
+                    </div>
                 </div>
 
-                <DialogFooter className="mt-4">
+                <DialogFooter className="min-w-0 border-t border-slate-200 px-6 py-4">
                     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
                     <Button onClick={handleImport} disabled={selectedIds.length === 0} className="bg-primary hover:bg-primary/90 text-primary-foreground">
                         Import {selectedIds.length} Posts
@@ -1048,6 +1442,7 @@ function PostCard({
                         className="h-7 w-7 text-slate-400 hover:text-primary"
                         onClick={() => setIsDetailsOpen(true)}
                         title="View Full Details"
+                        aria-label="View full details"
                     >
                         <Maximize2 className="w-4 h-4" />
                     </Button>
@@ -1165,7 +1560,12 @@ function PostCard({
                                     }
                                 }}
                             />
-                            <Button size="icon" className="h-8 w-8 shrink-0 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground mb-0.5 mr-0.5" onClick={handleAddComment}>
+                            <Button
+                                size="icon"
+                                className="h-8 w-8 shrink-0 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground mb-0.5 mr-0.5"
+                                onClick={handleAddComment}
+                                aria-label="Send comment"
+                            >
                                 <Send className="w-3.5 h-3.5" />
                             </Button>
                         </div>
