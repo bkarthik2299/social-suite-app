@@ -1133,6 +1133,18 @@ const updateLocalBrandGuide = (orgId: string, id: string, updates: Partial<Brand
     });
 };
 
+const deleteLocalBrandGuide = (orgId: string, id: string) => {
+    const store = readBrandGuideStore(orgId);
+    writeBrandGuideStore(orgId, {
+        guides: store.guides.filter((guide) => guide.id !== id),
+        colors: store.colors.filter((color) => color.guide_id !== id),
+        fonts: store.fonts.filter((font) => font.guide_id !== id),
+        logos: store.logos.filter((logo) => logo.guide_id !== id),
+        logoRules: store.logoRules.filter((rule) => rule.guide_id !== id),
+        moodImages: store.moodImages.filter((image) => image.guide_id !== id),
+    });
+};
+
 const hasLocalBrandGuide = (orgId: string, id: string) => {
     return readBrandGuideStore(orgId).guides.some((guide) => guide.id === id);
 };
@@ -1398,6 +1410,48 @@ export function useBrandGuide(guideId: string) {
         onSuccess: (_data, variables) => {
             qc.invalidateQueries({ queryKey: keys.brandGuides(orgId) });
             qc.invalidateQueries({ queryKey: keys.brandGuide(orgId, variables.id) });
+        },
+    });
+
+    const deleteGuide = useMutation({
+        mutationFn: async (id: string) => {
+            if (hasLocalBrandGuide(orgId, id)) {
+                deleteLocalBrandGuide(orgId, id);
+                return;
+            }
+
+            const childTables = [
+                'brand_colors',
+                'brand_fonts',
+                'brand_logos',
+                'brand_logo_rules',
+                'brand_mood_images',
+                'brand_knowledge_documents',
+            ];
+
+            for (const table of childTables) {
+                const { error } = await db.from(table).delete().eq('guide_id', id);
+                if (error && !isMissingBrandTableError(error)) throw error;
+            }
+
+            const { error } = await db.from('brand_guides').delete().eq('id', id);
+            if (error) {
+                if (isMissingBrandTableError(error)) {
+                    deleteLocalBrandGuide(orgId, id);
+                    return;
+                }
+                throw error;
+            }
+        },
+        onSuccess: (_data, id) => {
+            qc.invalidateQueries({ queryKey: keys.brandGuides(orgId) });
+            qc.invalidateQueries({ queryKey: keys.brandGuide(orgId, id) });
+            qc.invalidateQueries({ queryKey: keys.brandColors(id) });
+            qc.invalidateQueries({ queryKey: keys.brandFonts(id) });
+            qc.invalidateQueries({ queryKey: keys.brandLogos(id) });
+            qc.invalidateQueries({ queryKey: keys.brandLogoRules(id) });
+            qc.invalidateQueries({ queryKey: keys.brandMoodImages(id) });
+            qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, id] });
         },
     });
 
@@ -1678,5 +1732,6 @@ export function useBrandGuide(guideId: string) {
         addMoodImage,
         updateMoodImage,
         deleteMoodImage,
+        deleteGuide,
     };
 }

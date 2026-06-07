@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     Command,
-    CommandDialog,
     CommandEmpty,
     CommandGroup,
     CommandInput,
@@ -10,31 +9,38 @@ import {
     CommandList,
 } from "@/components/ui/command";
 import {
-    Search,
-    Folder,
-    FileText,
-    Layout,
+    ArrowRight,
     Calendar as CalendarIcon,
-    Hash
+    FileText,
+    Folder,
+    Hash,
+    Layout,
+    Megaphone,
+    Search,
 } from "lucide-react";
-import { useProjects, useAllFolders, useAllCampaigns, useAllContentItems } from '@/hooks/useDatabase';
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import type { LucideIcon } from "lucide-react";
+
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useAllCampaigns, useAllContentItems, useAllFolders, useProjects } from "@/hooks/useDatabase";
+import { cn } from "@/lib/utils";
 import { campaignPath, folderPath, projectPath } from "@/lib/routes";
+
+const sectionClassName = "px-2 py-2 [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:pt-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-slate-500";
+const itemClassName = "group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors hover:bg-blue-50/65 aria-selected:bg-blue-50/80 data-[selected=true]:bg-blue-50/80 data-[selected=true]:text-slate-950";
 
 export function GlobalCommand() {
     const [open, setOpen] = useState(false);
     const navigate = useNavigate();
-    
+
     const { data: projects = [] } = useProjects();
     const { data: folders = [] } = useAllFolders();
     const { data: campaigns = [] } = useAllCampaigns();
     const { data: contentItems = [] } = useAllContentItems();
-    
-    // Map existing groups using contentItems
-    const blogs = contentItems.filter(i => i.type === 'blog');
-    const socialPosts = contentItems.filter(i => i.type === 'social-post');
-    const googleAds = contentItems.filter(i => i.type === 'google-ad');
-    const socialAds = contentItems.filter(i => i.type === 'social-ad');
+
+    const blogs = contentItems.filter((item) => item.type === 'blog');
+    const socialPosts = contentItems.filter((item) => item.type === 'social-post');
+    const googleAds = contentItems.filter((item) => item.type === 'google-ad');
+    const socialAds = contentItems.filter((item) => item.type === 'social-ad');
 
     const getFolderPeers = (projectId: string) => folders.filter((folder) => folder.projectId === projectId);
     const getCampaignPeers = (folderId: string) => campaigns.filter((campaign) => campaign.folderId === folderId);
@@ -62,18 +68,32 @@ export function GlobalCommand() {
     const getPayloadText = (payload: Record<string, unknown>, keys: string[]) => {
         for (const key of keys) {
             const value = payload[key];
-            if (typeof value === 'string' && value.trim()) return value;
+            if (typeof value === 'string' && value.trim()) return value.trim();
         }
         return '';
     };
 
+    const getFolderContext = (projectId: string) => {
+        return projects.find((item) => item.id === projectId)?.name || '';
+    };
+
+    const getCampaignContext = (campaignId: string) => {
+        const campaign = campaigns.find((item) => item.id === campaignId);
+        if (!campaign) return '';
+
+        const folder = folders.find((item) => item.id === campaign.folderId);
+        const project = folder ? projects.find((item) => item.id === folder.projectId) : null;
+        return [project?.name, folder?.name, campaign.name].filter(Boolean).join(' / ');
+    };
+
     useEffect(() => {
-        const down = (e: KeyboardEvent) => {
-            if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                setOpen((open) => !open);
+        const down = (event: KeyboardEvent) => {
+            if (event.key === "k" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                setOpen((current) => !current);
             }
         };
+
         document.addEventListener("keydown", down);
         return () => document.removeEventListener("keydown", down);
     }, []);
@@ -86,116 +106,155 @@ export function GlobalCommand() {
     return (
         <>
             <button
+                type="button"
+                aria-label="Open universal search"
                 onClick={() => setOpen(true)}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm text-slate-500 bg-slate-100 rounded-md hover:bg-slate-200 transition-colors w-64 border border-slate-200"
+                className="group flex h-10 w-full max-w-sm items-center gap-2.5 rounded-full bg-white px-3.5 text-sm text-slate-500 shadow-[0_10px_28px_-24px_rgba(37,99,235,0.42),0_1px_3px_rgba(15,23,42,0.05)] transition-shadow hover:shadow-[0_18px_42px_-26px_rgba(37,99,235,0.52),0_10px_24px_-22px_rgba(15,23,42,0.18)] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/25"
             >
-                <Search className="w-4 h-4" />
-                <span>Search everything...</span>
-                <kbd className="ml-auto pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">
-                    <span className="text-xs">⌘</span>K
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-50 text-primary transition-colors group-hover:bg-blue-100">
+                    <Search className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate text-left font-medium">Search everything</span>
+                <kbd className="pointer-events-none hidden h-6 select-none items-center gap-1 rounded-full bg-slate-50 px-2 font-mono text-[10px] font-semibold text-slate-500 shadow-[0_8px_18px_-16px_rgba(37,99,235,0.45),0_1px_2px_rgba(15,23,42,0.04)] sm:inline-flex">
+                    Ctrl K
                 </kbd>
             </button>
 
             <Dialog open={open} onOpenChange={setOpen}>
-                <DialogContent className="overflow-hidden p-0 shadow-2xl max-w-2xl">
-                    <Command className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
-                        <div className="flex items-center border-b px-3" cmdk-input-wrapper="">
-                            <Search className="mr-2 h-4 w-4 shrink-0 opacity-50" />
-                            <CommandInput
-                                placeholder="Type a command or search..."
-                                className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                            />
+                <DialogContent className="max-w-[min(92vw,42rem)] overflow-hidden border-0 bg-white p-0 shadow-[0_28px_70px_-36px_rgba(37,99,235,0.58),0_18px_48px_-40px_rgba(15,23,42,0.28)] sm:rounded-2xl [&>button:last-child]:right-4 [&>button:last-child]:top-4 [&>button:last-child]:rounded-full [&>button:last-child]:bg-slate-50 [&>button:last-child]:p-2 [&>button:last-child]:text-slate-500 [&>button:last-child]:opacity-100 [&>button:last-child]:shadow-sm [&>button:last-child]:hover:bg-blue-50 [&>button:last-child]:hover:text-primary">
+                    <DialogTitle className="sr-only">Universal Search</DialogTitle>
+                    <Command className="rounded-2xl bg-white text-slate-900 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-1 [&_[cmdk-input-wrapper]]:border-0 [&_[cmdk-input-wrapper]]:px-5 [&_[cmdk-input-wrapper]]:py-4 [&_[cmdk-input-wrapper]_svg]:mr-3 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input-wrapper]_svg]:text-primary [&_[cmdk-input-wrapper]_svg]:opacity-100 [&_[cmdk-input]]:h-12 [&_[cmdk-input]]:text-[15px] [&_[cmdk-input]]:font-medium [&_[cmdk-input]]:placeholder:text-slate-400">
+                        <div className="bg-slate-50/70">
+                            <CommandInput placeholder="Type to search projects, campaigns, or content..." />
                         </div>
-                        <CommandList className="max-h-[500px] overflow-y-auto overflow-x-hidden p-2">
-                            <CommandEmpty>No results found.</CommandEmpty>
+                        <CommandList className="command-search-scrollbar max-h-[min(62vh,520px)] overflow-y-auto overflow-x-hidden p-2.5 pr-3">
+                            <CommandEmpty className="py-12 text-center">
+                                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-primary">
+                                    <Search className="h-5 w-5" />
+                                </div>
+                                <p className="text-sm font-semibold text-slate-700">No results found</p>
+                                <p className="mt-1 text-xs text-slate-500">Try a project, campaign, folder, or content title.</p>
+                            </CommandEmpty>
 
-                            {/* Projects */}
                             {projects.length > 0 && (
-                                <CommandGroup heading="Projects" className="text-xs font-medium text-slate-500 mb-2 px-2 mt-2">
+                                <CommandGroup heading="Projects" className={sectionClassName}>
                                     {projects.map((project) => (
-                                        <CommandItem
+                                        <SearchResultItem
                                             key={project.id}
+                                            icon={Folder}
+                                            iconClassName="bg-blue-50 text-blue-600"
+                                            title={project.name}
+                                            detail={`${getFolderPeers(project.id).length} folders`}
                                             onSelect={() => runCommand(() => navigate(projectPath(project, projects)))}
-                                            className="flex items-center gap-2 px-2 py-2 text-sm rounded-md cursor-pointer hover:bg-slate-100 aria-selected:bg-slate-100 data-[selected=true]:bg-slate-100 transition-colors"
-                                        >
-                                            <Folder className="w-4 h-4 text-blue-500" />
-                                            <span>{project.name}</span>
-                                        </CommandItem>
+                                        />
                                     ))}
                                 </CommandGroup>
                             )}
 
-                            {/* Folders */}
                             {folders.length > 0 && (
-                                <CommandGroup heading="Folders" className="text-xs font-medium text-slate-500 mb-2 px-2 mt-2">
+                                <CommandGroup heading="Folders" className={sectionClassName}>
                                     {folders.map((folder) => (
-                                        <CommandItem
+                                        <SearchResultItem
                                             key={folder.id}
+                                            icon={Hash}
+                                            iconClassName="bg-emerald-50 text-emerald-600"
+                                            title={folder.name}
+                                            detail={getFolderContext(folder.projectId)}
                                             onSelect={() => runCommand(() => {
                                                 const project = projects.find((item) => item.id === folder.projectId);
                                                 if (project) navigate(folderPath(project, folder, projects, getFolderPeers(project.id)));
                                             })}
-                                            className="flex items-center gap-2 px-2 py-2 text-sm rounded-md cursor-pointer hover:bg-slate-100 aria-selected:bg-slate-100 data-[selected=true]:bg-slate-100 transition-colors"
-                                        >
-                                            <Hash className="w-4 h-4 text-emerald-500" />
-                                            <span>{folder.name}</span>
-                                        </CommandItem>
+                                        />
                                     ))}
                                 </CommandGroup>
                             )}
 
-                            {/* Campaigns */}
                             {campaigns.length > 0 && (
-                                <CommandGroup heading="Campaigns" className="text-xs font-medium text-slate-500 mb-2 px-2 mt-2">
+                                <CommandGroup heading="Campaigns" className={sectionClassName}>
                                     {campaigns.map((campaign) => (
-                                        <CommandItem
+                                        <SearchResultItem
                                             key={campaign.id}
+                                            icon={CalendarIcon}
+                                            iconClassName="bg-violet-50 text-violet-600"
+                                            title={campaign.name}
+                                            detail={getCampaignContext(campaign.id)}
                                             onSelect={() => runCommand(() => {
                                                 const route = getCampaignRoute(campaign.id);
                                                 if (route) navigate(route, { state: { type: campaign.type } });
                                             })}
-                                            className="flex items-center gap-2 px-2 py-2 text-sm rounded-md cursor-pointer hover:bg-slate-100 aria-selected:bg-slate-100 data-[selected=true]:bg-slate-100 transition-colors"
-                                        >
-                                            <CalendarIcon className="w-4 h-4 text-purple-500" />
-                                            <span>{campaign.name}</span>
-                                        </CommandItem>
+                                        />
                                     ))}
                                 </CommandGroup>
                             )}
 
-                            {/* Content Items */}
                             {blogs.length > 0 && (
-                                <CommandGroup heading="Blogs" className="text-xs font-medium text-slate-500 mb-2 px-2 mt-2">
+                                <CommandGroup heading="Blogs" className={sectionClassName}>
                                     {blogs.map((blog) => (
-                                        <CommandItem
+                                        <SearchResultItem
                                             key={blog.id}
+                                            icon={FileText}
+                                            iconClassName="bg-orange-50 text-orange-600"
+                                            title={getPayloadText(blog.payload, ['title']) || blog.name || "Untitled Blog"}
+                                            detail={getCampaignContext(blog.campaignId)}
                                             onSelect={() => runCommand(() => {
                                                 const route = getCampaignRoute(blog.campaignId);
                                                 if (route) navigate(route, { state: { type: 'blogs' } });
                                             })}
-                                            className="flex items-center gap-2 px-2 py-2 text-sm rounded-md cursor-pointer hover:bg-slate-100 aria-selected:bg-slate-100 data-[selected=true]:bg-slate-100 transition-colors"
-                                        >
-                                            <FileText className="w-4 h-4 text-orange-500" />
-                                            <span>{getPayloadText(blog.payload, ['title']) || blog.name || "Untitled Blog"}</span>
-                                        </CommandItem>
+                                        />
                                     ))}
                                 </CommandGroup>
                             )}
 
                             {socialPosts.length > 0 && (
-                                <CommandGroup heading="Social Posts" className="text-xs font-medium text-slate-500 mb-2 px-2 mt-2">
+                                <CommandGroup heading="Social Posts" className={sectionClassName}>
                                     {socialPosts.map((post) => (
-                                        <CommandItem
+                                        <SearchResultItem
                                             key={post.id}
+                                            icon={Layout}
+                                            iconClassName="bg-sky-50 text-sky-600"
+                                            title={getPayloadText(post.payload, ['topic', 'caption']).slice(0, 80) || post.name || "Untitled Post"}
+                                            detail={getCampaignContext(post.campaignId)}
                                             onSelect={() => runCommand(() => {
                                                 const route = getCampaignRoute(post.campaignId);
                                                 if (route) navigate(route, { state: { type: 'socials' } });
                                             })}
-                                            className="flex items-center gap-2 px-2 py-2 text-sm rounded-md cursor-pointer hover:bg-slate-100 aria-selected:bg-slate-100 data-[selected=true]:bg-slate-100 transition-colors"
-                                        >
-                                            <Layout className="w-4 h-4 text-sky-500" />
-                                            <span>{getPayloadText(post.payload, ['caption', 'topic']).slice(0, 40) || post.name || "Untitled Post"}</span>
-                                        </CommandItem>
+                                        />
+                                    ))}
+                                </CommandGroup>
+                            )}
+
+                            {googleAds.length > 0 && (
+                                <CommandGroup heading="Google Ads" className={sectionClassName}>
+                                    {googleAds.map((ad) => (
+                                        <SearchResultItem
+                                            key={ad.id}
+                                            icon={Search}
+                                            iconClassName="bg-amber-50 text-amber-600"
+                                            title={getPayloadText(ad.payload, ['topic', 'name', 'headline1', 'headline']).slice(0, 80) || ad.name || "Untitled Google Ad"}
+                                            detail={getCampaignContext(ad.campaignId)}
+                                            onSelect={() => runCommand(() => {
+                                                const route = getCampaignRoute(ad.campaignId);
+                                                if (route) navigate(route, { state: { type: 'google-ad' } });
+                                            })}
+                                        />
+                                    ))}
+                                </CommandGroup>
+                            )}
+
+                            {socialAds.length > 0 && (
+                                <CommandGroup heading="Social Media Ads" className={sectionClassName}>
+                                    {socialAds.map((ad) => (
+                                        <SearchResultItem
+                                            key={ad.id}
+                                            icon={Megaphone}
+                                            iconClassName="bg-rose-50 text-rose-600"
+                                            title={getPayloadText(ad.payload, ['topic', 'creativeBrief', 'adCreative']).slice(0, 80) || ad.name || "Untitled Social Ad"}
+                                            detail={getCampaignContext(ad.campaignId)}
+                                            onSelect={() => runCommand(() => {
+                                                const route = getCampaignRoute(ad.campaignId);
+                                                if (route) navigate(route, { state: { type: 'meta-ad' } });
+                                            })}
+                                        />
                                     ))}
                                 </CommandGroup>
                             )}
@@ -204,5 +263,34 @@ export function GlobalCommand() {
                 </DialogContent>
             </Dialog>
         </>
+    );
+}
+
+function SearchResultItem({
+    icon: Icon,
+    iconClassName,
+    title,
+    detail,
+    onSelect,
+}: {
+    icon: LucideIcon;
+    iconClassName: string;
+    title: string;
+    detail?: string;
+    onSelect: () => void;
+}) {
+    const value = [title, detail].filter(Boolean).join(' ');
+
+    return (
+        <CommandItem value={value} onSelect={onSelect} className={itemClassName}>
+            <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", iconClassName)}>
+                <Icon className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold text-slate-900">{title}</span>
+                {detail && <span className="mt-0.5 block truncate text-xs font-medium text-slate-500">{detail}</span>}
+            </span>
+            <ArrowRight className="h-4 w-4 shrink-0 text-slate-300 transition-colors group-hover:text-primary" />
+        </CommandItem>
     );
 }

@@ -29,10 +29,10 @@ const typeIcons: Record<string, typeof FileText> = {
 };
 
 const typeColors: Record<string, string> = {
-  'blogs': 'bg-badge-blogs-bg text-badge-blogs border-badge-blogs/20',
-  'google-ad': 'bg-badge-google-bg text-badge-google border-badge-google/20',
-  'meta-ad': 'bg-badge-meta-bg text-badge-meta border-badge-meta/20',
-  'socials': 'bg-badge-socials-bg text-badge-socials border-badge-socials/20',
+  'blogs': 'bg-badge-blogs-bg text-badge-blogs',
+  'google-ad': 'bg-badge-google-bg text-badge-google',
+  'meta-ad': 'bg-badge-meta-bg text-badge-meta',
+  'socials': 'bg-badge-socials-bg text-badge-socials',
 };
 
 const dateValue = (payload: ContentItem['payload'], ...keys: string[]) => {
@@ -168,8 +168,8 @@ export default function Calendar() {
         <div
           key={day.toString()}
           className={cn(
-            "min-h-28 p-2 border-b border-r border-border",
-            !isCurrentMonth && "bg-muted/30"
+            "min-h-28 p-2 transition-colors hover:bg-blue-50/30",
+            !isCurrentMonth && "bg-slate-50/70 text-muted-foreground"
           )}
         >
           <div className="flex items-start justify-between">
@@ -189,11 +189,11 @@ export default function Calendar() {
                     +{dayEvents.length - 2} more
                   </button>
                 </PopoverTrigger>
-                <PopoverContent className="w-72 p-3" align="end">
-                  <div className="text-sm font-semibold mb-3 text-slate-700">
+                <PopoverContent className="tool-surface w-72 rounded-xl p-3" align="end">
+                  <div className="mb-3 text-sm font-semibold text-slate-700">
                     {format(currentDay, 'MMMM d, yyyy')}
                   </div>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
+                  <div className="max-h-64 space-y-2 overflow-y-auto">
                     {dayEvents.map((event) => {
                       const Icon = typeIcons[event.type] || FileText;
                       return (
@@ -201,7 +201,7 @@ export default function Calendar() {
                           key={event.id}
                           onClick={() => handleEventClick(event)}
                           className={cn(
-                            "flex items-center gap-1.5 px-2 py-1.5 rounded-md text-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity",
+                            "flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.05)] transition-opacity hover:opacity-85",
                             typeColors[event.type]
                           )}
                         >
@@ -224,7 +224,7 @@ export default function Calendar() {
                   key={event.id}
                   onClick={() => handleEventClick(event)}
                   className={cn(
-                    "flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border cursor-pointer hover:opacity-80 transition-opacity",
+                    "flex cursor-pointer items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-medium shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.05)] transition-opacity hover:opacity-85",
                     typeColors[event.type]
                   )}
                 >
@@ -240,7 +240,7 @@ export default function Calendar() {
       day = addDays(day, 1);
     }
     rows.push(
-      <div key={day.toString()} className="grid grid-cols-7">
+      <div key={day.toString()} className="grid grid-cols-7 divide-x divide-blue-100/60">
         {days}
       </div>
     );
@@ -251,31 +251,34 @@ export default function Calendar() {
     <AppLayout breadcrumbs={[{ label: 'Calendar', path: '/calendar' }]}>
       <div className="animate-fade-in">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
+        <div className="mb-6 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="flex flex-col items-center px-4 py-2 bg-primary rounded-xl text-primary-foreground">
+            <div className="flex flex-col items-center rounded-xl bg-primary px-4 py-2 text-primary-foreground shadow-[0_16px_34px_-24px_rgba(37,99,235,0.8)]">
               <span className="text-xs font-medium uppercase">{format(currentDate, 'MMM')}</span>
               <span className="text-2xl font-bold">{format(currentDate, 'd')}</span>
             </div>
-            <h1 className="text-3xl font-bold text-foreground">{format(currentDate, 'MMMM yyyy')}</h1>
+            <div>
+              <h1 className="text-3xl font-bold text-foreground">{format(currentDate, 'MMMM yyyy')}</h1>
+              <p className="text-muted-foreground">Scheduled content across projects and campaigns.</p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
             {/* Multi-Select Project Filter */}
             <Popover>
               <PopoverTrigger asChild>
-                <Button variant="outline" className="w-48 justify-between">
+                <Button variant="outline" className="tool-surface tool-surface-interactive h-10 w-48 justify-between rounded-full bg-white">
                   {selectedProjectIds.length === 0
                     ? 'All Projects'
                     : `${selectedProjectIds.length} project${selectedProjectIds.length > 1 ? 's' : ''}`}
                   <ChevronRight className="w-4 h-4 ml-auto rotate-90" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-48 p-2" align="end">
+              <PopoverContent className="tool-surface w-52 rounded-xl p-2" align="end">
                 <div className="space-y-1">
                   <div
                     className={cn(
-                      "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-muted text-sm",
-                      selectedProjectIds.length === 0 && "bg-muted"
+                      "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-blue-50/70",
+                      selectedProjectIds.length === 0 && "bg-blue-50 text-primary"
                     )}
                     onClick={() => setSelectedProjectIds([])}
                   >
@@ -286,8 +289,8 @@ export default function Calendar() {
                     <div
                       key={project.id}
                       className={cn(
-                        "flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-muted text-sm",
-                        selectedProjectIds.includes(project.id) && "bg-muted"
+                        "flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-blue-50/70",
+                        selectedProjectIds.includes(project.id) && "bg-blue-50 text-primary"
                       )}
                       onClick={() => toggleProject(project.id)}
                     >
@@ -299,12 +302,12 @@ export default function Calendar() {
               </PopoverContent>
             </Popover>
             {/* Month Navigation */}
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setCurrentDate(subMonths(currentDate, 1))}>
+            <div className="tool-surface flex items-center gap-2 rounded-full bg-white p-1">
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-blue-50" onClick={() => setCurrentDate(subMonths(currentDate, 1))}>
                 <ChevronLeft className="w-4 h-4" />
               </Button>
               <span className="text-sm font-medium min-w-[100px] text-center">{format(currentDate, 'MMM yyyy')}</span>
-              <Button variant="ghost" size="icon" onClick={() => setCurrentDate(addMonths(currentDate, 1))}>
+              <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-blue-50" onClick={() => setCurrentDate(addMonths(currentDate, 1))}>
                 <ChevronRight className="w-4 h-4" />
               </Button>
             </div>
@@ -312,9 +315,9 @@ export default function Calendar() {
         </div>
 
         {/* Calendar Grid */}
-        <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="tool-surface overflow-hidden rounded-xl bg-white">
           {/* Day Headers */}
-          <div className="grid grid-cols-7 border-b border-border">
+          <div className="grid grid-cols-7 bg-slate-50/80">
             {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((dayName) => (
               <div
                 key={dayName}
@@ -325,7 +328,9 @@ export default function Calendar() {
             ))}
           </div>
           {/* Calendar Rows */}
-          {rows}
+          <div className="divide-y divide-blue-100/60">
+            {rows}
+          </div>
         </div>
       </div>
     </AppLayout>

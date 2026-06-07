@@ -112,7 +112,7 @@ function SortableColumnItem({
       ref={setNodeRef}
       style={style}
       className={cn(
-        "flex items-center gap-3 p-3 bg-muted/50 rounded-lg",
+        "tool-surface flex items-center gap-3 rounded-xl p-3",
         isDragging && "shadow-lg ring-2 ring-primary"
       )}
     >
@@ -126,7 +126,7 @@ function SortableColumnItem({
 
       {/* Color Picker */}
       <Select value={column.color} onValueChange={(val) => onColorChange(column.id, val)}>
-        <SelectTrigger className="w-[100px]">
+        <SelectTrigger className="tool-surface h-10 w-[108px] rounded-xl bg-white">
           <div className="flex items-center gap-2">
             <div className={cn("w-3 h-3 rounded-full", column.color)} />
             <span className="text-xs">Color</span>
@@ -148,7 +148,7 @@ function SortableColumnItem({
       <Input
         value={column.title}
         onChange={(e) => onTitleChange(column.id, e.target.value)}
-        className="flex-1"
+        className="tool-surface h-10 flex-1 rounded-xl"
         placeholder="Column name"
       />
 
@@ -156,7 +156,7 @@ function SortableColumnItem({
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+        className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-red-50 hover:text-destructive"
         onClick={() => onRemove(column.id)}
         disabled={!canRemove}
       >
@@ -208,14 +208,14 @@ function TaskCard({
         if (onDrop) onDrop(e, task);
       }}
       className={cn(
-        "bg-card p-4 rounded-xl border border-border shadow-sm hover:shadow-md transition-all group select-none cursor-grab active:cursor-grabbing",
-        isDragging && "opacity-50 scale-95",
-        isDragOver && "border-t-4 border-t-primary"
+        "tool-surface tool-surface-interactive group cursor-grab select-none rounded-xl p-4 active:cursor-grabbing",
+        isDragging && "scale-[0.98] opacity-60",
+        isDragOver && "ring-2 ring-primary/40 ring-offset-2 ring-offset-slate-50"
       )}
     >
       <div className="flex justify-between items-start mb-2">
         <div className="flex items-center gap-2 flex-1">
-          <GripVertical className="w-4 h-4 text-muted-foreground flex-shrink-0" />
+          <GripVertical className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
           <h4
             className="font-medium text-foreground line-clamp-2 cursor-pointer hover:text-primary transition-colors"
             onClick={(e) => { e.stopPropagation(); onEdit(task); }}
@@ -225,7 +225,7 @@ function TaskCard({
         </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button variant="ghost" size="icon" className="h-6 w-6 opacity-0 group-hover:opacity-100 cursor-pointer">
+            <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50">
               <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
@@ -246,10 +246,10 @@ function TaskCard({
       <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{task.description || "No description provided."}</p>
 
       <div className="flex flex-wrap gap-2 mb-3">
-        {project && <Badge variant="outline" className="text-[10px] h-5">{project.name}</Badge>}
+        {project && <Badge variant="outline" className="h-5 rounded-full border-0 bg-slate-50 text-[10px] text-slate-600">{project.name}</Badge>}
         {campaign && (
           <Badge variant="secondary" className={cn(
-            "text-[10px] h-5",
+            "h-5 rounded-full border-0 text-[10px]",
             campaign.type === 'google-ad' && "bg-badge-google-bg text-badge-google",
             campaign.type === 'meta-ad' && "bg-badge-meta-bg text-badge-meta",
             campaign.type === 'socials' && "bg-badge-socials-bg text-badge-socials",
@@ -571,8 +571,8 @@ export default function Tasks() {
     return (
       <div
         className={cn(
-          "flex-1 min-w-[300px] flex flex-col gap-4 p-3 -m-3 rounded-2xl transition-all duration-200",
-          isDragOver && "bg-primary/5 ring-2 ring-primary ring-offset-2 ring-offset-background"
+          "tool-surface flex min-w-[300px] flex-1 flex-col gap-4 rounded-xl p-4 transition-all duration-200",
+          isDragOver && "bg-blue-50/60 ring-2 ring-primary/35 ring-offset-2 ring-offset-slate-50"
         )}
         onDragOver={(e) => {
           handleDragOver(e);
@@ -593,16 +593,16 @@ export default function Tasks() {
         }}
         onDragEnd={() => setIsDragOver(false)}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2">
           <div className="flex items-center gap-2">
             <div className={cn("w-2 h-2 rounded-full", column.color)} />
             <h3 className="font-semibold text-foreground">{column.title}</h3>
-            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">{columnTasks.length}</span>
+            <span className="rounded-full bg-white px-2 py-0.5 text-xs text-muted-foreground shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.04)]">{columnTasks.length}</span>
           </div>
           <Button
             variant="ghost"
             size="icon"
-            className="h-6 w-6"
+            className="h-7 w-7 rounded-lg hover:bg-blue-50"
             onClick={() => {
               setTaskForm({ ...taskForm, status: column.id });
               setOpen(true);
@@ -612,7 +612,7 @@ export default function Tasks() {
           </Button>
         </div>
 
-        <div className="space-y-3 min-h-[100px]">
+        <div className="min-h-[100px] space-y-3">
           {columnTasks.map(task => {
             const project = projects.find(p => p.id === task.projectId);
             const campaign = campaigns.find(c => c.id === task.campaignId);
@@ -635,8 +635,8 @@ export default function Tasks() {
           {columnTasks.length === 0 && (
             <div
               className={cn(
-                "h-24 border-2 border-dashed rounded-xl flex items-center justify-center text-muted-foreground text-sm transition-colors",
-                isDragOver && "border-primary bg-primary/10 text-primary"
+                "flex h-24 items-center justify-center rounded-xl bg-slate-50/70 text-sm text-muted-foreground transition-colors",
+                isDragOver && "bg-blue-50 text-primary"
               )}
             >
               {isDragOver ? "Drop here" : "No tasks"}
@@ -649,16 +649,19 @@ export default function Tasks() {
 
   return (
     <AppLayout breadcrumbs={[{ label: 'Tasks', path: '/tasks' }]}>
-      <div className="flex items-center justify-between mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
+      <div className="mb-8 flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
+          <p className="text-muted-foreground">Track team work across projects and campaigns.</p>
+        </div>
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-2 rounded-full bg-primary px-6 text-white hover:bg-primary/90">
               <PlusCircle className="h-4 w-4" />
               New Task
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
             <DialogHeader>
               <DialogTitle>Add Task</DialogTitle>
             </DialogHeader>
@@ -670,12 +673,13 @@ export default function Tasks() {
                     placeholder="Enter Task Name"
                     value={taskForm.title}
                     onChange={e => setTaskForm(prev => ({ ...prev, title: e.target.value }))}
+                    className="tool-surface h-10 rounded-xl"
                   />
                 </div>
                 <div className="space-y-2">
                   <Label>Project Name</Label>
                   <Select value={taskForm.projectId} onValueChange={val => setTaskForm(prev => ({ ...prev, projectId: val }))}>
-                    <SelectTrigger>
+                    <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                       <SelectValue placeholder="Select an item..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -689,7 +693,7 @@ export default function Tasks() {
                 <div className="space-y-2">
                   <Label>Status</Label>
                   <Select value={taskForm.status} onValueChange={val => setTaskForm(prev => ({ ...prev, status: val }))}>
-                    <SelectTrigger>
+                    <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                       <SelectValue placeholder="Select Status" />
                     </SelectTrigger>
                     <SelectContent>
@@ -702,7 +706,7 @@ export default function Tasks() {
                 <div className="space-y-2">
                   <Label>Assign To</Label>
                   <Select value={taskForm.assigneeId} onValueChange={val => setTaskForm(prev => ({ ...prev, assigneeId: val }))}>
-                    <SelectTrigger>
+                    <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                       <SelectValue placeholder="Select an item..." />
                     </SelectTrigger>
                     <SelectContent>
@@ -719,7 +723,7 @@ export default function Tasks() {
                     <Button
                       variant="outline"
                       className={cn(
-                        "w-full justify-start text-left font-normal",
+                        "tool-surface h-10 w-full justify-start rounded-xl bg-white text-left font-normal",
                         !taskForm.dueDate && "text-muted-foreground"
                       )}
                     >
@@ -742,14 +746,14 @@ export default function Tasks() {
                 <Label>Description</Label>
                 <Textarea
                   placeholder="Add a description..."
-                  className="min-h-[100px]"
+                  className="tool-surface min-h-[100px] rounded-xl"
                   value={taskForm.description}
                   onChange={e => setTaskForm(prev => ({ ...prev, description: e.target.value }))}
                 />
               </div>
             </div>
             <DialogFooter>
-              <Button onClick={() => setOpen(false)} variant="outline" className="mr-2">Cancel</Button>
+              <Button onClick={() => setOpen(false)} variant="outline" className="tool-surface tool-surface-interactive mr-2 rounded-xl">Cancel</Button>
               <Button onClick={handleCreate}>Create</Button>
             </DialogFooter>
           </DialogContent>
@@ -757,14 +761,14 @@ export default function Tasks() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center justify-between gap-2 mb-8 overflow-x-auto pb-2">
+      <div className="tool-surface mb-8 flex items-center justify-between gap-2 overflow-x-auto rounded-xl p-3">
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground mr-2">Filters:</span>
 
           <Button
             variant={filters.assignedToMe ? "default" : "outline"}
             size="sm"
-            className="rounded-full"
+            className={cn("rounded-full", !filters.assignedToMe && "tool-surface tool-surface-interactive")}
             onClick={() => setFilters(prev => ({ ...prev, assignedToMe: !prev.assignedToMe }))}
           >
             <User className="w-3 h-3 mr-1" />
@@ -777,7 +781,7 @@ export default function Tasks() {
               <Button
                 variant={filters.teamMemberIds.length > 0 ? "default" : "outline"}
                 size="sm"
-                className="rounded-full"
+                className={cn("rounded-full", filters.teamMemberIds.length === 0 && "tool-surface tool-surface-interactive")}
               >
                 Team Member
                 {filters.teamMemberIds.length > 0 && (
@@ -790,7 +794,7 @@ export default function Tasks() {
                 {teamMembers.map(m => (
                   <div
                     key={m.id}
-                    className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg p-2 hover:bg-blue-50/70"
                     onClick={() => toggleTeamMember(m.id)}
                   >
                     <Checkbox checked={filters.teamMemberIds.includes(m.id)} />
@@ -807,7 +811,7 @@ export default function Tasks() {
               <Button
                 variant={filters.statuses.length > 0 ? "default" : "outline"}
                 size="sm"
-                className="rounded-full"
+                className={cn("rounded-full", filters.statuses.length === 0 && "tool-surface tool-surface-interactive")}
               >
                 Status
                 {filters.statuses.length > 0 && (
@@ -820,7 +824,7 @@ export default function Tasks() {
                 {columns.map(col => (
                   <div
                     key={col.id}
-                    className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg p-2 hover:bg-blue-50/70"
                     onClick={() => toggleStatus(col.id)}
                   >
                     <Checkbox checked={filters.statuses.includes(col.id)} />
@@ -838,7 +842,7 @@ export default function Tasks() {
               <Button
                 variant={filters.dueDateRange ? "default" : "outline"}
                 size="sm"
-                className="rounded-full"
+                className={cn("rounded-full", !filters.dueDateRange && "tool-surface tool-surface-interactive")}
               >
                 Due Date
                 {filters.dueDateRange && <X className="w-3 h-3 ml-1" onClick={(e) => { e.stopPropagation(); setFilters(prev => ({ ...prev, dueDateRange: '' })); }} />}
@@ -857,7 +861,7 @@ export default function Tasks() {
               <Button
                 variant={filters.projectIds.length > 0 ? "default" : "outline"}
                 size="sm"
-                className="rounded-full"
+                className={cn("rounded-full", filters.projectIds.length === 0 && "tool-surface tool-surface-interactive")}
               >
                 Project
                 {filters.projectIds.length > 0 && (
@@ -870,7 +874,7 @@ export default function Tasks() {
                 {projects.map(p => (
                   <div
                     key={p.id}
-                    className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer"
+                    className="flex cursor-pointer items-center gap-2 rounded-lg p-2 hover:bg-blue-50/70"
                     onClick={() => toggleProject(p.id)}
                   >
                     <Checkbox checked={filters.projectIds.includes(p.id)} />
@@ -893,7 +897,7 @@ export default function Tasks() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-2 shrink-0"
+          className="tool-surface tool-surface-interactive shrink-0 gap-2 rounded-full"
           onClick={openColumnsDialog}
         >
           <Settings2 className="w-4 h-4" />
@@ -903,7 +907,7 @@ export default function Tasks() {
 
       {/* Edit Task Dialog */}
       <Dialog open={!!editingTask} onOpenChange={(open) => !open && closeEditDialog()}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Edit Task</DialogTitle>
           </DialogHeader>
@@ -915,12 +919,13 @@ export default function Tasks() {
                   placeholder="Enter Task Name"
                   value={taskForm.title}
                   onChange={e => setTaskForm(prev => ({ ...prev, title: e.target.value }))}
+                  className="tool-surface h-10 rounded-xl"
                 />
               </div>
               <div className="space-y-2">
                 <Label>Project Name</Label>
                 <Select value={taskForm.projectId} onValueChange={val => setTaskForm(prev => ({ ...prev, projectId: val }))}>
-                  <SelectTrigger>
+                  <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                     <SelectValue placeholder="Select an item..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -934,7 +939,7 @@ export default function Tasks() {
               <div className="space-y-2">
                 <Label>Status</Label>
                 <Select value={taskForm.status} onValueChange={val => setTaskForm(prev => ({ ...prev, status: val }))}>
-                  <SelectTrigger>
+                  <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                     <SelectValue placeholder="Select Status" />
                   </SelectTrigger>
                   <SelectContent>
@@ -947,7 +952,7 @@ export default function Tasks() {
               <div className="space-y-2">
                 <Label>Assign To</Label>
                 <Select value={taskForm.assigneeId} onValueChange={val => setTaskForm(prev => ({ ...prev, assigneeId: val }))}>
-                  <SelectTrigger>
+                  <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
                     <SelectValue placeholder="Select an item..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -964,7 +969,7 @@ export default function Tasks() {
                   <Button
                     variant="outline"
                     className={cn(
-                      "w-full justify-start text-left font-normal",
+                      "tool-surface h-10 w-full justify-start rounded-xl bg-white text-left font-normal",
                       !taskForm.dueDate && "text-muted-foreground"
                     )}
                   >
@@ -987,7 +992,7 @@ export default function Tasks() {
               <Label>Description</Label>
               <Textarea
                 placeholder="Add a description..."
-                className="min-h-[100px]"
+                className="tool-surface min-h-[100px] rounded-xl"
                 value={taskForm.description}
                 onChange={e => setTaskForm(prev => ({ ...prev, description: e.target.value }))}
               />
@@ -996,7 +1001,7 @@ export default function Tasks() {
           <DialogFooter>
             <Button
               variant="destructive"
-              className="mr-auto"
+              className="mr-auto rounded-xl"
               onClick={() => {
                 if (editingTask) {
                   setTaskToDelete(editingTask);
@@ -1005,7 +1010,7 @@ export default function Tasks() {
             >
               Delete
             </Button>
-            <Button onClick={closeEditDialog} variant="outline" className="mr-2">Cancel</Button>
+            <Button onClick={closeEditDialog} variant="outline" className="tool-surface tool-surface-interactive mr-2 rounded-xl">Cancel</Button>
             <Button onClick={handleUpdate}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
@@ -1013,7 +1018,7 @@ export default function Tasks() {
 
       {/* Customize Columns Dialog */}
       <Dialog open={columnsDialogOpen} onOpenChange={setColumnsDialogOpen}>
-        <DialogContent className="sm:max-w-[500px]">
+        <DialogContent className="border-0 bg-slate-50 shadow-2xl sm:max-w-[500px] sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Customize Columns</DialogTitle>
           </DialogHeader>
@@ -1045,20 +1050,20 @@ export default function Tasks() {
             </DndContext>
 
             {/* Add Column Button */}
-            <Button variant="outline" className="w-full gap-2" onClick={addColumn}>
+            <Button variant="outline" className="tool-surface tool-surface-interactive w-full gap-2 rounded-xl" onClick={addColumn}>
               <Plus className="w-4 h-4" />
               Add Column
             </Button>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setColumnsDialogOpen(false)}>Cancel</Button>
+            <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setColumnsDialogOpen(false)}>Cancel</Button>
             <Button onClick={saveColumns}>Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Kanban Board */}
-      <div className="flex gap-6 overflow-x-auto p-4 pb-8 flex-1" style={{ minHeight: 'calc(100vh - 280px)' }}>
+      <div className="flex flex-1 gap-5 overflow-x-auto pb-8" style={{ minHeight: 'calc(100vh - 300px)' }}>
         {columns.map(column => (
           <StatusColumn key={column.id} column={column} />
         ))}
