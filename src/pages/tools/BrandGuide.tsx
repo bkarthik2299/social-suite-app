@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+    ArrowLeft,
     BadgeInfo,
     Copy,
     Download,
@@ -190,6 +191,7 @@ export default function BrandGuidePage() {
         addMoodImage,
         updateMoodImage,
         deleteMoodImage,
+        deleteGuide,
     } = useBrandGuide(selectedGuideId);
 
     const [draft, setDraft] = useState<Partial<BrandGuide>>({});
@@ -201,8 +203,8 @@ export default function BrandGuidePage() {
     const [moodImageForm, setMoodImageForm] = useState(emptyMoodImageForm);
 
     useEffect(() => {
-        if (!selectedGuideId && guides.length > 0) {
-            setSelectedGuideId(guides[0].id);
+        if (selectedGuideId && guides.length > 0 && !guides.some((item) => item.id === selectedGuideId)) {
+            setSelectedGuideId('');
         }
     }, [guides, selectedGuideId]);
 
@@ -288,6 +290,37 @@ export default function BrandGuidePage() {
         setNewGuideName('');
         setNewGuideProjectId('none');
         setCreateOpen(true);
+    };
+
+    const openGuideFolder = (id: string) => {
+        setSelectedGuideId(id);
+        setOpenSections(['identity']);
+        setActiveSection(sections[0].id);
+        window.history.replaceState(null, '', window.location.pathname);
+    };
+
+    const returnToFolders = () => {
+        setSelectedGuideId('');
+        setOpenSections(['identity']);
+        setActiveSection(sections[0].id);
+        window.history.replaceState(null, '', window.location.pathname);
+    };
+
+    const requestDeleteGuide = (targetGuide: BrandGuide) => {
+        const guideName = targetGuide.brand_name || 'this Brand Guide';
+        setDeleteConfirm({
+            title: 'Delete Brand Guide?',
+            description: `This will permanently delete "${guideName}" and its brand assets. This action cannot be undone.`,
+            action: () => deleteGuide.mutate(targetGuide.id, {
+                onSuccess: () => {
+                    if (selectedGuideId === targetGuide.id) returnToFolders();
+                    toast({ title: 'Brand Guide deleted', description: `${guideName} was removed.` });
+                },
+                onError: (error) => {
+                    toast({ title: 'Could not delete Brand Guide', description: errorMessage(error), variant: 'destructive' });
+                },
+            }),
+        });
     };
 
     const createNewGuide = async () => {
@@ -476,6 +509,7 @@ export default function BrandGuidePage() {
     const bodyFont = useMemo(() => fonts.find((font) => font.category === 'body') || null, [fonts]);
     const knowledgeStatus = brandKnowledgeDocument?.status || 'missing';
     const knowledgeUpdatedAt = brandKnowledgeDocument?.generated_at || brandKnowledgeDocument?.updated_at || '';
+    const showFolderView = !selectedGuideId;
 
     return (
         <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Brand Guide', path: '/tools/brand-guide' }]}>
@@ -488,24 +522,33 @@ export default function BrandGuidePage() {
                             </div>
                             <div>
                                 <h1 className="text-3xl font-bold tracking-tight text-gray-900">Brand Guide</h1>
+                                <p className="text-muted-foreground">Open a brand guide, then edit its assets.</p>
                             </div>
                         </div>
                     </div>
 
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                        <Select value={selectedGuideId} onValueChange={setSelectedGuideId} disabled={guides.length === 0}>
-                            <SelectTrigger className="tool-surface h-11 w-full rounded-xl sm:w-[280px]">
-                                <SelectValue placeholder="Select brand guide" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {guides.map((item) => (
-                                    <SelectItem key={item.id} value={item.id}>
-                                        {item.brand_name || 'Untitled Brand'}
-                                        {item.project_id ? ` - ${projects.find((project) => project.id === item.project_id)?.name || 'Assigned project'}` : ' - No project'}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
+                        {!showFolderView && (
+                            <Button variant="outline" className="tool-surface tool-surface-interactive gap-2 rounded-full" onClick={returnToFolders}>
+                                <ArrowLeft className="h-4 w-4" />
+                                All Guides
+                            </Button>
+                        )}
+                        {!showFolderView && (
+                            <Select value={selectedGuideId} onValueChange={openGuideFolder} disabled={guides.length === 0}>
+                                <SelectTrigger className="tool-surface h-11 w-full rounded-xl sm:w-[280px]">
+                                    <SelectValue placeholder="Select brand guide" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    {guides.map((item) => (
+                                        <SelectItem key={item.id} value={item.id}>
+                                            {item.brand_name || 'Untitled Brand'}
+                                            {item.project_id ? ` - ${projects.find((project) => project.id === item.project_id)?.name || 'Assigned project'}` : ' - No project'}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                        )}
                         <Button className="gap-2 rounded-full bg-primary px-6 text-white hover:bg-primary/90" onClick={openCreateGuide}>
                             <Plus className="h-4 w-4" />
                             New Brand Guide
@@ -513,7 +556,19 @@ export default function BrandGuidePage() {
                     </div>
                 </div>
 
-                {!hasGuide && !isLoading ? (
+                {showFolderView && isLoading ? (
+                    <div className="tool-surface flex min-h-[360px] items-center justify-center rounded-xl">
+                        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                    </div>
+                ) : showFolderView && guides.length > 0 ? (
+                    <BrandGuideFolderView
+                        guides={guides}
+                        projects={projects}
+                        onOpenGuide={openGuideFolder}
+                        onDeleteGuide={requestDeleteGuide}
+                        onCreateGuide={openCreateGuide}
+                    />
+                ) : !hasGuide && !isLoading ? (
                     <EmptyPanel
                         icon={Palette}
                         title="Create your first Brand Guide"
@@ -1681,6 +1736,107 @@ function MoodImageCard({ image, disabled, onUpdate, onDelete }: { image: BrandMo
     );
 }
 
+function BrandGuideFolderView({
+    guides,
+    projects,
+    onOpenGuide,
+    onDeleteGuide,
+    onCreateGuide,
+}: {
+    guides: BrandGuide[];
+    projects: Array<{ id: string; name: string }>;
+    onOpenGuide: (id: string) => void;
+    onDeleteGuide: (guide: BrandGuide) => void;
+    onCreateGuide: () => void;
+}) {
+    const projectNamesById = new Map(projects.map((project) => [project.id, project.name]));
+
+    return (
+        <div className="animate-fade-in space-y-4">
+            <div className="tool-surface overflow-hidden rounded-xl bg-white">
+                <div className="hidden grid-cols-[minmax(0,1fr)_minmax(140px,180px)_160px_64px] items-center gap-4 bg-slate-50/80 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid">
+                    <span>Brand Guide</span>
+                    <span>Project</span>
+                    <span>Updated</span>
+                    <span className="text-right">Action</span>
+                </div>
+
+                <div className="divide-y divide-blue-100/60">
+                    {guides.map((guide) => (
+                        <BrandGuideListRow
+                            key={guide.id}
+                            guide={guide}
+                            projectName={guide.project_id ? projectNamesById.get(guide.project_id) || 'Assigned Project' : 'Unassigned'}
+                            onOpenGuide={onOpenGuide}
+                            onDeleteGuide={onDeleteGuide}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            {guides.length === 0 && (
+                <EmptyPanel
+                    icon={Palette}
+                    title="No Brand Guides yet"
+                    description="Create a brand guide to start organizing your brand assets."
+                    actionLabel="Create Brand Guide"
+                    onAction={onCreateGuide}
+                />
+            )}
+        </div>
+    );
+}
+
+function BrandGuideListRow({
+    guide,
+    projectName,
+    onOpenGuide,
+    onDeleteGuide,
+}: {
+    guide: BrandGuide;
+    projectName: string;
+    onOpenGuide: (id: string) => void;
+    onDeleteGuide: (guide: BrandGuide) => void;
+}) {
+    return (
+        <div className="group grid gap-3 px-4 py-3 transition-colors hover:bg-blue-50/35 md:grid-cols-[minmax(0,1fr)_minmax(140px,180px)_160px_64px] md:items-center md:gap-4">
+            <button
+                type="button"
+                className="flex min-w-0 items-center gap-3 text-left"
+                onClick={() => onOpenGuide(guide.id)}
+            >
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                    <Palette className="h-5 w-5" />
+                </div>
+                <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold text-slate-900">{guide.brand_name || 'Untitled Brand'}</p>
+                </div>
+            </button>
+
+            <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-600">{projectName}</p>
+            </div>
+
+            <div className="text-xs font-medium text-slate-400 md:text-sm">
+                {formatGuideUpdatedAt(guide.updated_at || guide.created_at)}
+            </div>
+
+            <div className="flex items-center justify-end">
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 rounded-lg text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"
+                    aria-label={`Delete ${guide.brand_name || 'Brand Guide'}`}
+                    onClick={() => onDeleteGuide(guide)}
+                >
+                    <Trash2 className="h-4 w-4" />
+                </Button>
+            </div>
+        </div>
+    );
+}
+
 function EmptyPanel({
     icon: Icon,
     title,
@@ -1828,6 +1984,13 @@ function slugifyFileName(value: string): string {
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, '') || 'brand-knowledge';
+}
+
+function formatGuideUpdatedAt(value: string | null | undefined): string {
+    if (!value) return 'No updates yet';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'No updates yet';
+    return `Updated ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
 function normalizeHex(value: string): string {

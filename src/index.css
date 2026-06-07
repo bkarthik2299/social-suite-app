@@ -164,13 +164,15 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    padding: 1px;
+    padding: 1.25px;
     background: conic-gradient(
       from var(--ai-border-angle, 0deg),
-      rgb(37 99 235 / 0.14),
-      rgb(99 102 241 / 0.34),
-      rgb(14 165 233 / 0.2),
-      rgb(37 99 235 / 0.14)
+      rgb(37 99 235 / 0.26),
+      rgb(14 165 233 / 0.44),
+      rgb(20 184 166 / 0.34),
+      rgb(168 85 247 / 0.46),
+      rgb(244 114 182 / 0.32),
+      rgb(37 99 235 / 0.26)
     );
     pointer-events: none;
     animation: ai-border-flow 7s linear infinite;
@@ -230,5 +232,29 @@
 
   .ai-history-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: hsl(var(--muted-foreground) / 0.42);
+  }
+
+  .command-search-scrollbar {
+    scrollbar-color: rgb(147 197 253 / 0.72) transparent;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+
+  .command-search-scrollbar::-webkit-scrollbar {
+    width: 7px;
+  }
+
+  .command-search-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .command-search-scrollbar::-webkit-scrollbar-thumb {
+    border: 2px solid rgb(255 255 255 / 0.9);
+    border-radius: 9999px;
+    background: linear-gradient(180deg, rgb(147 197 253 / 0.7), rgb(37 99 235 / 0.38));
+  }
+
+  .command-search-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgb(96 165 250 / 0.78), rgb(37 99 235 / 0.5));
   }
 }
