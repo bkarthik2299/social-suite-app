@@ -407,8 +407,8 @@ export function AIAssistant() {
       </Button>
 
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
-        <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
-          <SheetHeader className="border-b border-slate-200 py-5 pl-6 pr-12">
+        <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 bg-slate-50 p-0 sm:max-w-xl">
+          <SheetHeader className="bg-white py-5 pl-6 pr-12 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)]">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
@@ -419,9 +419,9 @@ export function AIAssistant() {
                 <SheetDescription>Brief to Campaign</SheetDescription>
               </div>
               </div>
-              <Button variant="outline" size="sm" className="gap-2 rounded-lg" onClick={() => setSkillsOpen(true)}>
+              <Button variant="outline" size="sm" className="tool-surface tool-surface-interactive gap-2 rounded-lg" onClick={() => setSkillsOpen(true)}>
                 <Settings2 className="h-3.5 w-3.5" />
-                Customize Agent
+                Customize Agents
               </Button>
             </div>
           </SheetHeader>
@@ -433,7 +433,7 @@ export function AIAssistant() {
                 <Textarea
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  className="min-h-[220px] rounded-xl bg-white px-4 py-3 text-sm leading-6"
+                  className="tool-surface min-h-[220px] resize-none rounded-xl px-4 py-3 text-sm leading-6"
                   placeholder="Paste meeting notes, campaign goals, audience details, must-have offers, constraints, and any client requirements."
                 />
               </div>
@@ -495,13 +495,22 @@ export function AIAssistant() {
 
               <div className="space-y-2">
                 <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Work Mode</Label>
-                <div className="grid grid-cols-2 gap-1 rounded-xl bg-slate-100 p-1">
+                <div className="tool-surface relative grid grid-cols-2 gap-1 overflow-hidden rounded-xl bg-white p-1">
+                  <div
+                    className="pointer-events-none absolute bottom-1 left-1 top-1 rounded-lg bg-blue-50 shadow-sm transition-[transform,box-shadow] duration-300"
+                    style={{
+                      width: 'calc((100% - 0.75rem) / 2)',
+                      transform: workMode === 'deep' ? 'translateX(calc(100% + 0.25rem))' : 'translateX(0)',
+                      transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
+                    }}
+                  />
                   <button
                     type="button"
+                    aria-pressed={workMode === 'instant'}
                     onClick={() => setWorkMode('instant')}
                     className={cn(
-                      'flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors',
-                      workMode === 'instant' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800',
+                      'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
+                      workMode === 'instant' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
                     )}
                   >
                     <Zap className="h-4 w-4" />
@@ -509,10 +518,11 @@ export function AIAssistant() {
                   </button>
                   <button
                     type="button"
+                    aria-pressed={workMode === 'deep'}
                     onClick={() => setWorkMode('deep')}
                     className={cn(
-                      'flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors',
-                      workMode === 'deep' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:text-slate-800',
+                      'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
+                      workMode === 'deep' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
                     )}
                   >
                     <Search className="h-4 w-4" />
@@ -521,7 +531,7 @@ export function AIAssistant() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+              <div className="tool-surface rounded-xl p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-slate-900">Approval Mode</p>
@@ -539,7 +549,7 @@ export function AIAssistant() {
             </div>
           </ScrollArea>
 
-          <div className="border-t border-slate-200 p-4">
+          <div className="bg-white p-4 shadow-[0_-8px_28px_-30px_rgba(37,99,235,0.45),0_-1px_3px_rgba(15,23,42,0.04)]">
             <Button
               className="h-11 w-full gap-2 rounded-xl bg-primary font-medium text-white hover:bg-primary/90"
               disabled={!promptReady || running}
@@ -553,34 +563,38 @@ export function AIAssistant() {
       </Sheet>
 
       <Dialog open={missionOpen} onOpenChange={setMissionOpen}>
-        <DialogContent className="h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0 sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)]">
-          <DialogHeader className="border-b border-slate-200 px-4 py-4 pr-10 sm:px-6 sm:py-5 sm:pr-10">
-            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-              <div>
-                <DialogTitle className="text-xl">Mission Mode</DialogTitle>
-                <DialogDescription>{missionDescription(currentRun, running)}</DialogDescription>
-              </div>
-              <div className="flex flex-col items-start gap-2 md:items-end">
-                <div className="flex flex-wrap gap-2">
+        <DialogContent className="h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden border-0 bg-slate-50 p-0 shadow-2xl sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-2xl">
+          <DialogHeader className="bg-white px-4 py-4 pr-14 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)] sm:px-6 sm:py-5 sm:pr-14">
+            <div className="space-y-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0">
+                  <DialogTitle className="text-xl leading-7">Mission Mode</DialogTitle>
+                  <DialogDescription className="mt-1">{missionDescription(currentRun, running)}</DialogDescription>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {researchEvent && <ResearchNotesButton onClick={() => setResearchNotesOpen(true)} />}
-                  <Button variant="outline" size="sm" className="h-8 gap-2 rounded-lg px-3" onClick={() => setSkillsOpen(true)}>
+                  <Button
+                    size="sm"
+                    className="h-9 gap-2 rounded-lg bg-primary px-3.5 text-white shadow-[0_12px_28px_-20px_rgba(37,99,235,0.65)] hover:bg-primary/90"
+                    onClick={() => setSkillsOpen(true)}
+                  >
                     <Settings2 className="h-3.5 w-3.5" />
-                    Customize Agent
+                    Customize Agents
                   </Button>
                 </div>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                  <MissionContextLabel label="Project" value={selectedProject?.name || 'Project'} />
-                  <MissionContextLabel label="Folder" value={selectedFolder?.name || 'Auto folder'} />
-                  {selectedGuide?.brand_name && <MissionContextLabel label="Brand" value={selectedGuide.brand_name} />}
-                  <MissionContextLabel label="Mode" value={workMode === 'deep' ? 'Deep Work' : 'Instant'} />
-                </div>
               </div>
+              <div className="flex flex-wrap items-center gap-2 rounded-xl bg-slate-50/80 px-3 py-2 text-xs text-slate-500">
+                <MissionContextLabel label="Project" value={selectedProject?.name || 'Project'} />
+                <MissionContextLabel label="Folder" value={selectedFolder?.name || 'Auto folder'} />
+                {selectedGuide?.brand_name && <MissionContextLabel label="Brand" value={selectedGuide.brand_name} />}
+                <MissionContextLabel label="Mode" value={workMode === 'deep' ? 'Deep Work' : 'Instant'} />
+              </div>
+              <Progress value={progress} className="h-2" />
             </div>
-            <Progress value={progress} className="mt-4 h-2" />
           </DialogHeader>
 
           <div className="grid min-h-0 min-w-0 grid-cols-1 grid-rows-[minmax(160px,30vh)_minmax(0,1fr)] overflow-hidden lg:grid-cols-[280px_minmax(0,1fr)] lg:grid-rows-1">
-            <ScrollArea className="min-h-0 min-w-0 max-w-full border-b border-slate-200 lg:border-b-0 lg:border-r">
+            <ScrollArea className="min-h-0 min-w-0 max-w-full bg-white shadow-[8px_0_28px_-30px_rgba(37,99,235,0.45),1px_0_3px_rgba(15,23,42,0.04)]">
               <div className="space-y-3 p-5">
                 {displaySteps.map((step, index) => (
                   <AgentStepCard key={`${step.agent_name}-${index}`} step={step} activeFallback={running && index === syntheticStep} />
@@ -620,11 +634,11 @@ export function AIAssistant() {
             </ScrollArea>
           </div>
 
-          <DialogFooter className="flex-row flex-wrap justify-end gap-2 border-t border-slate-200 px-4 py-3 sm:space-x-0 sm:px-6 sm:py-4">
-            <Button variant="outline" className="rounded-xl" onClick={() => setPanelOpen(true)}>
+          <DialogFooter className="flex-row flex-wrap justify-end gap-2 bg-white px-4 py-3 shadow-[0_-8px_28px_-30px_rgba(37,99,235,0.45),0_-1px_3px_rgba(15,23,42,0.04)] sm:space-x-0 sm:px-6 sm:py-4">
+            <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setPanelOpen(true)}>
               Back to Prompt
             </Button>
-            <Button variant="outline" className="rounded-xl" onClick={cancelMission}>
+            <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={cancelMission}>
               Close
             </Button>
             <Button
@@ -703,7 +717,7 @@ function FieldSelect({
         }}
         disabled={disabled}
       >
-        <SelectTrigger className="h-11 rounded-xl bg-white">
+        <SelectTrigger className="tool-surface h-11 rounded-xl bg-white">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
@@ -902,14 +916,14 @@ function CustomizeAgentSheet({
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 p-0 sm:max-w-[1000px]">
-          <SheetHeader className="border-b border-slate-200 py-5 pl-6 pr-12">
+        <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 bg-slate-50 p-0 sm:max-w-[1000px]">
+          <SheetHeader className="bg-white py-5 pl-6 pr-12 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)]">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                 <Workflow className="h-5 w-5" />
               </div>
               <div>
-                <SheetTitle>Customize Agent</SheetTitle>
+                <SheetTitle>Customize Agents</SheetTitle>
                 <SheetDescription>Arrange the workspace flow and edit the SKILL.md used during generation.</SheetDescription>
               </div>
             </div>
@@ -929,7 +943,7 @@ function CustomizeAgentSheet({
                   </Button>
                 </div>
 
-                <div className="max-w-full overflow-x-auto rounded-xl border border-slate-200 bg-slate-50/70 p-4">
+                <div className="tool-surface max-w-full overflow-x-auto rounded-xl p-4">
                   <div className="flex min-w-max items-center gap-2">
                     {flowAgents.map((agent, index) => {
                       const protectedAgent = defaultAiAgentFlow.includes(agent.slug);
@@ -937,8 +951,8 @@ function CustomizeAgentSheet({
                       return (
                         <div key={agent.slug} className="flex items-center gap-2">
                           <div className={cn(
-                            'w-44 rounded-xl border bg-white p-3 transition-colors',
-                            selected ? 'border-primary shadow-sm ring-2 ring-primary/10' : 'border-slate-200 hover:border-slate-300',
+                            'w-44 rounded-xl bg-white p-3 transition-colors',
+                            selected ? 'bg-blue-50/80 shadow-sm' : 'hover:bg-slate-50',
                           )}>
                             <button type="button" className="w-full text-left" onClick={() => setSelectedSlug(agent.slug)}>
                               <div className="flex items-start justify-between gap-2">
@@ -951,7 +965,7 @@ function CustomizeAgentSheet({
                               </div>
                               <p className="mt-3 min-h-10 text-sm font-semibold leading-5 text-slate-900">{agent.name}</p>
                             </button>
-                            <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2">
+                            <div className="mt-3 flex items-center justify-between rounded-lg bg-white/70 px-2 py-2">
                               <div className="flex gap-1">
                                 <Button
                                   type="button"
@@ -1010,7 +1024,7 @@ function CustomizeAgentSheet({
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-1.5 rounded-lg"
+                        className="tool-surface tool-surface-interactive h-8 gap-1.5 rounded-lg"
                         disabled={workflowSaving}
                         onClick={() => addAgentToFlow(agent)}
                       >
@@ -1028,7 +1042,7 @@ function CustomizeAgentSheet({
                     <div className="space-y-2">
                       <Label>Agent Library</Label>
                       <Select value={selectedAgent.slug} onValueChange={setSelectedSlug}>
-                        <SelectTrigger className="h-11 rounded-xl bg-white">
+                        <SelectTrigger className="tool-surface h-11 rounded-xl bg-white">
                           <SelectValue placeholder="Choose agent" />
                         </SelectTrigger>
                         <SelectContent>
@@ -1038,7 +1052,7 @@ function CustomizeAgentSheet({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                    <div className="tool-surface rounded-xl px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-semibold text-slate-900">{selectedAgent.name}</p>
                         <Badge variant="outline">{defaultAiAgentFlow.includes(selectedAgent.slug) ? 'Built-in' : 'Custom'}</Badge>
@@ -1072,14 +1086,14 @@ function CustomizeAgentSheet({
                   </div>
                 </section>
               ) : (
-                <div className="rounded-xl border border-dashed border-slate-300 p-5 text-sm text-slate-500">
+                <div className="tool-surface rounded-xl p-5 text-sm text-slate-500">
                   No agents are available in this workspace yet.
                 </div>
               )}
             </div>
           </div>
 
-          <div className="border-t border-slate-200 p-4">
+          <div className="bg-white p-4 shadow-[0_-8px_28px_-30px_rgba(37,99,235,0.45),0_-1px_3px_rgba(15,23,42,0.04)]">
             <Button
               className="h-11 w-full gap-2 rounded-xl"
               disabled={!selectedAgent || !skillDraft.trim() || saving}
@@ -1096,7 +1110,7 @@ function CustomizeAgentSheet({
         setCreateOpen(nextOpen);
         if (!nextOpen) resetNewAgentDraft();
       }}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="border-0 bg-slate-50 shadow-2xl sm:max-w-2xl sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Create Custom Agent</DialogTitle>
             <DialogDescription>Add a workspace agent with a focused role. It will be appended to the handoff flow.</DialogDescription>
@@ -1112,6 +1126,7 @@ function CustomizeAgentSheet({
                     setNewAgentName(event.target.value);
                     setNewAgentSkill((current) => current.replace(/^# .+$/m, `# ${event.target.value || 'Custom Agent'}`));
                   }}
+                  className="tool-surface h-10 rounded-xl"
                   placeholder="Engagement Strategist"
                 />
               </div>
@@ -1121,6 +1136,7 @@ function CustomizeAgentSheet({
                   id="new-agent-description"
                   value={newAgentDescription}
                   onChange={(event) => setNewAgentDescription(event.target.value)}
+                  className="tool-surface h-10 rounded-xl"
                   placeholder="Improves participation and response quality."
                 />
               </div>
@@ -1131,7 +1147,7 @@ function CustomizeAgentSheet({
                 id="new-agent-skill-md"
                 value={newAgentSkill}
                 onChange={(event) => setNewAgentSkill(event.target.value)}
-                className="min-h-[300px] rounded-xl font-mono text-sm leading-6"
+                className="tool-surface min-h-[300px] rounded-xl font-mono text-sm leading-6"
                 spellCheck={false}
               />
             </div>
@@ -1206,6 +1222,9 @@ function DestinationLine({ label, value }: { label: string; value: string }) {
 
 function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallback?: boolean }) {
   const status = activeFallback ? 'working' : step.status;
+  const defaultCollapsed = status !== 'working' && status !== 'failed';
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const message = sanitizeActivityText(stepCardMessage(step));
   const Icon = status === 'done'
     ? CheckCircle2
     : status === 'working'
@@ -1214,13 +1233,23 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
         ? Circle
         : Clock3;
 
+  useEffect(() => {
+    setCollapsed(defaultCollapsed);
+  }, [defaultCollapsed, step.id]);
+
   return (
     <div className={cn(
-      'rounded-xl border bg-white p-4 transition-colors',
-      status === 'working' ? 'border-primary/30 bg-primary/5' : 'border-slate-200',
-      status === 'failed' && 'border-red-200 bg-red-50',
+      'tool-surface rounded-xl transition-colors',
+      collapsed ? 'p-3' : 'p-4',
+      status === 'working' && 'bg-blue-50/75',
+      status === 'failed' && 'bg-red-50',
     )}>
-      <div className="flex items-start gap-3">
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        className="flex w-full items-start gap-3 text-left"
+        onClick={() => setCollapsed((value) => !value)}
+      >
         <div className={cn(
           'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500',
           status === 'working' && 'bg-primary/10 text-primary',
@@ -1228,13 +1257,22 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
         )}>
           <Icon className={cn('h-4 w-4', status === 'working' && 'animate-spin')} />
         </div>
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900">{step.agent_name}</p>
-          <p className="mt-1 text-sm leading-5 text-slate-500">{sanitizeActivityText(stepCardMessage(step))}</p>
-        </div>
-      </div>
+        <span className="min-w-0 flex-1 pt-0.5">
+          <span className="block truncate text-sm font-semibold text-slate-900">{step.agent_name}</span>
+          {collapsed && <span className="mt-0.5 block truncate text-xs font-medium capitalize text-slate-500">{stepStatusLabel(status)}</span>}
+        </span>
+        <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform', !collapsed && 'rotate-180')} />
+      </button>
+      {!collapsed && (
+        <p className="mt-3 pl-11 text-sm leading-5 text-slate-500">{message}</p>
+      )}
     </div>
   );
+}
+
+function stepStatusLabel(status: AiRunStep['status'] | 'working') {
+  if (status === 'needs_approval') return 'Needs approval';
+  return status.replace(/_/g, ' ');
 }
 
 function stepCardMessage(step: AiRunStep) {
@@ -1262,8 +1300,8 @@ function RunningPanel({
   const recentEvents = [...events].slice(-6).reverse();
 
   return (
-    <div className="min-h-[420px] w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-dashed border-slate-300 bg-slate-50/70 p-4 sm:p-5">
-      <div className="mb-5 flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-5 md:flex-row md:items-start md:justify-between">
+    <div className="tool-surface min-h-[420px] w-full min-w-0 max-w-full overflow-hidden rounded-xl bg-white p-4 sm:p-5">
+      <div className="mb-5 flex flex-col gap-3 rounded-xl bg-slate-50/80 p-5 md:flex-row md:items-start md:justify-between">
         <div className="flex gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
             {running ? <Loader2 className="h-6 w-6 animate-spin" /> : <Sparkles className="h-6 w-6" />}
@@ -1321,7 +1359,7 @@ function RunActivityTrail({
         aria-expanded={!collapsed}
         className={cn(
           'flex w-full items-center justify-between gap-3 rounded-lg text-left transition-colors hover:text-primary',
-          collapsed ? 'border border-slate-200 bg-white px-4 py-3 shadow-sm' : 'px-0 py-0.5',
+          collapsed ? 'tool-surface px-4 py-3' : 'px-0 py-0.5',
         )}
         onClick={() => setCollapsed((value) => !value)}
       >
@@ -1333,7 +1371,7 @@ function RunActivityTrail({
       </button>
       {!collapsed && (
         events.length === 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-500">
+          <div className="tool-surface rounded-xl px-4 py-3 text-sm text-slate-500">
             {emptyText}
           </div>
         ) : (
@@ -1348,7 +1386,7 @@ function RunEventRow({ event }: { event: AiRunEvent }) {
   const sources = eventSources(event);
 
   return (
-    <div className="w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <div className="tool-surface w-full min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="break-words text-sm font-medium text-slate-900">{eventDisplayMessage(event)}</p>
@@ -1364,7 +1402,7 @@ function RunEventRow({ event }: { event: AiRunEvent }) {
               href={source.url}
               target="_blank"
               rel="noreferrer"
-              className="block min-w-0 max-w-full truncate rounded-full border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 hover:border-primary/40 hover:text-primary sm:max-w-[36rem]"
+              className="block min-w-0 max-w-full truncate rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.05)] hover:text-primary sm:max-w-[36rem]"
             >
               {source.title || source.url}
             </a>
@@ -1377,7 +1415,11 @@ function RunEventRow({ event }: { event: AiRunEvent }) {
 
 function ResearchNotesButton({ onClick }: { onClick: () => void }) {
   return (
-    <Button variant="outline" size="sm" className="h-8 gap-2 rounded-lg px-3" onClick={onClick}>
+    <Button
+      size="sm"
+      className="h-9 gap-2 rounded-lg bg-primary px-3.5 text-white shadow-[0_12px_28px_-20px_rgba(37,99,235,0.65)] hover:bg-primary/90"
+      onClick={onClick}
+    >
       <BookOpenText className="h-3.5 w-3.5" />
       View Research Notes
     </Button>
@@ -1386,8 +1428,8 @@ function ResearchNotesButton({ onClick }: { onClick: () => void }) {
 
 function MissionContextLabel({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex min-w-0 items-baseline gap-1.5">
-      <span className="shrink-0 font-semibold uppercase tracking-wide text-slate-400">{label}</span>
+    <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-white px-2.5 py-1 shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.04)]">
+      <span className="shrink-0 font-semibold uppercase tracking-wide text-slate-500">{label}</span>
       <span className="max-w-[12rem] truncate font-medium text-slate-700">{value}</span>
     </span>
   );
@@ -1406,8 +1448,8 @@ function ResearchNotesSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 p-0 sm:max-w-xl">
-        <SheetHeader className="border-b border-slate-200 px-6 py-5">
+      <SheetContent side="right" overlayClassName="bg-white/10 backdrop-blur-[1px]" className="flex w-full flex-col gap-0 bg-slate-50 p-0 sm:max-w-xl">
+        <SheetHeader className="bg-white px-6 py-5 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)]">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
               <BookOpenText className="h-5 w-5" />
@@ -1452,7 +1494,7 @@ function ResearchNotesSheet({
                 <Badge variant="outline">{notes.sources.length} sources</Badge>
               </div>
               {notes.sources.map((source, index) => (
-                <div key={source.url || `${source.title}-${index}`} className="rounded-xl border border-slate-200 bg-white p-4">
+                <div key={source.url || `${source.title}-${index}`} className="tool-surface rounded-xl p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex min-w-0 gap-3">
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-semibold text-slate-600">
@@ -1468,7 +1510,7 @@ function ResearchNotesSheet({
                       target="_blank"
                       rel="noreferrer"
                       aria-label={`Open source: ${source.title || source.url}`}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:border-primary/40 hover:text-primary"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-50 text-slate-500 hover:bg-blue-50 hover:text-primary"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                     </a>
@@ -1501,7 +1543,7 @@ function ResearchNotesSheet({
 
 function ResearchNoteSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4">
+    <section className="tool-surface rounded-xl p-4">
       <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
       {children}
     </section>
@@ -1546,7 +1588,7 @@ function ArtifactPreview({
       />
 
       <Tabs defaultValue="strategy" className="space-y-4">
-        <TabsList className="h-auto flex-wrap justify-start rounded-xl bg-slate-100 p-1">
+        <TabsList className="tool-surface h-auto flex-wrap justify-start rounded-xl bg-white p-1">
           <TabsTrigger value="strategy" className="gap-2 rounded-lg"><Layers3 className="h-4 w-4" />Strategy</TabsTrigger>
           <TabsTrigger value="social" className="gap-2 rounded-lg"><MessageSquareText className="h-4 w-4" />Social {socialCount}</TabsTrigger>
           <TabsTrigger value="ads" className="gap-2 rounded-lg"><Megaphone className="h-4 w-4" />Ads {googleCount + socialAdCount}</TabsTrigger>
@@ -1667,7 +1709,7 @@ function ArtifactPreview({
           />
           <div className="grid gap-2">
             {(pack.calendar || []).map((item, index) => (
-              <div key={`${item.date}-${index}`} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div key={`${item.date}-${index}`} className="tool-surface flex items-center justify-between gap-3 rounded-xl px-4 py-3">
                 <Checkbox
                   checked={selectedKeys.has(draftKey('calendar', index))}
                   onCheckedChange={(checked) => onToggleDraft(draftKey('calendar', index), checked === true)}
@@ -1690,7 +1732,7 @@ function ArtifactPreview({
 
 function PreviewSection({ icon: Icon, title, children }: { icon: typeof ShieldCheck; title: string; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5">
+    <div className="tool-surface rounded-xl p-5">
       <div className="mb-4 flex items-center gap-3">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Icon className="h-4 w-4" />
@@ -1716,7 +1758,7 @@ function PreviewCard({
   onCheckedChange?: (checked: boolean) => void;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-slate-200 bg-white p-4">
+    <div className="tool-surface min-w-0 rounded-xl p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         {onCheckedChange && (
           <Checkbox
@@ -1749,7 +1791,7 @@ function DraftSelectionBar({
   const allSelected = keys.length > 0 && selectedCount === keys.length;
 
   return (
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+    <div className="tool-surface mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-2">
       <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-slate-700">
         <Checkbox checked={allSelected} onCheckedChange={(checked) => onToggle(keys, checked === true)} />
         Select all {label}
