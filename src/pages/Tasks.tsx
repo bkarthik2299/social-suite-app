@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, closestCenter, pointerWithin, rectIntersection, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, DragEndEvent, DragStartEvent, type CollisionDetection } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -47,10 +47,30 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useToast } from "@/components/ui/use-toast";
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
 import { Task } from '@/types';
+
+const getErrorMessage = (error: unknown) => {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return 'Something went wrong. Please try again.';
+};
+
+const taskCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) return pointerCollisions;
+
+  const intersections = rectIntersection(args);
+  if (intersections.length > 0) return intersections;
+
+  return closestCenter(args);
+};
 
 // Type for column configuration
 interface TaskColumn {
@@ -63,7 +83,7 @@ interface TaskColumn {
 const DEFAULT_COLUMNS: TaskColumn[] = [
   { id: 'todo', title: 'To-do', color: 'bg-blue-500' },
   { id: 'in-progress', title: 'In Progress', color: 'bg-amber-500' },
-  { id: 'completed', title: 'Completed', color: 'bg-green-500' },
+  { id: 'done', title: 'Completed', color: 'bg-green-500' },
 ];
 
 // Available colors for columns
@@ -166,86 +186,56 @@ function SortableColumnItem({
   );
 }
 
-// Task Card Component
-function TaskCard({
-  task,
-  project,
-  campaign,
-  onEdit,
-  onDelete,
-  onDragStart,
-  onDragEnd,
-  onDrop,
-  isDragging
-}: {
+type TaskCardVisualProps = {
   task: Task;
   project?: { name: string };
   campaign?: { name: string; type: string };
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
-  onDragStart: (e: React.DragEvent, task: Task) => void;
-  onDragEnd: () => void;
-  onDrop?: (e: React.DragEvent, targetTask: Task) => void;
-  isDragging: boolean;
-}) {
-  const [isDragOver, setIsDragOver] = useState(false);
+  preview?: boolean;
+};
 
+function TaskCardVisual({ task, project, campaign, onEdit, onDelete, preview = false }: TaskCardVisualProps) {
   return (
-    <div
-      draggable
-      onDragStart={(e) => onDragStart(e, task)}
-      onDragEnd={onDragEnd}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragOver(true);
-      }}
-      onDragLeave={() => setIsDragOver(false)}
-      onDrop={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setIsDragOver(false);
-        if (onDrop) onDrop(e, task);
-      }}
-      className={cn(
-        "tool-surface tool-surface-interactive group cursor-grab select-none rounded-xl p-4 active:cursor-grabbing",
-        isDragging && "scale-[0.98] opacity-60",
-        isDragOver && "ring-2 ring-primary/40 ring-offset-2 ring-offset-slate-50"
-      )}
-    >
-      <div className="flex justify-between items-start mb-2">
-        <div className="flex items-center gap-2 flex-1">
-          <GripVertical className="w-4 h-4 flex-shrink-0 text-muted-foreground" />
+    <>
+      <div className="mb-2 flex items-start justify-between">
+        <div className="flex flex-1 items-center gap-2">
+          <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
           <h4
-            className="font-medium text-foreground line-clamp-2 cursor-pointer hover:text-primary transition-colors"
-            onClick={(e) => { e.stopPropagation(); onEdit(task); }}
+            className="line-clamp-2 cursor-pointer font-medium text-foreground transition-colors hover:text-primary"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (!preview) onEdit(task);
+            }}
           >
             {task.title}
           </h4>
         </div>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-            <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50">
-              <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(task); }}>
-              Edit Task
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="text-destructive"
-              onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
-            >
-              Delete Task
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {!preview && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50">
+                <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(task); }}>
+                Edit Task
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive"
+                onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+              >
+                Delete Task
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
-      <p className="text-xs text-muted-foreground mb-4 line-clamp-2">{task.description || "No description provided."}</p>
+      <p className="mb-4 line-clamp-2 text-xs text-muted-foreground">{task.description || "No description provided."}</p>
 
-      <div className="flex flex-wrap gap-2 mb-3">
+      <div className="mb-3 flex flex-wrap gap-2">
         {project && <Badge variant="outline" className="h-5 rounded-full border-0 bg-slate-50 text-[10px] text-slate-600">{project.name}</Badge>}
         {campaign && (
           <Badge variant="secondary" className={cn(
@@ -261,30 +251,119 @@ function TaskCard({
 
       {task.dueDate && (
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <CalendarIcon className="w-3 h-3" />
+          <CalendarIcon className="h-3 w-3" />
           <span>{format(new Date(task.dueDate), 'MMM d, yyyy')}</span>
         </div>
       )}
+    </>
+  );
+}
+
+function TaskDragPreview({
+  task,
+  project,
+  campaign,
+  width
+}: {
+  task: Task;
+  project?: { name: string };
+  campaign?: { name: string; type: string };
+  width: number | null;
+}) {
+  return (
+    <div
+      style={width ? { width } : undefined}
+      className="tool-surface pointer-events-none rounded-xl p-4 shadow-2xl ring-2 ring-primary/30"
+    >
+      <TaskCardVisual
+        task={task}
+        project={project}
+        campaign={campaign}
+        onEdit={() => undefined}
+        onDelete={() => undefined}
+        preview
+      />
+    </div>
+  );
+}
+
+// Task Card Component
+function TaskCard({
+  task,
+  project,
+  campaign,
+  onEdit,
+  onDelete,
+  isDragging
+}: {
+  task: Task;
+  project?: { name: string };
+  campaign?: { name: string; type: string };
+  onEdit: (task: Task) => void;
+  onDelete: (id: string) => void;
+  isDragging: boolean;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging: isSortableDragging,
+  } = useSortable({
+    id: task.id,
+    data: { type: 'task', taskId: task.id, status: task.status },
+  });
+
+  const activeDragging = isDragging || isSortableDragging;
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition: isSortableDragging ? undefined : transition,
+    willChange: 'transform',
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      data-testid={`task-card-${task.id}`}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        "tool-surface tool-surface-interactive group touch-none cursor-grab select-none rounded-xl p-4 active:cursor-grabbing",
+        activeDragging && "opacity-25 ring-2 ring-primary/20 ring-offset-2 ring-offset-slate-50"
+      )}
+    >
+      <TaskCardVisual
+        task={task}
+        project={project}
+        campaign={campaign}
+        onEdit={onEdit}
+        onDelete={onDelete}
+      />
     </div>
   );
 }
 
 export default function Tasks() {
-  const { data: dbTasks, isLoading, addTask, updateTask, deleteTask, reorderTasks } = useTasks();
+  const { data: dbTasks, addTask, updateTask, deleteTask, moveTask } = useTasks();
   const { data: projects = [] } = useProjects();
   const { data: campaigns = [] } = useAllCampaigns();
+  const { toast } = useToast();
 
   const teamMembers = useMemo(() => [
     { id: 'tm-1', name: 'You', role: 'admin', avatar: 'https://ui-avatars.com/api/?name=You&background=0D8ABC&color=fff' }
   ], []);
 
   const tasks = useMemo(() => dbTasks || [], [dbTasks]);
+  const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const [open, setOpen] = useState(false);
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [taskToDelete, setTaskToDelete] = useState<Task | null>(null);
   const [columnToDelete, setColumnToDelete] = useState<TaskColumn | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
+  const [dragOverlayWidth, setDragOverlayWidth] = useState<number | null>(null);
 
   // Filter state - now with arrays for multi-select
   const [filters, setFilters] = useState({
@@ -309,6 +388,10 @@ export default function Tasks() {
     description: '',
     assigneeId: ''
   });
+
+  const resetTaskForm = useCallback(() => {
+    setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+  }, []);
 
   // Filter tasks with multi-select support
   const filteredTasks = useMemo(() => {
@@ -391,38 +474,49 @@ export default function Tasks() {
     }));
   };
 
-  const handleCreate = () => {
-    if (taskForm.title) {
-      addTask.mutate({
-        title: taskForm.title,
-        description: taskForm.description,
-        status: taskForm.status,
-        due_date: taskForm.dueDate || undefined,
-        project_id: taskForm.projectId || undefined,
-        campaign_id: taskForm.campaignId || undefined,
-        assignee_id: taskForm.assigneeId || undefined,
-      });
-      setOpen(false);
-      setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+  const handleCreate = async () => {
+    const title = taskForm.title.trim();
+    if (title) {
+      try {
+        await addTask.mutateAsync({
+          title,
+          description: taskForm.description,
+          status: taskForm.status,
+          due_date: taskForm.dueDate || undefined,
+          project_id: taskForm.projectId || undefined,
+          campaign_id: taskForm.campaignId || undefined,
+          assignee_id: taskForm.assigneeId || undefined,
+          sort_order: tasks.length,
+        });
+        setOpen(false);
+        resetTaskForm();
+      } catch (error) {
+        toast({ title: 'Could not create task', description: getErrorMessage(error), variant: 'destructive' });
+      }
     }
   };
 
-  const handleUpdate = () => {
-    if (editingTask && taskForm.title) {
-      updateTask.mutate({
-        id: editingTask.id,
-        updates: {
-          title: taskForm.title,
-          description: taskForm.description,
-          status: taskForm.status,
-          due_date: taskForm.dueDate || null,
-          project_id: taskForm.projectId || null,
-          campaign_id: taskForm.campaignId || null,
-          assignee_id: taskForm.assigneeId || null,
-        }
-      });
-      setEditingTask(null);
-      setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+  const handleUpdate = async () => {
+    const title = taskForm.title.trim();
+    if (editingTask && title) {
+      try {
+        await updateTask.mutateAsync({
+          id: editingTask.id,
+          updates: {
+            title,
+            description: taskForm.description,
+            status: taskForm.status,
+            due_date: taskForm.dueDate || null,
+            project_id: taskForm.projectId || null,
+            campaign_id: taskForm.campaignId || null,
+            assignee_id: taskForm.assigneeId || null,
+          }
+        });
+        setEditingTask(null);
+        resetTaskForm();
+      } catch (error) {
+        toast({ title: 'Could not update task', description: getErrorMessage(error), variant: 'destructive' });
+      }
     }
   };
 
@@ -441,12 +535,16 @@ export default function Tasks() {
 
   const closeEditDialog = () => {
     setEditingTask(null);
-    setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+    resetTaskForm();
   };
 
   const confirmDeleteTask = () => {
     if (!taskToDelete) return;
-    deleteTask.mutate(taskToDelete.id);
+    deleteTask.mutate(taskToDelete.id, {
+      onError: (error) => {
+        toast({ title: 'Could not delete task', description: getErrorMessage(error), variant: 'destructive' });
+      },
+    });
     if (editingTask?.id === taskToDelete.id) {
       closeEditDialog();
     }
@@ -502,6 +600,15 @@ export default function Tasks() {
     })
   );
 
+  const taskSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 3 },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
   // Handle column reorder
   const handleColumnDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -514,84 +621,83 @@ export default function Tasks() {
     }
   };
 
-  // Native HTML Drag and Drop handlers
-  const handleDragStart = (e: React.DragEvent, task: Task) => {
-    e.dataTransfer.setData('taskId', task.id);
-    e.dataTransfer.effectAllowed = 'move';
-
-    // Defer state update to next tick to allow browser to generate drag image first
-    // This prevents the "ghost" image from being the opacity-50 version and reduces hiccups
-    setTimeout(() => {
-      setDraggingTaskId(task.id);
-    }, 0);
+  const handleTaskDragStart = (event: DragStartEvent) => {
+    setDraggingTaskId(String(event.active.id));
+    setDragOverlayWidth(event.active.rect.current.initial?.width ?? null);
   };
 
-  const handleDragEnd = () => {
+  const handleTaskDragCancel = () => {
     setDraggingTaskId(null);
+    setDragOverlayWidth(null);
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
+  const handleTaskDragEnd = (event: DragEndEvent) => {
+    const taskId = String(event.active.id);
+    const activeTask = tasksById.get(taskId);
+    const overId = event.over ? String(event.over.id) : null;
 
-  const handleDrop = (e: React.DragEvent, columnId: string) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('taskId');
-    if (taskId) {
-      updateTask.mutate({ id: taskId, updates: { status: columnId } });
-      const newOrder = tasks.filter(t => t.id !== taskId).map(t => t.id);
-      newOrder.push(taskId); 
-      reorderTasks.mutate(newOrder);
+    if (!activeTask || !overId) {
+      setDraggingTaskId(null);
+      setDragOverlayWidth(null);
+      return;
     }
+
+    const targetTask = tasksById.get(overId);
+    const targetStatus = targetTask?.status || columns.find((column) => column.id === overId)?.id;
+
+    if (!targetStatus) {
+      setDraggingTaskId(null);
+      setDragOverlayWidth(null);
+      return;
+    }
+
+    const currentOrder = tasks.map((task) => task.id);
+    const nextOrder = currentOrder.filter((id) => id !== taskId);
+
+    if (targetTask) {
+      const targetIndex = nextOrder.indexOf(targetTask.id);
+      nextOrder.splice(targetIndex >= 0 ? targetIndex : nextOrder.length, 0, taskId);
+    } else {
+      const lastIndexInTargetColumn = nextOrder.reduce((lastIndex, id, index) => {
+        return tasksById.get(id)?.status === targetStatus ? index : lastIndex;
+      }, -1);
+      nextOrder.splice(lastIndexInTargetColumn + 1, 0, taskId);
+    }
+
+    const orderChanged = nextOrder.some((id, index) => id !== currentOrder[index]);
+    const statusChanged = activeTask.status !== targetStatus;
+
+    if (statusChanged || orderChanged) {
+      moveTask.mutate(
+        { id: taskId, status: targetStatus, orderedIds: nextOrder },
+        {
+          onError: (error) => {
+            toast({ title: 'Could not move task', description: getErrorMessage(error), variant: 'destructive' });
+          },
+        }
+      );
+    }
+
     setDraggingTaskId(null);
-  };
-
-  const handleTaskDrop = (e: React.DragEvent, targetTask: Task) => {
-    e.preventDefault();
-    e.stopPropagation(); 
-
-    const sourceTaskId = e.dataTransfer.getData('taskId');
-    if (sourceTaskId === targetTask.id) return; 
-
-    updateTask.mutate({ id: sourceTaskId, updates: { status: targetTask.status } });
-    
-    const updatedOrder = tasks.map(t => t.id).filter(id => id !== sourceTaskId);
-    const targetIndex = updatedOrder.indexOf(targetTask.id);
-    updatedOrder.splice(targetIndex, 0, sourceTaskId);
-    
-    reorderTasks.mutate(updatedOrder);
-    setDraggingTaskId(null);
+    setDragOverlayWidth(null);
   };
 
   const StatusColumn = ({ column }: { column: TaskColumn }) => {
     const columnTasks = filteredTasks.filter(t => t.status === column.id);
-    const [isDragOver, setIsDragOver] = useState(false);
+    const { setNodeRef, isOver } = useDroppable({
+      id: column.id,
+      data: { type: 'column', columnId: column.id },
+    });
+    const isActiveDropTarget = Boolean(isOver && draggingTaskId);
 
     return (
       <div
+        ref={setNodeRef}
+        data-testid={`task-column-${column.id}`}
         className={cn(
           "tool-surface flex min-w-[300px] flex-1 flex-col gap-4 rounded-xl p-4 transition-all duration-200",
-          isDragOver && "bg-blue-50/60 ring-2 ring-primary/35 ring-offset-2 ring-offset-slate-50"
+          isActiveDropTarget && "bg-blue-50/60 ring-2 ring-primary/35 ring-offset-2 ring-offset-slate-50"
         )}
-        onDragOver={(e) => {
-          handleDragOver(e);
-          setIsDragOver(true);
-        }}
-        onDragLeave={(e) => {
-          // Only set false if we're leaving the column container entirely
-          const rect = e.currentTarget.getBoundingClientRect();
-          const x = e.clientX;
-          const y = e.clientY;
-          if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
-            setIsDragOver(false);
-          }
-        }}
-        onDrop={(e) => {
-          handleDrop(e, column.id);
-          setIsDragOver(false);
-        }}
-        onDragEnd={() => setIsDragOver(false)}
       >
         <div className="flex items-center justify-between rounded-xl bg-slate-50/80 px-3 py-2">
           <div className="flex items-center gap-2">
@@ -612,40 +718,43 @@ export default function Tasks() {
           </Button>
         </div>
 
-        <div className="min-h-[100px] space-y-3">
-          {columnTasks.map(task => {
-            const project = projects.find(p => p.id === task.projectId);
-            const campaign = campaigns.find(c => c.id === task.campaignId);
+        <SortableContext items={columnTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+          <div className="min-h-[120px] space-y-3 rounded-xl">
+            {columnTasks.map(task => {
+              const project = projects.find(p => p.id === task.projectId);
+              const campaign = campaigns.find(c => c.id === task.campaignId);
 
-            return (
-              <TaskCard
-                key={task.id}
-                task={task}
-                project={project}
-                campaign={campaign}
-                onEdit={openEditDialog}
-                onDelete={() => setTaskToDelete(task)}
-                onDragStart={handleDragStart}
-                onDragEnd={handleDragEnd}
-                onDrop={handleTaskDrop}
-                isDragging={draggingTaskId === task.id}
-              />
-            );
-          })}
-          {columnTasks.length === 0 && (
-            <div
-              className={cn(
-                "flex h-24 items-center justify-center rounded-xl bg-slate-50/70 text-sm text-muted-foreground transition-colors",
-                isDragOver && "bg-blue-50 text-primary"
-              )}
-            >
-              {isDragOver ? "Drop here" : "No tasks"}
-            </div>
-          )}
-        </div>
+              return (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  project={project}
+                  campaign={campaign}
+                  onEdit={openEditDialog}
+                  onDelete={() => setTaskToDelete(task)}
+                  isDragging={draggingTaskId === task.id}
+                />
+              );
+            })}
+            {columnTasks.length === 0 && (
+              <div
+                className={cn(
+                  "flex h-24 items-center justify-center rounded-xl bg-slate-50/70 text-sm text-muted-foreground transition-colors",
+                  isActiveDropTarget && "bg-blue-50 text-primary"
+                )}
+              >
+                {isActiveDropTarget ? "Drop here" : "No tasks"}
+              </div>
+            )}
+          </div>
+        </SortableContext>
       </div>
     );
   };
+
+  const draggingTask = draggingTaskId ? tasksById.get(draggingTaskId) : undefined;
+  const draggingProject = draggingTask ? projects.find(p => p.id === draggingTask.projectId) : undefined;
+  const draggingCampaign = draggingTask ? campaigns.find(c => c.id === draggingTask.campaignId) : undefined;
 
   return (
     <AppLayout breadcrumbs={[{ label: 'Tasks', path: '/tasks' }]}>
@@ -654,7 +763,13 @@ export default function Tasks() {
           <h1 className="text-3xl font-bold tracking-tight">Tasks</h1>
           <p className="text-muted-foreground">Track team work across projects and campaigns.</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
+        <Dialog
+          open={open}
+          onOpenChange={(nextOpen) => {
+            setOpen(nextOpen);
+            if (!nextOpen) resetTaskForm();
+          }}
+        >
           <DialogTrigger asChild>
             <Button className="gap-2 rounded-full bg-primary px-6 text-white hover:bg-primary/90">
               <PlusCircle className="h-4 w-4" />
@@ -754,7 +869,9 @@ export default function Tasks() {
             </div>
             <DialogFooter>
               <Button onClick={() => setOpen(false)} variant="outline" className="tool-surface tool-surface-interactive mr-2 rounded-xl">Cancel</Button>
-              <Button onClick={handleCreate}>Create</Button>
+              <Button onClick={handleCreate} disabled={!taskForm.title.trim() || addTask.isPending}>
+                {addTask.isPending ? 'Creating...' : 'Create'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -1011,7 +1128,9 @@ export default function Tasks() {
               Delete
             </Button>
             <Button onClick={closeEditDialog} variant="outline" className="tool-surface tool-surface-interactive mr-2 rounded-xl">Cancel</Button>
-            <Button onClick={handleUpdate}>Save Changes</Button>
+            <Button onClick={handleUpdate} disabled={!taskForm.title.trim() || updateTask.isPending}>
+              {updateTask.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1063,11 +1182,32 @@ export default function Tasks() {
       </Dialog>
 
       {/* Kanban Board */}
-      <div className="flex flex-1 gap-5 overflow-x-auto pb-8" style={{ minHeight: 'calc(100vh - 300px)' }}>
-        {columns.map(column => (
-          <StatusColumn key={column.id} column={column} />
-        ))}
-      </div>
+      <DndContext
+        sensors={taskSensors}
+        collisionDetection={taskCollisionDetection}
+        onDragStart={handleTaskDragStart}
+        onDragEnd={handleTaskDragEnd}
+        onDragCancel={handleTaskDragCancel}
+      >
+        <div className="flex flex-1 gap-5 overflow-x-auto pb-8" style={{ minHeight: 'calc(100vh - 300px)' }}>
+          {columns.map(column => (
+            <StatusColumn key={column.id} column={column} />
+          ))}
+        </div>
+        <DragOverlay
+          adjustScale={false}
+          dropAnimation={{ duration: 160, easing: 'cubic-bezier(0.2, 0, 0, 1)' }}
+        >
+          {draggingTask ? (
+            <TaskDragPreview
+              task={draggingTask}
+              project={draggingProject}
+              campaign={draggingCampaign}
+              width={dragOverlayWidth}
+            />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
       <AlertDialog open={!!taskToDelete} onOpenChange={(open) => !open && setTaskToDelete(null)}>
         <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
           <AlertDialogHeader>

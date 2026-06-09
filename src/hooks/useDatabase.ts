@@ -491,6 +491,16 @@ export function useTasks() {
     const qc = useQueryClient();
     const orgId = organization?.id ?? '';
 
+    const updateTaskOrder = async (orderedIds: string[]) => {
+        const results = await Promise.all(
+            orderedIds.map((id, idx) =>
+                supabase.from('tasks').update({ sort_order: idx }).eq('id', id)
+            )
+        );
+        const failedUpdate = results.find((result) => result.error);
+        if (failedUpdate?.error) throw failedUpdate.error;
+    };
+
     const query = useQuery({
         queryKey: keys.tasks(orgId),
         queryFn: async () => {
@@ -500,7 +510,7 @@ export function useTasks() {
                 .eq('org_id', orgId)
                 .order('sort_order', { ascending: true });
             if (error) throw error;
-            return data.map((item) => mapContentItem(item as ContentItemWithCampaign));
+            return data.map(mapTask);
         },
         enabled: !!orgId,
     });
@@ -514,11 +524,15 @@ export function useTasks() {
             project_id?: string;
             campaign_id?: string;
             assignee_id?: string;
+            sort_order?: number;
         }) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('tasks')
-                .insert({ ...task, org_id: orgId });
+                .insert({ ...task, org_id: orgId })
+                .select()
+                .single();
             if (error) throw error;
+            return mapTask(data);
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.tasks(orgId) }),
     });
@@ -540,16 +554,20 @@ export function useTasks() {
     });
 
     const reorderTasks = useMutation({
-        mutationFn: async (orderedIds: string[]) => {
-            const updates = orderedIds.map((id, idx) =>
-                supabase.from('tasks').update({ sort_order: idx }).eq('id', id)
-            );
-            await Promise.all(updates);
+        mutationFn: updateTaskOrder,
+        onSuccess: () => qc.invalidateQueries({ queryKey: keys.tasks(orgId) }),
+    });
+
+    const moveTask = useMutation({
+        mutationFn: async ({ id, status, orderedIds }: { id: string; status: string; orderedIds: string[] }) => {
+            const { error } = await supabase.from('tasks').update({ status }).eq('id', id);
+            if (error) throw error;
+            await updateTaskOrder(orderedIds);
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.tasks(orgId) }),
     });
 
-    return { ...query, addTask, updateTask, deleteTask, reorderTasks };
+    return { ...query, addTask, updateTask, deleteTask, reorderTasks, moveTask };
 }
 
 // ── CALENDAR EVENTS ────────────────────────────────────────────────────
