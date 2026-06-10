@@ -403,7 +403,7 @@ export function AIAssistant() {
         onClick={() => setPanelOpen(true)}
       >
         <Sparkles className="h-4 w-4" />
-        AI
+        Create with AI
       </Button>
 
       <Sheet open={panelOpen} onOpenChange={setPanelOpen}>
