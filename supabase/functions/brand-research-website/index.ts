@@ -31,6 +31,17 @@ type ExtractedFont = {
   source_url?: string;
 };
 
+type ToneSpectrum = {
+  formality?: number;
+  humor?: number;
+  enthusiasm?: number;
+};
+
+type VoiceAttribute = {
+  trait?: string;
+  evidence?: string;
+};
+
 type ExtractedLogo = {
   label?: string;
   file_url?: string;
@@ -58,6 +69,41 @@ type LogoCandidate = ExtractedLogo & {
 type FontCandidate = ExtractedFont & {
   score: number;
   source: string;
+};
+
+type CopySnippet = {
+  text: string;
+  role: string;
+  source_url: string;
+  score: number;
+};
+
+type VoiceEvidence = {
+  snippets: Array<Pick<CopySnippet, 'text' | 'role' | 'source_url'>>;
+  metrics: {
+    wordCount: number;
+    averageSentenceWords: number;
+    exclamationCount: number;
+    questionCount: number;
+    contractionCount: number;
+    secondPersonCount: number;
+    formalSignalCount: number;
+    playfulSignalCount: number;
+    energeticSignalCount: number;
+  };
+  topTerms: string[];
+  observedCtas: string[];
+};
+
+type VoiceProfile = {
+  voice_attributes: VoiceAttribute[];
+  tone_spectrum: ToneSpectrum;
+  personality: string[];
+  writing_dos: string[];
+  writing_donts: string[];
+  preferred_terms: string[];
+  avoided_terms: string[];
+  sample_copy: string[];
 };
 
 type VisualSignalElement = {
@@ -103,6 +149,8 @@ type ResearchExtraction = {
   vision?: string;
   brand_values?: string[];
   personality?: string[];
+  voice_attributes?: Array<VoiceAttribute | string>;
+  tone_spectrum?: ToneSpectrum;
   writing_dos?: string[];
   writing_donts?: string[];
   preferred_terms?: string[];
@@ -1319,6 +1367,264 @@ function deriveElevatorPitch(pages: ScrapedPage[]) {
   return cleanFactText(homepage?.markdown?.slice(0, 420), 420) || undefined;
 }
 
+const copyNoisePattern = /(cookie|privacy policy|terms of use|all rights reserved|copyright|login|log in|sign in|cart|checkout|search|menu|skip to|accept all|subscribe to|newsletter|read more|learn more)$/i;
+const genericCopyPattern = /^(home|about|services|products|solutions|contact|contact us|privacy|terms|blog|menu|close|next|previous|submit|send|search)$/i;
+const stopTerms = new Set([
+  'about', 'after', 'again', 'also', 'because', 'been', 'being', 'between', 'brand', 'build', 'business',
+  'click', 'company', 'contact', 'could', 'every', 'from', 'have', 'home', 'into', 'just', 'learn',
+  'more', 'most', 'need', 'only', 'other', 'over', 'page', 'people', 'product', 'products', 'read',
+  'service', 'services', 'should', 'site', 'some', 'that', 'their', 'them', 'then', 'there', 'these',
+  'they', 'this', 'through', 'with', 'what', 'when', 'where', 'which', 'while', 'will', 'your',
+]);
+
+const countMatches = (value: string, pattern: RegExp) => (value.match(pattern) || []).length;
+const clamp = (value: number, min = 0, max = 100) => Math.min(Math.max(value, min), max);
+const roundTone = (value: number) => Math.round(clamp(value) / 5) * 5;
+const sentenceWords = (value: string) => words(value).length;
+
+const normalizeCopySnippet = (value: unknown, maxLength = 220) => {
+  const clean = cleanFactText(value, maxLength)
+    ?.replace(/^[#*\-\s]+/, '')
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!clean) return null;
+  const wordCount = sentenceWords(clean);
+  if (wordCount < 2 || wordCount > 28) return null;
+  if (clean.length < 8 || genericCopyPattern.test(clean) || copyNoisePattern.test(clean)) return null;
+  return clean;
+};
+
+const collectVoiceSnippets = (pages: ScrapedPage[]) => {
+  const snippets: CopySnippet[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown, role: string, sourceUrl: string, score: number) => {
+    const text = normalizeCopySnippet(value);
+    if (!text) return;
+    const key = text.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    snippets.push({ text, role, source_url: sourceUrl, score });
+  };
+
+  for (const page of pages) {
+    add(page.title, 'title', page.url, 95);
+    add(page.description, 'description', page.url, 90);
+
+    for (const element of page.visualSignals?.elements || []) {
+      const role = element.role || 'element';
+      const score =
+        role === 'heading' ? 120 :
+        role === 'button' ? 112 :
+        role === 'link' ? 76 :
+        role === 'nav' ? 54 :
+        42;
+      add(element.text, role, page.url, score);
+    }
+
+    for (const rawLine of page.markdown.split(/\n+/).slice(0, 180)) {
+      const line = rawLine.trim();
+      const role = /^#{1,3}\s/.test(line) ? 'heading' : 'body';
+      add(line, role, page.url, role === 'heading' ? 86 : 38);
+    }
+  }
+
+  return snippets.sort((left, right) => right.score - left.score).slice(0, 80);
+};
+
+const buildVoiceMetrics = (snippets: CopySnippet[]) => {
+  const combined = snippets.map((snippet) => snippet.text).join(' ');
+  const wordTokens = combined.match(/[A-Za-z][A-Za-z'-]*/g) || [];
+  const sentences = combined
+    .split(/[.!?]+/)
+    .map((sentence) => sentence.trim())
+    .filter((sentence) => sentence && words(sentence).length >= 3);
+
+  return {
+    wordCount: wordTokens.length,
+    averageSentenceWords: sentences.length ? Math.round(wordTokens.length / sentences.length) : 0,
+    exclamationCount: countMatches(combined, /!/g),
+    questionCount: countMatches(combined, /\?/g),
+    contractionCount: countMatches(combined, /\b(can't|don't|won't|we're|you're|it's|that's|you'll|we'll|let's)\b/gi),
+    secondPersonCount: countMatches(combined, /\b(you|your|yours)\b/gi),
+    formalSignalCount: countMatches(combined, /\b(expert|trusted|certified|professional|clinical|enterprise|strategy|solutions|compliance|quality|proven|experience|specialist|precision)\b/gi),
+    playfulSignalCount: countMatches(combined, /\b(fun|play|joy|delight|fresh|bold|bright|wow|love|magic|surprise|friendly)\b/gi),
+    energeticSignalCount: countMatches(combined, /\b(now|today|get started|start|discover|unlock|boost|grow|transform|create|launch|join|book|claim)\b/gi) + countMatches(combined, /!/g),
+  };
+};
+
+const extractTopTerms = (snippets: CopySnippet[], brandName: string) => {
+  const brandTerms = new Set(brandName.toLowerCase().split(/\s+/).filter(Boolean));
+  const counts = new Map<string, number>();
+  const combined = snippets.map((snippet) => snippet.text).join(' ');
+  for (const match of combined.matchAll(/[A-Za-z][A-Za-z'-]{3,}/g)) {
+    const term = match[0].toLowerCase().replace(/'s$/, '');
+    if (brandTerms.has(term) || stopTerms.has(term)) continue;
+    counts.set(term, (counts.get(term) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .filter(([, count]) => count > 1)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, 8)
+    .map(([term]) => term);
+};
+
+const observedCtas = (snippets: CopySnippet[]) => snippets
+  .filter((snippet) => snippet.role === 'button' || /\b(get|start|book|contact|schedule|discover|join|shop|try|request|learn)\b/i.test(snippet.text))
+  .map((snippet) => snippet.text)
+  .filter((text, index, list) => list.findIndex((item) => item.toLowerCase() === text.toLowerCase()) === index)
+  .slice(0, 6);
+
+const buildVoiceEvidence = (pages: ScrapedPage[], brandName: string): VoiceEvidence => {
+  const snippets = collectVoiceSnippets(pages);
+  return {
+    snippets: snippets.slice(0, 28).map(({ text, role, source_url }) => ({ text, role, source_url })),
+    metrics: buildVoiceMetrics(snippets),
+    topTerms: extractTopTerms(snippets, brandName),
+    observedCtas: observedCtas(snippets),
+  };
+};
+
+const trait = (traitValue: string, evidence: string): VoiceAttribute => ({ trait: traitValue, evidence });
+
+const deriveVoiceProfile = (pages: ScrapedPage[], brandName: string): VoiceProfile => {
+  const snippets = collectVoiceSnippets(pages);
+  const metrics = buildVoiceMetrics(snippets);
+  const topTerms = extractTopTerms(snippets, brandName);
+  const ctas = observedCtas(snippets);
+  const sampleCopy = snippets
+    .filter((snippet) => ['heading', 'button', 'title', 'description'].includes(snippet.role))
+    .map((snippet) => snippet.text)
+    .slice(0, 8);
+
+  const formality = roundTone(
+    48 +
+    Math.min(metrics.formalSignalCount, 8) * 5 +
+    (metrics.averageSentenceWords >= 18 ? 12 : metrics.averageSentenceWords >= 13 ? 6 : 0) -
+    Math.min(metrics.secondPersonCount, 8) * 2 -
+    Math.min(metrics.contractionCount, 6) * 5 -
+    Math.min(metrics.playfulSignalCount, 8) * 3,
+  );
+  const humor = roundTone(18 + Math.min(metrics.playfulSignalCount, 10) * 7 + Math.min(metrics.exclamationCount, 4) * 4);
+  const enthusiasm = roundTone(
+    38 +
+    Math.min(metrics.energeticSignalCount, 10) * 5 +
+    Math.min(metrics.exclamationCount, 6) * 4 -
+    (metrics.averageSentenceWords > 20 ? 10 : 0),
+  );
+
+  const personalityScores = new Map<string, number>([
+    ['Clear', 50],
+    ['Helpful', 28 + Math.min(metrics.secondPersonCount, 8) * 3],
+    ['Professional', 24 + Math.min(metrics.formalSignalCount, 8) * 5],
+    ['Approachable', 24 + Math.min(metrics.secondPersonCount + metrics.contractionCount, 8) * 4],
+    ['Confident', 22 + countMatches(snippets.map((snippet) => snippet.text).join(' '), /\b(trusted|proven|expert|leading|quality|best|specialist)\b/gi) * 7],
+    ['Warm', 20 + countMatches(snippets.map((snippet) => snippet.text).join(' '), /\b(care|people|community|family|together|support|friendly)\b/gi) * 6],
+    ['Energetic', 18 + metrics.energeticSignalCount * 4],
+    ['Playful', 12 + metrics.playfulSignalCount * 6],
+    ['Premium', 10 + countMatches(snippets.map((snippet) => snippet.text).join(' '), /\b(premium|luxury|bespoke|crafted|elevated|curated)\b/gi) * 8],
+    ['Technical', 10 + countMatches(snippets.map((snippet) => snippet.text).join(' '), /\b(platform|data|technology|automation|software|clinical|advanced|system)\b/gi) * 7],
+  ]);
+  const personality = Array.from(personalityScores.entries())
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 5)
+    .map(([name]) => name);
+
+  const voice_attributes = [
+    trait(personality[0] || 'Clear', `Primary copy uses ${metrics.averageSentenceWords || 'short'}-word average sentences across sampled website headlines and descriptions.`),
+    trait(personality[1] || 'Helpful', ctas.length ? `CTA language includes: ${ctas.slice(0, 3).join(', ')}.` : 'Website copy emphasizes benefits and direct next steps.'),
+    trait(personality[2] || 'Professional', topTerms.length ? `Repeated brand terms include: ${topTerms.slice(0, 5).join(', ')}.` : 'Tone is inferred from homepage and supporting page copy.'),
+  ];
+
+  const writing_dos = [
+    topTerms.length ? `Use the brand's repeated terms naturally: ${topTerms.slice(0, 5).join(', ')}.` : 'Mirror the exact words used in the website headlines and service descriptions.',
+    ctas.length ? `Use clear CTA language similar to: "${ctas[0]}".` : 'Make the next step direct and easy to understand.',
+    metrics.averageSentenceWords && metrics.averageSentenceWords <= 14 ? 'Keep sentences short, concrete, and benefit-led.' : 'Use complete, polished sentences that explain the benefit before the ask.',
+    `Keep the voice ${personality.slice(0, 3).join(', ').toLowerCase()}.`,
+  ];
+
+  const writing_donts = [
+    'Do not invent claims, guarantees, awards, pricing, or outcomes that are not stated on the website.',
+    formality >= 60 ? 'Avoid slang, memes, and overly casual phrasing.' : 'Avoid stiff corporate language if a simpler phrase says the same thing.',
+    humor <= 35 ? 'Avoid forced jokes, emoji-heavy captions, or playful language that the site does not use.' : 'Do not flatten the brand into generic corporate copy.',
+    enthusiasm <= 45 ? 'Avoid hype, urgency, and excessive exclamation marks.' : 'Do not make CTAs passive or hard to spot.',
+  ];
+
+  const avoided_terms = [
+    'best-in-class',
+    'world-class',
+    'revolutionary',
+    formality >= 60 ? 'slang' : 'corporate jargon',
+    humor <= 35 ? 'forced humor' : 'generic filler',
+  ];
+
+  return {
+    voice_attributes,
+    tone_spectrum: { formality, humor, enthusiasm },
+    personality,
+    writing_dos,
+    writing_donts,
+    preferred_terms: topTerms,
+    avoided_terms,
+    sample_copy: sampleCopy.length ? sampleCopy : snippets.map((snippet) => snippet.text).slice(0, 6),
+  };
+};
+
+const cleanToneSpectrum = (value: unknown): ToneSpectrum | null => {
+  if (!value || typeof value !== 'object') return null;
+  const input = value as ToneSpectrum;
+  const result: ToneSpectrum = {};
+  for (const key of ['formality', 'humor', 'enthusiasm'] as const) {
+    const numeric = Number(input[key]);
+    if (Number.isFinite(numeric)) result[key] = roundTone(numeric);
+  }
+  return Object.keys(result).length ? result : null;
+};
+
+const cleanVoiceAttributes = (value: unknown, fallback: VoiceAttribute[]) => {
+  const items = Array.isArray(value) ? value : [];
+  const cleaned = items
+    .map((item) => {
+      if (typeof item === 'string') {
+        const traitValue = cleanFactText(item, 80);
+        return traitValue ? trait(traitValue, 'Inferred from website copy.') : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const input = item as VoiceAttribute;
+      const traitValue = cleanFactText(input.trait, 80);
+      if (!traitValue) return null;
+      return {
+        trait: traitValue,
+        evidence: cleanFactText(input.evidence, 220) || 'Inferred from website copy.',
+      };
+    })
+    .filter((item): item is VoiceAttribute => Boolean(item));
+  const merged = [...cleaned, ...fallback];
+  const seen = new Set<string>();
+  return merged.filter((item) => {
+    const key = String(item.trait || '').toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 6);
+};
+
+const mergeGuidanceArrays = (primary: unknown, fallback: string[], maxItems = 8, maxLength = 220) => {
+  const primaryClean = cleanArray(primary, maxItems, maxLength) || [];
+  const fallbackClean = fallback
+    .map((item) => cleanFactText(item, maxLength))
+    .filter(Boolean) as string[];
+  const merged = [...primaryClean, ...fallbackClean];
+  const seen = new Set<string>();
+  return merged.filter((item) => {
+    const key = item.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, maxItems);
+};
+
 const compactGuideForModel = (guide: Record<string, unknown>) => ({
   brand_name: guide.brand_name,
   website_url: guide.website_url,
@@ -1330,6 +1636,13 @@ const compactGuideForModel = (guide: Record<string, unknown>) => ({
   vision: guide.vision,
   brand_values: guide.brand_values,
   personality: guide.personality,
+  voice_attributes: guide.voice_attributes,
+  tone_spectrum: guide.tone_spectrum,
+  writing_dos: guide.writing_dos,
+  writing_donts: guide.writing_donts,
+  preferred_terms: guide.preferred_terms,
+  avoided_terms: guide.avoided_terms,
+  sample_copy: guide.sample_copy,
   content_pillars: guide.content_pillars,
 });
 
@@ -1338,6 +1651,7 @@ const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown
     brand_name: cleanFactText(extraction.brand_name, 120) || brandName || cleanFactText(guide.brand_name, 120) || 'Untitled Brand',
     website_url: websiteUrl,
   };
+  const voiceProfile = deriveVoiceProfile(pages, brandName);
 
   const stringFields: Array<[keyof ResearchExtraction, number]> = [
     ['industry', 160],
@@ -1365,11 +1679,6 @@ const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown
 
   const arrayFields: Array<keyof ResearchExtraction> = [
     'brand_values',
-    'personality',
-    'writing_dos',
-    'writing_donts',
-    'preferred_terms',
-    'avoided_terms',
     'content_pillars',
   ];
   for (const field of arrayFields) {
@@ -1377,8 +1686,22 @@ const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown
     if (values) updates[field] = values;
   }
 
-  const sampleCopy = cleanArray(extraction.sample_copy, 8, 260);
-  if (sampleCopy) updates.sample_copy = sampleCopy;
+  const voiceAttributes = cleanVoiceAttributes(extraction.voice_attributes, voiceProfile.voice_attributes);
+  if (voiceAttributes.length) updates.voice_attributes = voiceAttributes;
+  updates.tone_spectrum = cleanToneSpectrum(extraction.tone_spectrum) || voiceProfile.tone_spectrum;
+
+  const personality = mergeGuidanceArrays(extraction.personality, voiceProfile.personality, 6, 80);
+  if (personality.length) updates.personality = personality;
+  const writingDos = mergeGuidanceArrays(extraction.writing_dos, voiceProfile.writing_dos, 8, 240);
+  if (writingDos.length) updates.writing_dos = writingDos;
+  const writingDonts = mergeGuidanceArrays(extraction.writing_donts, voiceProfile.writing_donts, 8, 240);
+  if (writingDonts.length) updates.writing_donts = writingDonts;
+  const preferredTerms = mergeGuidanceArrays(extraction.preferred_terms, voiceProfile.preferred_terms, 10, 80);
+  if (preferredTerms.length) updates.preferred_terms = preferredTerms;
+  const avoidedTerms = mergeGuidanceArrays(extraction.avoided_terms, voiceProfile.avoided_terms, 10, 120);
+  if (avoidedTerms.length) updates.avoided_terms = avoidedTerms;
+  const sampleCopy = mergeGuidanceArrays(voiceProfile.sample_copy, cleanArray(extraction.sample_copy, 8, 260) || [], 8, 260);
+  if (sampleCopy.length) updates.sample_copy = sampleCopy;
 
   return updates;
 };
@@ -1391,6 +1714,7 @@ const websiteResearchSection = (websiteUrl: string, pages: ScrapedPage[], extrac
   summary: cleanText(extraction.research_summary, 1200),
   proof_points: cleanArray(extraction.proof_points, 10, 220) || [],
   unknowns: cleanArray(extraction.unknowns, 10, 220) || [],
+  voice_evidence: buildVoiceEvidence(pages, cleanText(extraction.brand_name, 120) || ''),
   social_links: socialLinks.map(({ platform, url }) => ({ platform, url })),
   pages: pages.map((page) => ({
     url: page.url,
@@ -1544,6 +1868,7 @@ Deno.serve(async (req) => {
 
     const pages = await collectWebsiteContext(normalizedWebsiteUrl);
     if (!pages.length) return jsonResponse({ error: 'No readable website pages were found.' }, 422);
+    const voiceEvidence = buildVoiceEvidence(pages, normalizedBrandName);
 
     let extraction: ResearchExtraction;
     try {
@@ -1560,6 +1885,9 @@ Deno.serve(async (req) => {
               'The tagline must be a short slogan or offer, not a full SEO page title; omit it if the site has no clear tagline.',
               'Never return mojibake, raw CSS, placeholder text, navigation menus, or cookie-banner copy as brand facts.',
               'Visual assets and colors are supplied as rendered Firecrawl signals; use them only when they clearly identify the brand.',
+              'Infer voice and tone from observed website copy, headlines, CTAs, and descriptions even if the site has no dedicated brand voice page.',
+              'For voice fields, return practical social-media writing guidance supported by the observed copy. Avoid generic rules unless the copy evidence supports them.',
+              'Sample copy should be exact website snippets when available, not invented captions.',
               'If a field is unknown, omit it or add the gap under unknowns.',
             ].join(' '),
           },
@@ -1580,6 +1908,8 @@ Deno.serve(async (req) => {
                 vision: 'string',
                 brand_values: ['string'],
                 personality: ['string'],
+                voice_attributes: [{ trait: 'string', evidence: 'string' }],
+                tone_spectrum: { formality: '0-100 number', humor: '0-100 number', enthusiasm: '0-100 number' },
                 writing_dos: ['string'],
                 writing_donts: ['string'],
                 preferred_terms: ['string'],
@@ -1598,6 +1928,7 @@ Deno.serve(async (req) => {
                 fonts: [{ family: 'string', category: 'heading|body|accent|code', source_url: 'string' }],
                 logos: [{ label: 'string', file_url: 'string', variant: 'primary|secondary|icon|monochrome|reversed' }],
               },
+              voiceEvidence,
               pages: pages.map((page) => ({
                 url: page.url,
                 title: page.title,
