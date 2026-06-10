@@ -55,6 +55,11 @@ type LogoCandidate = ExtractedLogo & {
   source: string;
 };
 
+type FontCandidate = ExtractedFont & {
+  score: number;
+  source: string;
+};
+
 type VisualSignalElement = {
   role?: string;
   tag?: string;
@@ -70,10 +75,22 @@ type VisualSignalElement = {
   stroke?: string;
 };
 
+type VisualSignalFont = {
+  family?: string;
+  stack?: string;
+  role?: string;
+  selector?: string;
+  weight?: string;
+  source?: string;
+  href?: string;
+  loaded?: boolean;
+};
+
 type VisualSignals = {
   variables?: Array<{ name?: string; value?: string }>;
   elements?: VisualSignalElement[];
   meta?: Array<{ type?: string; url?: string }>;
+  fonts?: VisualSignalFont[];
 };
 
 type ResearchExtraction = {
@@ -294,6 +311,25 @@ const fontCategory = (value: unknown, fallback: ExtractedFont['category']) => {
     : fallback;
 };
 
+const fontCategoryFromRole = (value: unknown, fallback: ExtractedFont['category']) => {
+  const role = String(value || '').toLowerCase();
+  if (/h[1-6]|heading|title|hero/.test(role)) return 'heading';
+  if (/button|nav|menu|cta|accent|link/.test(role)) return 'accent';
+  if (/code|mono/.test(role)) return 'code';
+  if (/body|paragraph|text|p|li/.test(role)) return 'body';
+  return fallback;
+};
+
+const normalizeFontFamily = (value: unknown) => {
+  const clean = cleanFactText(value, 160);
+  if (!clean) return null;
+  const family = clean.split(',')[0]?.replace(/^["']|["']$/g, '').trim();
+  if (!family) return null;
+  if (/^(inherit|initial|unset|revert|system-ui|-apple-system|blinkmacsystemfont|ui-sans-serif|ui-serif|ui-monospace|sans-serif|serif|monospace|cursive|fantasy|emoji|math|fangsong)$/i.test(family)) return null;
+  if (/(font ?awesome|material icons|bootstrap-icons|ionicons|icomoon|slick|swiper|yotpo|judgeme|emoji)/i.test(family)) return null;
+  return family;
+};
+
 const logoVariant = (value: unknown, fallback: ExtractedLogo['variant']) => {
   return ['primary', 'secondary', 'icon', 'monochrome', 'reversed'].includes(String(value))
     ? value as ExtractedLogo['variant']
@@ -307,6 +343,20 @@ const endpoint = (path: string) => `https://api.firecrawl.dev/v2/${path}`;
 const visualAuditScript = String.raw`(() => {
   const colorish = (value) => typeof value === 'string' && /#|rgb|hsl/i.test(value) && !/var\(/i.test(value);
   const text = (node) => (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const genericFont = /^(inherit|initial|unset|revert|system-ui|-apple-system|blinkmacsystemfont|ui-sans-serif|ui-serif|ui-monospace|sans-serif|serif|monospace|cursive|fantasy|emoji|math|fangsong)$/i;
+  const cleanFontName = (value) => String(value || '').replace(/^["']|["']$/g, '').trim();
+  const firstSpecificFont = (stack) => String(stack || '')
+    .split(',')
+    .map(cleanFontName)
+    .find((family) => family && !genericFont.test(family));
+  const addFontSignal = (items, seen, signal) => {
+    const family = cleanFontName(signal.family || firstSpecificFont(signal.stack));
+    if (!family || genericFont.test(family)) return;
+    const key = (signal.source || '') + ':' + (signal.role || '') + ':' + family.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({ ...signal, family, stack: String(signal.stack || signal.family || '').slice(0, 260) });
+  };
   const styleFor = (node, role) => {
     const style = getComputedStyle(node);
     return {
@@ -320,6 +370,8 @@ const visualAuditScript = String.raw`(() => {
       backgroundColor: style.backgroundColor,
       color: style.color,
       borderColor: style.borderColor,
+      fontFamily: style.fontFamily,
+      fontWeight: style.fontWeight,
       fill: style.fill,
       stroke: style.stroke,
     };
@@ -361,7 +413,58 @@ const visualAuditScript = String.raw`(() => {
     }))
     .filter((item) => item.url)
     .slice(0, 16);
-  return { variables, elements, meta };
+  const fonts = [];
+  const seenFonts = new Set();
+  const fontSelectors = [
+    ['body', 'body', 'body'],
+    ['heading', 'h1', 'h1, .h1, .hero h1'],
+    ['heading', 'h2', 'h2, .h2'],
+    ['heading', 'h3', 'h3, .h3'],
+    ['body', 'paragraph', 'p, li'],
+    ['accent', 'nav', 'nav, header nav, .navbar, .main-menu'],
+    ['accent', 'button', 'button, .button, .btn, .cta, [role="button"], input[type="submit"], a[class*="btn"], a[class*="button"]'],
+  ];
+  for (const [role, selectorLabel, selector] of fontSelectors) {
+    for (const node of Array.from(document.querySelectorAll(selector)).slice(0, 6)) {
+      if (!(node instanceof Element)) continue;
+      const style = getComputedStyle(node);
+      addFontSignal(fonts, seenFonts, {
+        family: firstSpecificFont(style.fontFamily),
+        stack: style.fontFamily,
+        role,
+        selector: selectorLabel,
+        weight: style.fontWeight,
+        source: 'computed-style',
+        loaded: typeof document.fonts?.check === 'function' ? document.fonts.check('16px ' + JSON.stringify(firstSpecificFont(style.fontFamily) || '')) : undefined,
+      });
+      if (fonts.length >= 48) break;
+    }
+  }
+  for (const node of Array.from(document.querySelectorAll('link[href*="fonts.googleapis.com"]')).slice(0, 8)) {
+    const href = node.getAttribute('href') || '';
+    try {
+      const url = new URL(href, document.baseURI);
+      for (const familyParam of url.searchParams.getAll('family')) {
+        const family = familyParam.split(':')[0].replace(/\+/g, ' ');
+        addFontSignal(fonts, seenFonts, { family, role: 'body', source: 'google-font-link', href: url.toString(), loaded: true });
+      }
+    } catch {
+      // Ignore malformed font stylesheet URLs.
+    }
+  }
+  if (document.fonts && typeof document.fonts.forEach === 'function') {
+    document.fonts.forEach((face) => {
+      if (face.status && face.status !== 'loaded') return;
+      addFontSignal(fonts, seenFonts, {
+        family: face.family,
+        role: 'body',
+        weight: face.weight,
+        source: 'document-fonts',
+        loaded: face.status === 'loaded',
+      });
+    });
+  }
+  return { variables, elements, meta, fonts: fonts.slice(0, 64) };
 })()`;
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -481,7 +584,22 @@ const normalizeVisualSignals = (value: unknown): VisualSignals | null => {
       .filter((item) => item.url)
       .slice(0, 20)
     : [];
-  return variables.length || elements.length || meta.length ? { variables, elements, meta } : null;
+  const fonts = Array.isArray(input.fonts)
+    ? input.fonts
+      .map((item) => ({
+        family: cleanText(item?.family, 140) || '',
+        stack: cleanText(item?.stack, 300) || '',
+        role: cleanText(item?.role, 40) || '',
+        selector: cleanText(item?.selector, 80) || '',
+        weight: cleanText(item?.weight, 80) || '',
+        source: cleanText(item?.source, 80) || '',
+        href: cleanText(item?.href, 1000) || '',
+        loaded: item?.loaded === true,
+      }))
+      .filter((item) => item.family)
+      .slice(0, 80)
+    : [];
+  return variables.length || elements.length || meta.length || fonts.length ? { variables, elements, meta, fonts } : null;
 };
 
 const pageScore = (url: string, title = '', description = '') => {
@@ -999,37 +1117,63 @@ const colorsFromLogoAssets = async (logos: ExtractedLogo[], candidates: Map<stri
 };
 
 const buildFontCandidates = (pages: ScrapedPage[], extraction: ResearchExtraction) => {
-  const fonts: ExtractedFont[] = [];
-  const seen = new Set<string>();
-  const add = (family: unknown, category: ExtractedFont['category'], sourceUrl?: string) => {
-    const cleanFamily = cleanFactText(family, 120);
-    if (!cleanFamily || /^(inherit|initial|unset|system-ui|sans-serif|serif|monospace)$/i.test(cleanFamily)) return;
-    const firstFamily = cleanFamily.split(',')[0]?.replace(/^["']|["']$/g, '').trim();
-    if (!firstFamily) return;
-    const key = `${category}:${firstFamily.toLowerCase()}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    fonts.push({ family: firstFamily, category, source_url: sourceUrl });
+  const fonts = new Map<string, FontCandidate>();
+  let sequence = 0;
+  const add = (
+    family: unknown,
+    category: ExtractedFont['category'],
+    sourceUrl: string | undefined,
+    score: number,
+    source: string,
+  ) => {
+    const cleanFamily = normalizeFontFamily(family);
+    if (!cleanFamily) return;
+    const key = `${category}:${cleanFamily.toLowerCase()}`;
+    const existing = fonts.get(key);
+    if (existing && existing.score >= score) return;
+    fonts.set(key, {
+      family: cleanFamily,
+      category,
+      source_url: sourceUrl,
+      score: score + (existing ? 0 : Math.max(0, 20 - sequence++)),
+      source,
+    });
   };
 
   for (const page of pages) {
+    for (const font of page.visualSignals?.fonts || []) {
+      const source = font.source || 'visual-signal';
+      const category = fontCategoryFromRole(font.role || font.selector, 'body');
+      const roleBonus = category === 'heading' ? 70 : category === 'accent' ? 40 : 0;
+      const loadedBonus = font.loaded ? 25 : 0;
+      const baseScore =
+        source === 'computed-style' ? 720 :
+        source === 'google-font-link' ? 560 :
+        source === 'document-fonts' ? 510 :
+        420;
+      add(font.family, category, font.href || page.url, baseScore + roleBonus + loadedBonus, source);
+    }
+
     const branding = page.branding as {
       fonts?: Array<{ family?: unknown }>;
       typography?: { fontFamilies?: Record<string, unknown> };
     } | null;
-    (branding?.fonts || []).forEach((font, index) => add(font.family, index === 0 ? 'heading' : 'body', page.url));
+    (branding?.fonts || []).forEach((font, index) => add(font.family, index === 0 ? 'heading' : 'body', page.url, 360 - index, 'firecrawl-branding-font'));
     const fontFamilies = branding?.typography?.fontFamilies || {};
-    add(fontFamilies.heading, 'heading', page.url);
-    add(fontFamilies.primary, 'body', page.url);
-    add(fontFamilies.body, 'body', page.url);
-    add(fontFamilies.code, 'code', page.url);
+    add(fontFamilies.heading, 'heading', page.url, 390, 'firecrawl-branding-typography');
+    add(fontFamilies.primary, 'body', page.url, 350, 'firecrawl-branding-typography');
+    add(fontFamilies.body, 'body', page.url, 340, 'firecrawl-branding-typography');
+    add(fontFamilies.code, 'code', page.url, 330, 'firecrawl-branding-typography');
   }
 
   if (Array.isArray(extraction.fonts)) {
-    extraction.fonts.forEach((font) => add(font.family, font.category || 'body', font.source_url));
+    extraction.fonts.forEach((font, index) => add(font.family, font.category || 'body', font.source_url, 120 - index, 'model-font'));
   }
 
-  return fonts.slice(0, 8);
+  return Array.from(fonts.values())
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 8)
+    .map(({ score: _score, source: _source, ...font }) => font);
 };
 
 const selectDistinctColor = (items: ColorCandidate[], selected: ColorCandidate[], predicate: (item: ColorCandidate) => boolean) => {
@@ -1465,6 +1609,7 @@ Deno.serve(async (req) => {
                   variables: page.visualSignals?.variables?.slice(0, 20) || [],
                   elements: page.visualSignals?.elements?.slice(0, 36) || [],
                   meta: page.visualSignals?.meta?.slice(0, 12) || [],
+                  fonts: page.visualSignals?.fonts?.slice(0, 24) || [],
                 },
               })),
             }),
