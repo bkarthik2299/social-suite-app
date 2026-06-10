@@ -1151,6 +1151,49 @@ const updateLocalBrandGuide = (orgId: string, id: string, updates: Partial<Brand
     });
 };
 
+const resetBrandGuideFields = (): Partial<BrandGuide> => ({
+    project_id: null,
+    brand_name: null,
+    website_url: null,
+    tagline: null,
+    mission: null,
+    vision: null,
+    brand_values: [],
+    personality: [],
+    industry: null,
+    target_audience: null,
+    elevator_pitch: null,
+    voice_attributes: [],
+    tone_spectrum: {},
+    writing_dos: [],
+    writing_donts: [],
+    preferred_terms: [],
+    avoided_terms: [],
+    sample_copy: [],
+    content_pillars: [],
+    photography_style: null,
+    illustration_style: null,
+    iconography_rules: null,
+    social_rules: null,
+    ad_rules: null,
+    custom_sections: [],
+    logo_clearspace: null,
+    logo_min_digital: null,
+    logo_min_print: null,
+});
+
+const resetLocalBrandGuide = (orgId: string, id: string) => {
+    const store = readBrandGuideStore(orgId);
+    writeBrandGuideStore(orgId, {
+        guides: store.guides.map((guide) => guide.id === id ? { ...guide, ...resetBrandGuideFields(), updated_at: new Date().toISOString() } : guide),
+        colors: store.colors.filter((color) => color.guide_id !== id),
+        fonts: store.fonts.filter((font) => font.guide_id !== id),
+        logos: store.logos.filter((logo) => logo.guide_id !== id),
+        logoRules: store.logoRules.filter((rule) => rule.guide_id !== id),
+        moodImages: store.moodImages.filter((image) => image.guide_id !== id),
+    });
+};
+
 const deleteLocalBrandGuide = (orgId: string, id: string) => {
     const store = readBrandGuideStore(orgId);
     writeBrandGuideStore(orgId, {
@@ -1473,6 +1516,54 @@ export function useBrandGuide(guideId: string) {
         },
     });
 
+    const resetGuide = useMutation({
+        mutationFn: async (id: string) => {
+            const targetGuide = (guidesQuery.data || []).find((item) => item.id === id) || guideQuery.data;
+            if (!targetGuide) throw new Error('Brand Guide was not found.');
+
+            if (hasLocalBrandGuide(orgId, id)) {
+                resetLocalBrandGuide(orgId, id);
+                return;
+            }
+
+            const childTables = [
+                'brand_colors',
+                'brand_fonts',
+                'brand_logos',
+                'brand_logo_rules',
+                'brand_mood_images',
+                'brand_knowledge_documents',
+            ];
+
+            for (const table of childTables) {
+                const { error } = await db.from(table).delete().eq('guide_id', id);
+                if (error && !isMissingBrandTableError(error)) throw error;
+            }
+
+            const { error } = await db
+                .from('brand_guides')
+                .update(resetBrandGuideFields())
+                .eq('id', id);
+            if (error) {
+                if (isMissingBrandTableError(error)) {
+                    resetLocalBrandGuide(orgId, id);
+                    return;
+                }
+                throw error;
+            }
+        },
+        onSuccess: (_data, id) => {
+            qc.invalidateQueries({ queryKey: keys.brandGuides(orgId) });
+            qc.invalidateQueries({ queryKey: keys.brandGuide(orgId, id) });
+            qc.invalidateQueries({ queryKey: keys.brandColors(id) });
+            qc.invalidateQueries({ queryKey: keys.brandFonts(id) });
+            qc.invalidateQueries({ queryKey: keys.brandLogos(id) });
+            qc.invalidateQueries({ queryKey: keys.brandLogoRules(id) });
+            qc.invalidateQueries({ queryKey: keys.brandMoodImages(id) });
+            qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, id] });
+        },
+    });
+
     const addColor = useMutation({
         mutationFn: async (color: Omit<BrandColor, 'id' | 'created_at'>) => {
             const { error } = await db.from('brand_colors').insert(color);
@@ -1750,6 +1841,7 @@ export function useBrandGuide(guideId: string) {
         addMoodImage,
         updateMoodImage,
         deleteMoodImage,
+        resetGuide,
         deleteGuide,
     };
 }

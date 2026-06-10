@@ -13,6 +13,7 @@ import {
     Palette,
     Plus,
     RefreshCw,
+    RotateCcw,
     Save,
     Shapes,
     Sparkles,
@@ -81,6 +82,7 @@ type TypeScale = {
 type DeleteConfirm = {
     title: string;
     description: string;
+    actionLabel?: string;
     action: () => void;
 };
 
@@ -191,6 +193,7 @@ export default function BrandGuidePage() {
         addMoodImage,
         updateMoodImage,
         deleteMoodImage,
+        resetGuide,
         deleteGuide,
     } = useBrandGuide(selectedGuideId);
 
@@ -318,6 +321,56 @@ export default function BrandGuidePage() {
                 },
                 onError: (error) => {
                     toast({ title: 'Could not delete Brand Guide', description: errorMessage(error), variant: 'destructive' });
+                },
+            }),
+        });
+    };
+
+    const requestResetGuide = (targetGuide: BrandGuide) => {
+        const guideName = targetGuide.brand_name || 'this Brand Guide';
+        setDeleteConfirm({
+            title: 'Reset Brand Guide?',
+            description: `This will clear all fields, project assignment, colors, typography, logos, logo rules, mood images, social links, and generated Brand Knowledge for "${guideName}". The Brand Guide itself will stay available.`,
+            actionLabel: 'Reset',
+            action: () => resetGuide.mutate(targetGuide.id, {
+                onSuccess: () => {
+                    setDraft((current) => ({
+                        ...current,
+                        project_id: null,
+                        brand_name: null,
+                        website_url: null,
+                        tagline: null,
+                        mission: null,
+                        vision: null,
+                        brand_values: [],
+                        personality: [],
+                        industry: null,
+                        target_audience: null,
+                        elevator_pitch: null,
+                        voice_attributes: [],
+                        tone_spectrum: {},
+                        writing_dos: [],
+                        writing_donts: [],
+                        preferred_terms: [],
+                        avoided_terms: [],
+                        sample_copy: [],
+                        content_pillars: [],
+                        photography_style: null,
+                        illustration_style: null,
+                        iconography_rules: null,
+                        social_rules: null,
+                        ad_rules: null,
+                        custom_sections: [],
+                        logo_clearspace: null,
+                        logo_min_digital: null,
+                        logo_min_print: null,
+                    }));
+                    setKnowledgeDraft('');
+                    setOpenSections(['identity']);
+                    toast({ title: 'Brand Guide reset', description: `${guideName} is ready for fresh details.` });
+                },
+                onError: (error) => {
+                    toast({ title: 'Could not reset Brand Guide', description: errorMessage(error), variant: 'destructive' });
                 },
             }),
         });
@@ -548,6 +601,17 @@ export default function BrandGuidePage() {
                                     ))}
                                 </SelectContent>
                             </Select>
+                        )}
+                        {!showFolderView && guide && (
+                            <Button
+                                variant="outline"
+                                className="gap-2 rounded-full border-red-200 px-5 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                onClick={() => requestResetGuide(guide)}
+                                disabled={resetGuide.isPending}
+                            >
+                                <RotateCcw className={cn('h-4 w-4', resetGuide.isPending && 'animate-spin')} />
+                                Reset
+                            </Button>
                         )}
                         <Button className="gap-2 rounded-full bg-primary px-6 text-white hover:bg-primary/90" onClick={openCreateGuide}>
                             <Plus className="h-4 w-4" />
@@ -994,7 +1058,7 @@ export default function BrandGuidePage() {
                                 setDeleteConfirm(null);
                             }}
                         >
-                            Delete
+                            {deleteConfirm?.actionLabel || 'Delete'}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
