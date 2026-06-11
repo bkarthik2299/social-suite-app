@@ -97,7 +97,13 @@ export default function Notes() {
                                     <p className="text-xs text-slate-500">Ideas and drafts</p>
                                 </div>
                             </div>
-                            <Button size="icon" variant="ghost" className="rounded-full text-slate-500 hover:bg-blue-50 hover:text-primary" onClick={handleCreateNote}>
+                            <Button
+                                size="icon"
+                                variant="ghost"
+                                className="rounded-full text-slate-500 hover:bg-blue-50 hover:text-primary"
+                                onClick={handleCreateNote}
+                                aria-label="Create note"
+                            >
                                 <Plus className="w-4 h-4" />
                             </Button>
                         </div>
@@ -155,6 +161,7 @@ export default function Notes() {
                                             variant="ghost"
                                             className="h-6 w-6 text-slate-400 opacity-0 hover:bg-rose-50 hover:text-destructive group-hover:opacity-100"
                                             onClick={(e) => handleDeleteNote(note, e)}
+                                            aria-label={`Delete ${note.title || 'Untitled Note'}`}
                                         >
                                             <Trash2 className="w-3 h-3" />
                                         </Button>

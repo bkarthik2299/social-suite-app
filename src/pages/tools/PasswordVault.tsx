@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -109,6 +109,7 @@ const PasswordGenerator = ({ open, onOpenChange }: { open: boolean, onOpenChange
                         <ShieldCheck className="w-5 h-5 text-blue-500" />
                         Generate Strong Password
                     </DialogTitle>
+                    <DialogDescription>Choose password rules, then copy the generated password into a credential.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-6 py-4">
                     <div className="relative">
@@ -121,6 +122,7 @@ const PasswordGenerator = ({ open, onOpenChange }: { open: boolean, onOpenChange
                             className="absolute right-2 top-1/2 -translate-y-1/2 hover:bg-slate-200"
                             onClick={() => generate()}
                             title="Regenerate"
+                            aria-label="Regenerate password"
                         >
                             <RefreshCw className="w-4 h-4 text-slate-500" />
                         </Button>
@@ -130,6 +132,7 @@ const PasswordGenerator = ({ open, onOpenChange }: { open: boolean, onOpenChange
                             className="absolute left-2 top-1/2 -translate-y-1/2 hover:bg-slate-200"
                             onClick={copyToClipboard}
                             title="Copy"
+                            aria-label="Copy generated password"
                         >
                             <Copy className="w-4 h-4 text-slate-500" />
                         </Button>
@@ -271,6 +274,7 @@ const CredentialDialog = ({
             <DialogContent>
                 <DialogHeader>
                     <DialogTitle>{initialData ? 'Update Credential' : 'Add New Credential'}</DialogTitle>
+                    <DialogDescription>Save the service, login, password, and optional project association.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                     <div className="grid gap-2">
@@ -312,6 +316,7 @@ const CredentialDialog = ({
                                 className="absolute right-1 top-1/2 -translate-y-1/2 h-7"
                                 onClick={onGenerate}
                                 title="Generate Password"
+                                aria-label="Generate password"
                             >
                                 <KeyRound className="w-4 h-4 text-muted-foreground" />
                             </Button>
@@ -323,7 +328,7 @@ const CredentialDialog = ({
                             value={formData.projectId}
                             onValueChange={(val) => setFormData({ ...formData, projectId: val })}
                         >
-                            <SelectTrigger>
+                            <SelectTrigger aria-label="Assign to project">
                                 <SelectValue placeholder="Select a project..." />
                             </SelectTrigger>
                             <SelectContent>
@@ -417,6 +422,7 @@ const PasswordVault = () => {
         c.service_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.username.toLowerCase().includes(searchQuery.toLowerCase())
     );
+    const hasSearchQuery = searchQuery.trim().length > 0;
 
     return (
         <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Password Vault', path: '/tools/vault' }]}>
@@ -494,7 +500,7 @@ const PasswordVault = () => {
                                                     className="h-8 w-8 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg"
                                                     asChild
                                                 >
-                                                    <a href={cred.url} target="_blank" rel="noreferrer">
+                                                    <a href={cred.url} target="_blank" rel="noreferrer" aria-label={`Open ${cred.service_name}`}>
                                                         <ExternalLink className="w-4 h-4" />
                                                     </a>
                                                 </Button>
@@ -504,6 +510,7 @@ const PasswordVault = () => {
                                                 size="icon"
                                                 className="h-8 w-8 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                 onClick={() => setDeleteId(cred.id)}
+                                                aria-label={`Delete ${cred.service_name}`}
                                             >
                                                 <Trash2 className="w-4 h-4" />
                                             </Button>
@@ -522,6 +529,7 @@ const PasswordVault = () => {
                                                     size="icon"
                                                     className="h-6 w-6 text-slate-400 hover:text-primary rounded opacity-0 group-hover/field:opacity-100 transition-opacity"
                                                     onClick={() => copyToClipboard(cred.username, "Username")}
+                                                    aria-label={`Copy username for ${cred.service_name}`}
                                                 >
                                                     <Copy className="w-3.5 h-3.5" />
                                                 </Button>
@@ -533,7 +541,7 @@ const PasswordVault = () => {
                                             <Label className="text-[10px] uppercase font-bold text-slate-400 tracking-wider pl-1">Password</Label>
                                             <div className="flex items-center justify-between rounded-lg bg-slate-50/70 p-2.5 transition-colors group/field hover:bg-blue-50/45">
                                                 <span className="text-sm font-mono text-slate-700 truncate select-all">
-                                                    {isVisible ? decryptString(cred.encrypted_password) : '••••••••••••'}
+                                                    {isVisible ? decryptString(cred.encrypted_password) : '************'}
                                                 </span>
                                                 <div className="flex items-center gap-1 opacity-0 group-hover/field:opacity-100 transition-opacity">
                                                     <Button
@@ -541,6 +549,7 @@ const PasswordVault = () => {
                                                         size="icon"
                                                         className="h-6 w-6 text-slate-400 hover:text-primary rounded"
                                                         onClick={() => toggleVisibility(cred.id)}
+                                                        aria-label={`${isVisible ? 'Hide' : 'Show'} password for ${cred.service_name}`}
                                                     >
                                                         {isVisible ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                                                     </Button>
@@ -549,6 +558,7 @@ const PasswordVault = () => {
                                                         size="icon"
                                                         className="h-6 w-6 text-slate-400 hover:text-primary rounded"
                                                         onClick={() => copyToClipboard(decryptString(cred.encrypted_password), "Password")}
+                                                        aria-label={`Copy password for ${cred.service_name}`}
                                                     >
                                                         <Copy className="w-3.5 h-3.5" />
                                                     </Button>
@@ -570,9 +580,20 @@ const PasswordVault = () => {
                     })}
                     {!isLoading && filteredCredentials.length === 0 && (
                         <div className="text-center col-span-full py-10 text-muted-foreground flex flex-col items-center gap-3">
-                            <Search className="w-12 h-12 opacity-20" />
-                            <p>No credentials found matching your search.</p>
-                            <Button variant="link" onClick={() => setSearchQuery('')}>Clear Search</Button>
+                            {hasSearchQuery ? (
+                                <>
+                                    <Search className="w-12 h-12 opacity-20" />
+                                    <p>No credentials found matching your search.</p>
+                                    <Button variant="link" onClick={() => setSearchQuery('')}>Clear Search</Button>
+                                </>
+                            ) : (
+                                <>
+                                    <KeyRound className="w-12 h-12 opacity-20" />
+                                    <p>No credentials saved yet.</p>
+                                    <p className="text-sm">Add your first credential to keep team logins organized.</p>
+                                    <Button variant="link" onClick={openAddDialog}>Add New Credential</Button>
+                                </>
+                            )}
                         </div>
                     )}
                 </div>

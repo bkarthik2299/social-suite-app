@@ -204,9 +204,15 @@ const normalizeWebsiteUrl = (value: string) => {
   }
 };
 
+const replaceControlCharacters = (value: string) =>
+  Array.from(value, (character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1F || code === 0x7F ? ' ' : character;
+  }).join('');
+
 const cleanText = (value: unknown, maxLength = 1600) => {
   if (typeof value !== 'string') return null;
-  const clean = value.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const clean = replaceControlCharacters(value).replace(/\s+/g, ' ').trim();
   return clean ? clean.slice(0, maxLength) : null;
 };
 
@@ -906,7 +912,7 @@ const scoreCssContext = (context: string, property: string) => {
     role = 'primary';
     label = 'Button Color';
   }
-  if (/(^|[\s,>+.])a[:.\[#\s]|link/.test(target)) {
+  if (/(^|[\s,>+.])a[:.[#\s]|link/.test(target)) {
     score += 280;
     role ||= 'accent';
     label = 'Link Color';

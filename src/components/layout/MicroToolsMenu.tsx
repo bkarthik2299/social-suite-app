@@ -81,6 +81,7 @@ export function MicroToolsMenu() {
                     variant="ghost"
                     size="icon"
                     className="soft-card h-9 w-9 rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
+                    aria-label="Open tools menu"
                 >
                     <LayoutGrid className="h-5 w-5" />
                 </Button>

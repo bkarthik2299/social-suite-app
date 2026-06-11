@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -779,6 +780,7 @@ export default function Tasks() {
           <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
             <DialogHeader>
               <DialogTitle>Add Task</DialogTitle>
+              <DialogDescription>Create a task, assign optional context, and place it on the board.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-2 gap-4">
@@ -1027,6 +1029,7 @@ export default function Tasks() {
         <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Edit Task</DialogTitle>
+            <DialogDescription>Update task details, assignment, status, or due date.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -1140,6 +1143,7 @@ export default function Tasks() {
         <DialogContent className="border-0 bg-slate-50 shadow-2xl sm:max-w-[500px] sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Customize Columns</DialogTitle>
+            <DialogDescription>Rename, reorder, add, or remove the visible task board columns.</DialogDescription>
           </DialogHeader>
           <div className="py-4 space-y-4">
             <p className="text-sm text-muted-foreground">Add, remove, or rename your task columns.</p>

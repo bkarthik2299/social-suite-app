@@ -13,7 +13,7 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import {
     AlertDialog,
     AlertDialogAction,
@@ -742,7 +742,13 @@ const FeedMonitor = () => {
                                         className="tool-surface h-9 rounded-full"
                                     />
                                 ) : (
-                                    <Button variant="outline" size="icon" className="tool-surface tool-surface-interactive h-9 w-9 rounded-full" onClick={() => setIsSearchExpanded(true)}>
+                                    <Button
+                                        variant="outline"
+                                        size="icon"
+                                        className="tool-surface tool-surface-interactive h-9 w-9 rounded-full"
+                                        onClick={() => setIsSearchExpanded(true)}
+                                        aria-label="Search saved posts"
+                                    >
                                         <Search className="w-4 h-4" />
                                     </Button>
                                 )}
@@ -756,6 +762,7 @@ const FeedMonitor = () => {
                                 <DialogContent>
                                     <DialogHeader>
                                         <DialogTitle>Create New Folder</DialogTitle>
+                                        <DialogDescription>Create a collection to group saved reference posts.</DialogDescription>
                                     </DialogHeader>
                                     <div className="grid gap-4 py-4">
                                         <div className="grid gap-2">
@@ -772,6 +779,7 @@ const FeedMonitor = () => {
                                 <DialogContent>
                                     <DialogHeader>
                                         <DialogTitle>Rename Folder</DialogTitle>
+                                        <DialogDescription>Update the name shown for this feed collection.</DialogDescription>
                                     </DialogHeader>
                                     <div className="grid gap-4 py-4">
                                         <div className="grid gap-2">
@@ -804,7 +812,13 @@ const FeedMonitor = () => {
                             ))}
                             {/* Empty Add Card */}
                             <div className="min-w-[100px] p-4 flex items-center justify-center h-32">
-                                <Button variant="outline" size="icon" className="tool-surface tool-surface-interactive h-10 w-10 rounded-full border-0" onClick={() => setIsNewFolderOpen(true)}>
+                                <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className="tool-surface tool-surface-interactive h-10 w-10 rounded-full border-0"
+                                    onClick={() => setIsNewFolderOpen(true)}
+                                    aria-label="Create folder"
+                                >
                                     <Plus className="w-4 h-4 text-muted-foreground" />
                                 </Button>
                             </div>

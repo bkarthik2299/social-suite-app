@@ -100,6 +100,8 @@ export function AIAssistant() {
   const [newDestinationName, setNewDestinationName] = useState('');
   const [newCampaignType, setNewCampaignType] = useState<CampaignType>('socials');
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<string[]>([]);
+  const [missionStartedAt, setMissionStartedAt] = useState<number | null>(null);
+  const [runningSeconds, setRunningSeconds] = useState(0);
 
   const { data: projects = [], isLoading: projectsLoading, addProject } = useProjects();
   const { data: folders = [], isLoading: foldersLoading } = useAllFolders();
@@ -172,6 +174,21 @@ export function AIAssistant() {
   }, [running]);
 
   useEffect(() => {
+    if (!running || !missionStartedAt) {
+      if (!running) setRunningSeconds(0);
+      return;
+    }
+    const updateElapsed = () => setRunningSeconds(Math.floor((Date.now() - missionStartedAt) / 1000));
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [missionStartedAt, running]);
+
+  useEffect(() => {
+    if (!running) setMissionStartedAt(null);
+  }, [running]);
+
+  useEffect(() => {
     if (brandGuideId !== 'none' || projectId === 'none') return;
     const projectGuide = guides.find((guide) => guide.project_id === projectId);
     if (projectGuide?.id) setBrandGuideId(projectGuide.id);
@@ -239,6 +256,8 @@ export function AIAssistant() {
     setPanelOpen(false);
     setCurrentRun(null);
     setCurrentArtifact(null);
+    setMissionStartedAt(Date.now());
+    setRunningSeconds(0);
 
     let brandKnowledgeDocumentId = brandKnowledgeDocument?.status === 'ready' ? brandKnowledgeDocument.id : null;
     if (selectedRemoteBrandGuideId && !brandKnowledgeDocumentId) {
@@ -590,6 +609,14 @@ export function AIAssistant() {
                 <MissionContextLabel label="Mode" value={workMode === 'deep' ? 'Deep Work' : 'Instant'} />
               </div>
               <Progress value={progress} className="h-2" />
+              {running && runningSeconds >= 90 && (
+                <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+                  <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span>
+                    This mission has been running for {formatElapsedTime(runningSeconds)}. You can close this window and reopen it from AI History while it continues.
+                  </span>
+                </div>
+              )}
             </div>
           </DialogHeader>
 
@@ -717,7 +744,7 @@ function FieldSelect({
         }}
         disabled={disabled}
       >
-        <SelectTrigger className="tool-surface h-11 rounded-xl bg-white">
+        <SelectTrigger aria-label={label} className="tool-surface h-11 rounded-xl bg-white">
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent>
@@ -1871,6 +1898,13 @@ function missionDescription(run: AiRun | null, running: boolean) {
   if (run?.status === 'needs_approval') return 'Review the campaign pack before creating drafts.';
   if (run?.status === 'failed') return run.error || 'The mission could not complete.';
   return 'Prepare, review, and approve campaign drafts.';
+}
+
+function formatElapsedTime(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes === 0) return `${remainingSeconds}s`;
+  return `${minutes}m ${remainingSeconds.toString().padStart(2, '0')}s`;
 }
 
 function isUuid(value: string) {
