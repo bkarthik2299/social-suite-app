@@ -30,9 +30,12 @@ interface AuthContextType {
     signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
     signOut: () => Promise<void>;
     createOrganization: (name: string) => Promise<{ error: Error | null }>;
+    acceptTeamInvite: (token: string) => Promise<{ error: Error | null; orgId?: string }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const PENDING_TEAM_INVITE_KEY = 'socialsuite.pendingTeamInviteToken';
+const ACTIVE_ORG_KEY = 'socialsuite.activeOrgId';
 
 // ── Provider ───────────────────────────────────────────────────────────
 
@@ -51,24 +54,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }, [organization]);
 
     // Load the user's organization and membership
-    const loadOrgData = async (userId: string) => {
+    const loadOrgData = async (userId: string, preferredOrgId?: string) => {
         try {
             setOrganization(null);
             setMembership(null);
 
-            // Get the user's membership (first org they belong to)
-            const { data: memberData, error: memberError } = await supabase
-                .from('org_members')
-                .select('*')
-                .eq('user_id', userId)
-                .limit(1)
-                .maybeSingle();
+            const activeOrgId = preferredOrgId || window.localStorage.getItem(ACTIVE_ORG_KEY) || '';
+            let memberData: OrgMember | null = null;
+            let memberError: unknown = null;
+
+            if (activeOrgId) {
+                const result = await supabase
+                    .from('org_members')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .eq('org_id', activeOrgId)
+                    .maybeSingle();
+                memberData = result.data as OrgMember | null;
+                memberError = result.error;
+            }
+
+            // Get the user's membership (preferred org first, then first org they belong to)
+            if (!memberData && !memberError) {
+                const result = await supabase
+                    .from('org_members')
+                    .select('*')
+                    .eq('user_id', userId)
+                    .limit(1)
+                    .maybeSingle();
+                memberData = result.data as OrgMember | null;
+                memberError = result.error;
+            }
 
             if (memberError) throw memberError;
+
+            const pendingInviteToken = window.localStorage.getItem(PENDING_TEAM_INVITE_KEY);
+            if (!memberData && pendingInviteToken) {
+                const accepted = await acceptTeamInviteToken(pendingInviteToken, userId);
+                if (accepted.orgId) return;
+            }
 
             if (!memberData) {
                 return;
             }
+
+            window.localStorage.setItem(ACTIVE_ORG_KEY, memberData.org_id);
 
             setMembership(memberData);
 
@@ -86,6 +116,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setOrganization(null);
             setMembership(null);
         }
+    };
+
+    const acceptTeamInviteToken = async (token: string, userId?: string) => {
+        const { data, error } = await supabase.functions.invoke('team-invitations', {
+            body: { action: 'accept', token },
+        });
+
+        if (error) {
+            return { error: error as Error, orgId: undefined };
+        }
+
+        const orgId = (data as { org?: { id?: string } } | null)?.org?.id;
+        window.localStorage.removeItem(PENDING_TEAM_INVITE_KEY);
+
+        if (orgId) {
+            window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
+            if (userId) {
+                await loadOrgData(userId, orgId);
+            }
+        }
+
+        return { error: null, orgId };
     };
 
     // Listen for auth state changes
@@ -178,7 +230,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // ── Auth Methods ─────────────────────────────────────────────────
 
     const signUp = async (email: string, password: string) => {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const pendingInviteToken = window.localStorage.getItem(PENDING_TEAM_INVITE_KEY);
+        const { error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: pendingInviteToken
+                ? { emailRedirectTo: `${window.location.origin}/invite/${pendingInviteToken}` }
+                : undefined,
+        });
         return { error: error as Error | null };
     };
 
@@ -189,6 +248,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const signOut = async () => {
         await supabase.auth.signOut();
+        window.localStorage.removeItem(ACTIVE_ORG_KEY);
         setOrganization(null);
         setMembership(null);
     };
@@ -196,16 +256,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const createOrganization = async (name: string) => {
         const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
-        const { error } = await supabase
+        const { data, error } = await supabase
             .from('organizations')
-            .insert({ name, slug });
+            .insert({ name, slug })
+            .select('id')
+            .single();
 
         if (!error && user) {
+            if (data?.id) window.localStorage.setItem(ACTIVE_ORG_KEY, data.id);
             // Reload org data (the trigger auto-adds the user as admin)
-            await loadOrgData(user.id);
+            await loadOrgData(user.id, data?.id);
         }
 
         return { error: error as Error | null };
+    };
+
+    const acceptTeamInvite = async (token: string) => {
+        window.localStorage.setItem(PENDING_TEAM_INVITE_KEY, token);
+        const { data } = await supabase.auth.getUser();
+        if (!data.user) return { error: null, orgId: undefined };
+        return acceptTeamInviteToken(token, data.user.id);
     };
 
     return (
@@ -220,6 +290,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             signIn,
             signOut,
             createOrganization,
+            acceptTeamInvite,
         }}>
             {children}
         </AuthContext.Provider>
