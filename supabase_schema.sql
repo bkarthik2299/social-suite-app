@@ -15,6 +15,7 @@ CREATE TABLE organizations (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name        text NOT NULL,
     slug        text UNIQUE NOT NULL,
+    created_by  uuid REFERENCES auth.users(id) ON DELETE SET NULL DEFAULT auth.uid(),
     settings    jsonb DEFAULT '{}',
     created_at  timestamptz DEFAULT now(),
     updated_at  timestamptz DEFAULT now()
@@ -32,6 +33,7 @@ CREATE TABLE org_members (
 -- Index for fast org lookups by user
 CREATE INDEX idx_org_members_user ON org_members(user_id);
 CREATE INDEX idx_org_members_org ON org_members(org_id);
+CREATE INDEX idx_organizations_created_by ON organizations(created_by);
 
 -- ==========================================================================
 -- LAYER 2: CONTENT ENGINE — Projects → Folders → Campaigns → Content
@@ -453,7 +455,7 @@ ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Members can view their org"
     ON organizations FOR SELECT
-    USING (is_org_member(id));
+    USING (is_org_member(id) OR created_by = (select auth.uid()));
 
 CREATE POLICY "Admins can update their org"
     ON organizations FOR UPDATE
@@ -462,7 +464,8 @@ CREATE POLICY "Admins can update their org"
 -- Allow any authenticated user to create an org (they become admin via trigger)
 CREATE POLICY "Authenticated users can create orgs"
     ON organizations FOR INSERT
-    WITH CHECK (auth.uid() IS NOT NULL);
+    TO authenticated
+    WITH CHECK ((select auth.uid()) IS NOT NULL AND created_by = (select auth.uid()));
 
 -- ---- ORG_MEMBERS ----
 ALTER TABLE org_members ENABLE ROW LEVEL SECURITY;
@@ -875,17 +878,25 @@ CREATE POLICY "Admins can manage org tools"
 
 CREATE OR REPLACE FUNCTION handle_new_org()
 RETURNS trigger AS $$
+DECLARE
+    creator_id uuid := COALESCE(NEW.created_by, auth.uid());
 BEGIN
+    IF creator_id IS NULL THEN
+        RAISE EXCEPTION 'Cannot create organization without an authenticated user';
+    END IF;
+
     INSERT INTO org_members (org_id, user_id, role)
-    VALUES (NEW.id, auth.uid(), 'admin');
+    VALUES (NEW.id, creator_id, 'admin')
+    ON CONFLICT (org_id, user_id) DO NOTHING;
 
     -- Enable all default tools for the new org
     INSERT INTO org_tools (org_id, tool_id, enabled)
-    SELECT NEW.id, id, true FROM tool_registry WHERE is_active = true;
+    SELECT NEW.id, id, true FROM tool_registry WHERE is_active = true
+    ON CONFLICT (org_id, tool_id) DO NOTHING;
 
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE TRIGGER on_org_created
     AFTER INSERT ON organizations

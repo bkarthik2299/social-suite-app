@@ -36,6 +36,15 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const PENDING_TEAM_INVITE_KEY = 'socialsuite.pendingTeamInviteToken';
 const ACTIVE_ORG_KEY = 'socialsuite.activeOrgId';
+const AUTH_REDIRECT_ORIGIN = import.meta.env.VITE_AUTH_REDIRECT_ORIGIN?.replace(/\/+$/, '');
+
+const buildAuthRedirectUrl = (path = '/') => {
+    const origin = AUTH_REDIRECT_ORIGIN || window.location.origin;
+    const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+    return `${origin.replace(/\/+$/, '')}${normalizedPath}`;
+};
+
+const slugify = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 
 // ── Provider ───────────────────────────────────────────────────────────
 
@@ -234,9 +243,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { error } = await supabase.auth.signUp({
             email,
             password,
-            options: pendingInviteToken
-                ? { emailRedirectTo: `${window.location.origin}/invite/${pendingInviteToken}` }
-                : undefined,
+            options: {
+                emailRedirectTo: buildAuthRedirectUrl(pendingInviteToken ? `/invite/${pendingInviteToken}` : '/'),
+            },
         });
         return { error: error as Error | null };
     };
@@ -254,18 +263,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const createOrganization = async (name: string) => {
-        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+        if (!user) {
+            return { error: new Error('You need to be signed in before creating an organization.') };
+        }
 
-        const { data, error } = await supabase
+        const orgId = crypto.randomUUID();
+        const slugBase = slugify(name) || 'organization';
+        const slug = `${slugBase}-${orgId.slice(0, 8)}`;
+
+        const { error } = await supabase
             .from('organizations')
-            .insert({ name, slug })
-            .select('id')
-            .single();
+            .insert({ id: orgId, name, slug });
 
-        if (!error && user) {
-            if (data?.id) window.localStorage.setItem(ACTIVE_ORG_KEY, data.id);
+        if (!error) {
+            window.localStorage.setItem(ACTIVE_ORG_KEY, orgId);
             // Reload org data (the trigger auto-adds the user as admin)
-            await loadOrgData(user.id, data?.id);
+            await loadOrgData(user.id, orgId);
         }
 
         return { error: error as Error | null };
