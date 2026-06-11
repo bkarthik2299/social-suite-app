@@ -23,6 +23,7 @@ import SocialPreview from '@/pages/tools/SocialPreview';
 import Notes from './pages/tools/Notes';
 import AuthPage from "./pages/Auth";
 import Settings from "./pages/Settings";
+import InviteAccept from "./pages/InviteAccept";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -84,6 +85,7 @@ const App = () => {
               <Routes>
                 {/* Public route */}
                 <Route path="/auth" element={<AuthRoute />} />
+                <Route path="/invite/:token" element={<InviteAccept />} />
                 <Route path="/client-review/:token" element={<ClientPortalPublicReview />} />
                 <Route path="/client-review/:token/:feedId" element={<ClientPortalPublicReview />} />
 
