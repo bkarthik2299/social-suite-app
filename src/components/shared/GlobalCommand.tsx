@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useAllCampaigns, useAllContentItems, useAllFolders, useProjects } from "@/hooks/useDatabase";
 import { cn } from "@/lib/utils";
 import { campaignPath, folderPath, projectPath } from "@/lib/routes";
@@ -123,6 +123,7 @@ export function GlobalCommand() {
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="max-w-[min(92vw,42rem)] overflow-hidden border-0 bg-white p-0 shadow-[0_28px_70px_-36px_rgba(37,99,235,0.58),0_18px_48px_-40px_rgba(15,23,42,0.28)] sm:rounded-2xl [&>button:last-child]:right-4 [&>button:last-child]:top-4 [&>button:last-child]:rounded-full [&>button:last-child]:bg-slate-50 [&>button:last-child]:p-2 [&>button:last-child]:text-slate-500 [&>button:last-child]:opacity-100 [&>button:last-child]:shadow-sm [&>button:last-child]:hover:bg-blue-50 [&>button:last-child]:hover:text-primary">
                     <DialogTitle className="sr-only">Universal Search</DialogTitle>
+                    <DialogDescription className="sr-only">Search projects, folders, campaigns, and content.</DialogDescription>
                     <Command className="rounded-2xl bg-white text-slate-900 [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-1 [&_[cmdk-input-wrapper]]:border-0 [&_[cmdk-input-wrapper]]:px-5 [&_[cmdk-input-wrapper]]:py-4 [&_[cmdk-input-wrapper]_svg]:mr-3 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input-wrapper]_svg]:text-primary [&_[cmdk-input-wrapper]_svg]:opacity-100 [&_[cmdk-input]]:h-12 [&_[cmdk-input]]:text-[15px] [&_[cmdk-input]]:font-medium [&_[cmdk-input]]:placeholder:text-slate-400">
                         <div className="bg-slate-50/70">
                             <CommandInput placeholder="Type to search projects, campaigns, or content..." />

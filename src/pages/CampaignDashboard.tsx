@@ -325,6 +325,41 @@ const downloadImageAsset = async (imageUrl: string, filename = 'social-suite-ima
 
 const uniqueTextValues = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 
+const buildSocialCaptionDraft = ({
+    topic,
+    visualGuide,
+    platforms,
+    projectName,
+}: {
+    topic: string;
+    visualGuide: string;
+    platforms: string[];
+    projectName?: string;
+}) => {
+    const cleanedTopic = topic.trim();
+    const cleanedVisualGuide = visualGuide.trim();
+    const selectedPlatformNames = platforms
+        .map((platform) => PLATFORM_SPECS[normalizeSocialPlatform(platform)].name)
+        .join(', ');
+    const opener = cleanedTopic || `A practical update from ${projectName || 'the team'}.`;
+    const visualCue = cleanedVisualGuide
+        ? `Pair it with a visual that feels like this: ${cleanedVisualGuide}`
+        : '';
+    const platformCue = selectedPlatformNames
+        ? `Format the final post for ${selectedPlatformNames}.`
+        : '';
+
+    return [
+        opener,
+        '',
+        'Make the next step easy: lead with the value, keep the message focused, and ask readers to take one clear action.',
+        visualCue,
+        platformCue,
+        '',
+        'Save this for your next planning session and share it with the teammate shaping the campaign.'
+    ].filter(Boolean).join('\n');
+};
+
 const stripCaptionTitlePrefix = (caption: string, candidates: string[]) => {
     const original = caption.trim();
     if (!original) return '';
@@ -435,13 +470,15 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
 
 // --- Platform Icons ---
 const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: string, active?: boolean, onClick?: () => void, size?: "sm" | "md" | "lg" }) => {
+    const normalized = normalizeSocialPlatform(platform);
     const icons = {
         instagram: Instagram,
         facebook: Facebook,
         linkedin: Linkedin,
         twitter: Twitter
     };
-    const Icon = icons[platform as keyof typeof icons] || Share2;
+    const Icon = icons[normalized] || Share2;
+    const label = PLATFORM_SPECS[normalized].name;
 
     const gradients = {
         instagram: "bg-gradient-to-tr from-yellow-400 via-red-500 to-purple-500 text-white",
@@ -452,21 +489,27 @@ const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: st
 
     if (size === "lg") {
         return (
-            <div
+            <button
+                type="button"
+                aria-label={`${active ? 'Deselect' : 'Select'} ${label}`}
+                aria-pressed={!!active}
                 onClick={onClick}
                 className={cn(
                     "w-10 h-10 rounded-full flex items-center justify-center cursor-pointer transition-transform hover:scale-110 shadow-sm",
                     active ? "ring-2 ring-offset-2 ring-primary" : "opacity-70 hover:opacity-100",
-                    gradients[platform as keyof typeof gradients] || "bg-gray-500 text-white"
+                    gradients[normalized] || "bg-gray-500 text-white"
                 )}
             >
                 <Icon className="w-5 h-5" />
-            </div>
+            </button>
         );
     }
 
     return (
-        <div
+        <button
+            type="button"
+            aria-label={`${active ? 'Deselect' : 'Select'} ${label}`}
+            aria-pressed={!!active}
             onClick={onClick}
             className={cn(
                 "flex items-center gap-2 px-4 py-2 rounded-xl border transition-all cursor-pointer font-medium text-sm select-none",
@@ -475,9 +518,9 @@ const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: st
                     : "border-border bg-white hover:bg-slate-50 text-muted-foreground"
             )}>
             <Icon className={cn("w-4 h-4", active && "fill-current")} />
-            <span className="capitalize">{platform}</span>
+            <span>{label}</span>
             {active && <div className="ml-2 w-1.5 h-1.5 rounded-full bg-blue-500" />}
-        </div>
+        </button>
     );
 };
 
@@ -1190,6 +1233,19 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
         }
     };
 
+    const handleGenerateCaption = () => {
+        setCaption(buildSocialCaptionDraft({
+            topic,
+            visualGuide,
+            platforms: selectedPlatforms,
+            projectName,
+        }));
+        toast({
+            title: 'Caption generated',
+            description: 'A draft caption was added from the topic, visual guide, and selected channels.',
+        });
+    };
+
     const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
@@ -1371,10 +1427,10 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                                     <CardContent className="p-6">
                                         <Label className="text-xs font-bold text-slate-500 mb-4 block uppercase tracking-wider">Select Channels</Label>
                                         <div className="flex flex-wrap gap-3">
-                                            <div onClick={() => togglePlatform('linkedin')}><PlatformIcon platform="linkedin" active={selectedPlatforms.includes('linkedin')} /></div>
-                                            <div onClick={() => togglePlatform('twitter')}><PlatformIcon platform="twitter" active={selectedPlatforms.includes('twitter')} /></div>
-                                            <div onClick={() => togglePlatform('instagram')}><PlatformIcon platform="instagram" active={selectedPlatforms.includes('instagram')} /></div>
-                                            <div onClick={() => togglePlatform('facebook')}><PlatformIcon platform="facebook" active={selectedPlatforms.includes('facebook')} /></div>
+                                            <PlatformIcon platform="linkedin" active={selectedPlatforms.includes('linkedin')} onClick={() => togglePlatform('linkedin')} />
+                                            <PlatformIcon platform="twitter" active={selectedPlatforms.includes('twitter')} onClick={() => togglePlatform('twitter')} />
+                                            <PlatformIcon platform="instagram" active={selectedPlatforms.includes('instagram')} onClick={() => togglePlatform('instagram')} />
+                                            <PlatformIcon platform="facebook" active={selectedPlatforms.includes('facebook')} onClick={() => togglePlatform('facebook')} />
                                         </div>
                                     </CardContent>
                                 </Card>
@@ -1455,7 +1511,13 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
                                     <CardContent className="p-6">
                                         <div className="flex justify-between items-center mb-3">
                                             <Label className="text-sm font-semibold text-slate-700">Caption</Label>
-                                            <Button variant="ghost" size="sm" className="h-7 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 font-medium">
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="sm"
+                                                className="h-7 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 font-medium"
+                                                onClick={handleGenerateCaption}
+                                            >
                                                 <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate with AI
                                             </Button>
                                         </div>
