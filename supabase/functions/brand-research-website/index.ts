@@ -679,6 +679,106 @@ const pageScore = (url: string, title = '', description = '') => {
   return weights.reduce((score, [term, weight]) => score + (haystack.includes(term) ? weight : 0), 0);
 };
 
+const decodeHtmlEntities = (value: string) => value
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&quot;/gi, '"')
+  .replace(/&#39;/gi, "'")
+  .replace(/&apos;/gi, "'")
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>');
+
+const getHtmlAttribute = (tag: string, attribute: string) => {
+  const pattern = new RegExp(`${attribute}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, 'i');
+  const match = tag.match(pattern);
+  if (!match?.[1]) return '';
+  return decodeHtmlEntities(match[1].replace(/^["']|["']$/g, '').trim());
+};
+
+const extractHtmlTitle = (html: string) => {
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return cleanFactText(match?.[1] ? decodeHtmlEntities(match[1]) : '', 240) || '';
+};
+
+const extractHtmlDescription = (html: string) => {
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  for (const tag of metaTags) {
+    const name = getHtmlAttribute(tag, 'name').toLowerCase();
+    const property = getHtmlAttribute(tag, 'property').toLowerCase();
+    if (name === 'description' || property === 'og:description' || name === 'twitter:description') {
+      const description = cleanFactText(getHtmlAttribute(tag, 'content'), 420);
+      if (description) return description;
+    }
+  }
+  return '';
+};
+
+const htmlToPlainText = (html: string) => {
+  const withoutScripts = html
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ');
+  const withBreaks = withoutScripts
+    .replace(/<\/(h[1-6]|p|li|div|section|article|header|footer|nav|br)>/gi, '\n')
+    .replace(/<(br|hr)\s*\/?>/gi, '\n');
+  return decodeHtmlEntities(withBreaks.replace(/<[^>]+>/g, ' '))
+    .replace(/\s+\n/g, '\n')
+    .replace(/\n\s+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+};
+
+const extractHtmlLinks = (html: string, baseUrl: string) => {
+  const links = new Set<string>();
+  for (const match of html.matchAll(/<a\b[^>]*href\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi)) {
+    const raw = match[1]?.replace(/^["']|["']$/g, '').trim();
+    if (!raw || raw.startsWith('#') || /^mailto:|^tel:|^javascript:/i.test(raw)) continue;
+    try {
+      const url = new URL(decodeHtmlEntities(raw), baseUrl);
+      if (!/^https?:$/i.test(url.protocol)) continue;
+      url.hash = '';
+      links.add(url.toString());
+    } catch {
+      // Ignore malformed links.
+    }
+  }
+  return Array.from(links).slice(0, 80);
+};
+
+async function fetchDirectPage(url: string): Promise<ScrapedPage | null> {
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; SocialSuiteResearch/1.0; +https://socialsuite.app)',
+      },
+      redirect: 'follow',
+    }, firecrawlTimeoutMs());
+    if (!response.ok) return null;
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType && !/text\/html|application\/xhtml\+xml/i.test(contentType)) return null;
+    const html = await response.text();
+    const markdown = cleanText(htmlToPlainText(html), 5000);
+    if (!markdown || looksLikeBadText(markdown)) return null;
+    return {
+      url: response.url || url,
+      title: extractHtmlTitle(html),
+      description: extractHtmlDescription(html),
+      markdown,
+      links: extractHtmlLinks(html, response.url || url),
+      html: cleanText(html, 120000) || '',
+      screenshot: '',
+      branding: null,
+      visualSignals: null,
+    };
+  } catch (error) {
+    console.warn('Direct website fetch failed:', url, error instanceof Error ? error.message : error);
+    return null;
+  }
+}
+
 async function scrapePage(url: string): Promise<ScrapedPage | null> {
   try {
     const timeout = firecrawlTimeoutMs();
@@ -715,7 +815,7 @@ async function scrapePage(url: string): Promise<ScrapedPage | null> {
     const page = data.data || {};
     const metadata = page.metadata || {};
     const markdown = cleanText(page.markdown || page.summary, 5000);
-    if (!markdown || looksLikeBadText(markdown)) return null;
+    if (!markdown || looksLikeBadText(markdown)) return fetchDirectPage(url);
     const title = cleanFactText(metadata.title, 240) || '';
     const description = cleanFactText(metadata.description, 420) || '';
     return {
@@ -729,8 +829,9 @@ async function scrapePage(url: string): Promise<ScrapedPage | null> {
       branding: page.branding || null,
       visualSignals: normalizeVisualSignals(page.actions?.javascriptReturns?.[0]?.value),
     };
-  } catch {
-    return null;
+  } catch (error) {
+    console.warn('Firecrawl scrape failed, trying direct fetch:', url, error instanceof Error ? error.message : error);
+    return fetchDirectPage(url);
   }
 }
 
