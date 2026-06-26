@@ -9,17 +9,20 @@ export async function openRouterJson<T>({
   messages,
   model = 'deepseek/deepseek-v4-flash',
   temperature = 0.4,
+  maxTokens,
   timeoutMs = 150_000,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  maxTokens?: number;
   timeoutMs?: number;
 }): Promise<T> {
   const body = {
     model,
     messages,
     temperature,
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
   };
   let response = await fetchOpenRouter({
     method: 'POST',

@@ -55,6 +55,13 @@ const researchProviders: ResearchProviderOption[] = [
   { id: 'perplexity', name: 'Perplexity', model: 'perplexity/sonar-pro' },
 ];
 
+const MISSION_SOFT_LIMIT_MS = 135_000;
+const COPYWRITER_MIN_BUDGET_MS = 35_000;
+const PLANNER_TIMEOUT_MS = 25_000;
+const RESEARCH_TIMEOUT_MS = 45_000;
+const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
+const SECTION_TIMEOUT_MS = 22_000;
+
 const stepDefinitions = [
   { agent_name: 'Planner Agent', title: 'Planner Agent' },
   { agent_name: 'Brand Guide Agent', title: 'Brand Guide Agent' },
@@ -209,6 +216,8 @@ async function processMission({
   orgId: string;
 }) {
   let activeStep: StepName = 'Planner Agent';
+  const missionDeadlineAt = Date.now() + MISSION_SOFT_LIMIT_MS;
+  const remainingMissionMs = () => Math.max(0, missionDeadlineAt - Date.now());
 
   const updateStep = async (name: StepName, status: 'queued' | 'working' | 'done' | 'failed' | 'skipped', message: string) => {
     const patch: Record<string, unknown> = { status, message };
@@ -279,12 +288,16 @@ async function processMission({
       });
 
       try {
+        const researchTimeoutMs = Math.max(12_000, Math.min(RESEARCH_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS));
+        if (researchTimeoutMs <= 12_000) {
+          throw new Error('Deep research skipped because the mission time budget was nearly exhausted.');
+        }
         const research = selectedResearchProvider.id === 'perplexity'
-          ? await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research)
+          ? await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs)
           : await tavilySearch(query);
         const researchDigest = selectedResearchProvider.id === 'perplexity' && research.answer
           ? research.answer
-          : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id);
+          : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()));
         researchContext = tavilyContext({ ...research, answer: researchDigest });
         researchSources = research.results;
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
@@ -327,6 +340,9 @@ async function processMission({
     let pack: CampaignPack;
     let contentGuardrailNotes: string[] = [];
     try {
+      if (remainingMissionMs() < COPYWRITER_MIN_BUDGET_MS) {
+        throw new Error(`Copywriter skipped because only ${Math.round(remainingMissionMs() / 1000)}s remained in the Edge Function budget.`);
+      }
       const generated = await buildCampaignPackInParts({
         model,
         prompt: body.prompt,
@@ -336,6 +352,7 @@ async function processMission({
         researchContext,
         agentSkillContext,
         today,
+        deadlineAt: missionDeadlineAt,
       });
       for (const failure of generated.failures) {
         await addEvent(activeStep, 'model_section_fallback', `${failure.section} generation used fallback content.`, failure);
@@ -529,6 +546,8 @@ async function buildPlannerOutput(prompt: string, destination: { projectName: st
     const planned = await openRouterJson<unknown>({
       model,
       temperature: 0.2,
+      maxTokens: 700,
+      timeoutMs: PLANNER_TIMEOUT_MS,
       messages: [
         {
           role: 'system',
@@ -568,7 +587,7 @@ function normalizePlannerOutput(input: unknown, fallback: PlannerOutput, prompt:
   };
 }
 
-async function buildResearchDigest(search: TavilySearchResponse, campaignGuidance: string, researchSkill = '', model = instantModels[0].id) {
+async function buildResearchDigest(search: TavilySearchResponse, campaignGuidance: string, researchSkill = '', model = instantModels[0].id, timeoutMs = RESEARCH_DIGEST_TIMEOUT_MS) {
   const fallback = search.results
     .map((source) => source.content)
     .filter(Boolean)
@@ -582,6 +601,8 @@ async function buildResearchDigest(search: TavilySearchResponse, campaignGuidanc
     const digest = await openRouterJson<unknown>({
       model,
       temperature: 0.1,
+      maxTokens: 900,
+      timeoutMs,
       messages: [
         {
           role: 'system',
@@ -623,6 +644,7 @@ async function buildCampaignPackInParts({
   researchContext,
   agentSkillContext,
   today,
+  deadlineAt,
 }: {
   model: string;
   prompt: string;
@@ -632,6 +654,7 @@ async function buildCampaignPackInParts({
   researchContext: string;
   agentSkillContext: string;
   today: string;
+  deadlineAt: number;
 }): Promise<CampaignGenerationResult> {
   const fallback = fallbackPack(prompt);
   const commonContext = [
@@ -714,12 +737,22 @@ async function buildCampaignPackInParts({
     },
   ] as const;
 
+  const remainingForSectionsMs = Math.max(0, deadlineAt - Date.now() - 12_000);
+  if (remainingForSectionsMs < 8_000) {
+    return {
+      pack: fallback,
+      failures: [{ section: 'All sections', error: 'Skipped model generation because the Edge Function time budget was nearly exhausted.' }],
+    };
+  }
+
+  const sectionTimeoutMs = Math.max(8_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
   const results = await Promise.all(sectionSpecs.map(async (section) => {
     try {
       const value = await openRouterJson<unknown>({
         model,
         temperature: 0.35,
-        timeoutMs: 75_000,
+        maxTokens: section.key === 'calendar' ? 1600 : section.key === 'socialPosts' ? 2600 : 1800,
+        timeoutMs: sectionTimeoutMs,
         messages: [
           { role: 'system', content: campaignSafetyInstructions(section.system) },
           { role: 'user', content: section.user },
@@ -837,10 +870,12 @@ function stringFromContext(context: Record<string, unknown> | undefined, key: st
   return typeof value === 'string' ? value.trim() : '';
 }
 
-async function perplexityResearch(query: string, campaignGuidance: string, researchSkill = ''): Promise<TavilySearchResponse> {
+async function perplexityResearch(query: string, campaignGuidance: string, researchSkill = '', timeoutMs = RESEARCH_TIMEOUT_MS): Promise<TavilySearchResponse> {
   const payload = await openRouterJson<unknown>({
     model: 'perplexity/sonar-pro',
     temperature: 0.1,
+    maxTokens: 1200,
+    timeoutMs,
     messages: [
       {
         role: 'system',
