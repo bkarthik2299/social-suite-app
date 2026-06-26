@@ -7,7 +7,7 @@ type ChatMessage = {
 
 export async function openRouterJson<T>({
   messages,
-  model = Deno.env.get('AI_DEFAULT_MODEL') || 'deepseek/deepseek-v4-flash',
+  model = 'deepseek/deepseek-v4-flash',
   temperature = 0.4,
 }: {
   messages: ChatMessage[];
@@ -50,7 +50,7 @@ export async function openRouterJson<T>({
 
 export async function openRouterText({
   messages,
-  model = Deno.env.get('AI_DEFAULT_MODEL') || 'deepseek/deepseek-v4-flash',
+  model = 'deepseek/deepseek-v4-flash',
   temperature = 0.3,
 }: {
   messages: ChatMessage[];
