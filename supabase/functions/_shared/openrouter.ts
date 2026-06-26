@@ -9,10 +9,12 @@ export async function openRouterJson<T>({
   messages,
   model = 'deepseek/deepseek-v4-flash',
   temperature = 0.4,
+  timeoutMs = 150_000,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  timeoutMs?: number;
 }): Promise<T> {
   const body = {
     model,
@@ -20,7 +22,7 @@ export async function openRouterJson<T>({
     temperature,
     response_format: { type: 'json_object' },
   };
-  let response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  let response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -29,13 +31,13 @@ export async function openRouterJson<T>({
       'X-Title': 'Social Suite',
     },
     body: JSON.stringify(body),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     const text = await response.text();
     if (response.status === 400 && text.includes('response_format')) {
       const bodyWithoutResponseFormat = { model, messages, temperature };
-      response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      response = await fetchOpenRouter({
         method: 'POST',
         headers: {
           Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -44,7 +46,7 @@ export async function openRouterJson<T>({
           'X-Title': 'Social Suite',
         },
         body: JSON.stringify(bodyWithoutResponseFormat),
-      });
+      }, timeoutMs);
 
       if (response.ok) {
         const data = await response.json();
@@ -74,12 +76,14 @@ export async function openRouterText({
   messages,
   model = 'deepseek/deepseek-v4-flash',
   temperature = 0.3,
+  timeoutMs = 120_000,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  timeoutMs?: number;
 }) {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -88,7 +92,7 @@ export async function openRouterText({
       'X-Title': 'Social Suite',
     },
     body: JSON.stringify({ model, messages, temperature }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     const text = await response.text();
@@ -97,6 +101,24 @@ export async function openRouterText({
 
   const data = await response.json();
   return String(data?.choices?.[0]?.message?.content || '').trim();
+}
+
+async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function parseJsonContent<T>(content: string): T {
