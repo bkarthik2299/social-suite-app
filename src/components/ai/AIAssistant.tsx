@@ -59,6 +59,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/use-toast';
 import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
@@ -70,7 +71,7 @@ import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunSte
 const agentActivity = [
   { name: 'Planner Agent', message: 'Resolving destination, campaign length, output types, and approval mode.' },
   { name: 'Brand Guide Agent', message: 'Filtering brand knowledge for tone, writing rules, color cues, and healthcare guardrails.' },
-  { name: 'Research Agent', message: 'Preparing research context for the selected work mode.' },
+  { name: 'Research Agent', message: 'Preparing research context.' },
   { name: 'Copywriter Agent', message: 'Drafting channel-ready campaign copy from the brief, brand guide, and research context.' },
   { name: 'Platform Specialist', message: 'Adapting posts, ads, blogs, and calendar items for Social Suite placeholders.' },
   { name: 'QA Agent', message: 'Checking required output groups, campaign dates, claims, and brand fit.' },
@@ -79,6 +80,93 @@ const agentActivity = [
 
 type DestinationKind = 'project' | 'folder' | 'campaign';
 type DraftSelectionKind = keyof AiDraftSelection;
+type WorkMode = 'instant' | 'deep';
+type AiProvider = 'DeepSeek' | 'OpenAI' | 'Anthropic';
+type AiModelOption = {
+  id: string;
+  name: string;
+  provider: AiProvider;
+  logoSrc: string;
+  logoFallback: string;
+  default?: boolean;
+};
+type ResearchProviderId = 'tavily' | 'perplexity';
+type ResearchProviderOption = {
+  id: ResearchProviderId;
+  name: string;
+  modelId?: string;
+  logoSrc: string;
+  logoFallback: string;
+  default?: boolean;
+};
+
+const aiModelOptions: Record<WorkMode, AiModelOption[]> = {
+  instant: [
+    {
+      id: 'deepseek/deepseek-v4-flash',
+      name: 'DeepSeek V4 Flash',
+      provider: 'DeepSeek',
+      logoSrc: 'https://www.deepseek.com/favicon.ico',
+      logoFallback: 'D',
+      default: true,
+    },
+    {
+      id: 'openai/gpt-5.4-mini',
+      name: 'GPT-5.4 mini',
+      provider: 'OpenAI',
+      logoSrc: 'https://openai.com/favicon.ico',
+      logoFallback: 'O',
+    },
+    {
+      id: 'anthropic/claude-haiku-4.5',
+      name: 'Claude Haiku 4.5',
+      provider: 'Anthropic',
+      logoSrc: 'https://www.anthropic.com/favicon.ico',
+      logoFallback: 'A',
+    },
+  ],
+  deep: [
+    {
+      id: 'deepseek/deepseek-v4-pro',
+      name: 'DeepSeek V4 Pro',
+      provider: 'DeepSeek',
+      logoSrc: 'https://www.deepseek.com/favicon.ico',
+      logoFallback: 'D',
+      default: true,
+    },
+    {
+      id: 'anthropic/claude-opus-4.7',
+      name: 'Claude Opus 4.7',
+      provider: 'Anthropic',
+      logoSrc: 'https://www.anthropic.com/favicon.ico',
+      logoFallback: 'A',
+    },
+    {
+      id: 'openai/gpt-5.5',
+      name: 'GPT-5.5',
+      provider: 'OpenAI',
+      logoSrc: 'https://openai.com/favicon.ico',
+      logoFallback: 'O',
+    },
+  ],
+};
+
+const researchProviderOptions: ResearchProviderOption[] = [
+  {
+    id: 'tavily',
+    name: 'Tavily',
+    logoSrc: 'https://tavily.com/favicon.ico',
+    logoFallback: 'T',
+    default: true,
+  },
+  {
+    id: 'perplexity',
+    name: 'Perplexity',
+    modelId: 'perplexity/sonar-pro',
+    logoSrc: 'https://www.perplexity.ai/favicon.ico',
+    logoFallback: 'P',
+  },
+];
 
 export function AIAssistant() {
   const { toast } = useToast();
@@ -92,7 +180,12 @@ export function AIAssistant() {
   const [currentRun, setCurrentRun] = useState<AiRun | null>(null);
   const [currentArtifact, setCurrentArtifact] = useState<AiArtifact | null>(null);
   const [syntheticStep, setSyntheticStep] = useState(0);
-  const [workMode, setWorkMode] = useState<'instant' | 'deep'>('instant');
+  const [workMode, setWorkMode] = useState<WorkMode>('instant');
+  const [selectedModelIds, setSelectedModelIds] = useState<Record<WorkMode, string>>({
+    instant: aiModelOptions.instant[0].id,
+    deep: aiModelOptions.deep[0].id,
+  });
+  const [researchProvider, setResearchProvider] = useState<ResearchProviderId>('tavily');
   const [readyToastRunId, setReadyToastRunId] = useState<string | null>(null);
   const [researchNotesOpen, setResearchNotesOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
@@ -132,8 +225,19 @@ export function AIAssistant() {
     setFolderId(latestRun.folder_id || 'none');
     setCampaignId(latestRun.campaign_id || 'none');
     setBrandGuideId(latestRun.brand_guide_id || 'none');
-    if (latestRun.context?.workMode === 'deep' || latestRun.context?.workMode === 'instant') {
-      setWorkMode(latestRun.context.workMode);
+    const runWorkMode = latestRun.context?.workMode === 'deep' || latestRun.context?.workMode === 'instant'
+      ? latestRun.context.workMode
+      : null;
+    if (runWorkMode) {
+      setWorkMode(runWorkMode);
+      const modelId = contextString(latestRun.context, 'aiModelId');
+      if (aiModelOptions[runWorkMode].some((model) => model.id === modelId)) {
+        setSelectedModelIds((current) => ({ ...current, [runWorkMode]: modelId }));
+      }
+    }
+    const nextResearchProvider = contextString(latestRun.context, 'researchProvider');
+    if (nextResearchProvider === 'tavily' || nextResearchProvider === 'perplexity') {
+      setResearchProvider(nextResearchProvider);
     }
   }, [latestRun]);
 
@@ -216,6 +320,9 @@ export function AIAssistant() {
     return campaigns;
   }, [campaigns, selectedFolderId, selectedProjectId]);
 
+  const activeModelOptions = aiModelOptions[workMode];
+  const selectedModel = activeModelOptions.find((model) => model.id === selectedModelIds[workMode]) || activeModelOptions[0];
+  const selectedResearchProvider = researchProviderOptions.find((provider) => provider.id === researchProvider) || researchProviderOptions[0];
   const promptReady = prompt.trim().length >= 12 && !!selectedProjectId;
   const artifact = currentArtifact;
   const pack = useMemo(
@@ -284,6 +391,12 @@ export function AIAssistant() {
         context: {
           permissionMode: 'approval',
           workMode,
+          aiModelId: selectedModel.id,
+          aiModelName: selectedModel.name,
+          aiModelProvider: selectedModel.provider,
+          researchProvider: selectedResearchProvider.id,
+          researchProviderName: selectedResearchProvider.name,
+          researchModel: selectedResearchProvider.modelId || null,
           outputPack: 'balanced-v1',
           requestedOutputs: ['strategy', 'socialPosts', 'googleAds', 'socialAds', 'blogOutlines', 'calendar'],
         },
@@ -292,7 +405,7 @@ export function AIAssistant() {
       if (result.artifact) setCurrentArtifact(result.artifact);
       toast({
         title: workMode === 'deep' ? 'Deep Work started' : 'Instant mission started',
-        description: workMode === 'deep' ? 'Research and generation steps are now running.' : 'Generation steps are now running.',
+        description: `${selectedModel.name} is preparing the campaign pack.`,
       });
     } catch (error) {
       toast({ title: 'AI mission failed', description: errorMessage(error), variant: 'destructive' });
@@ -523,48 +636,56 @@ export function AIAssistant() {
                       transitionTimingFunction: 'cubic-bezier(0.22, 1, 0.36, 1)',
                     }}
                   />
-                  <button
-                    type="button"
-                    aria-pressed={workMode === 'instant'}
-                    onClick={() => setWorkMode('instant')}
-                    className={cn(
-                      'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
-                      workMode === 'instant' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
-                    )}
-                  >
-                    <Zap className="h-4 w-4" />
-                    Instant
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={workMode === 'deep'}
-                    onClick={() => setWorkMode('deep')}
-                    className={cn(
-                      'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
-                      workMode === 'deep' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
-                    )}
-                  >
-                    <Search className="h-4 w-4" />
-                    Deep Work
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-pressed={workMode === 'instant'}
+                        onClick={() => setWorkMode('instant')}
+                        className={cn(
+                          'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
+                          workMode === 'instant' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        <Zap className="h-4 w-4" />
+                        Instant
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-64 text-xs leading-5">
+                      Fast draft generation using brief and brand context, without web research.
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-pressed={workMode === 'deep'}
+                        onClick={() => setWorkMode('deep')}
+                        className={cn(
+                          'relative z-10 flex h-10 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors duration-200',
+                          workMode === 'deep' ? 'text-primary' : 'text-slate-500 hover:text-slate-800',
+                        )}
+                      >
+                        <Search className="h-4 w-4" />
+                        Deep Work
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="max-w-64 text-xs leading-5">
+                      More deliberate generation with selected web research before drafting.
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
               </div>
 
-              <div className="tool-surface rounded-xl p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-slate-900">Approval Mode</p>
-                    <p className="text-sm text-slate-500">Drafts are created only after review.</p>
-                  </div>
-                  <Badge variant="outline" className="shrink-0">Restricted</Badge>
-                </div>
-                <div className="grid gap-2 text-sm text-slate-600">
-                  <DestinationLine label="Project" value={selectedProject?.name || 'Required'} />
-                  <DestinationLine label="Folder" value={selectedFolder?.name || 'Auto folder'} />
-                <DestinationLine label="Campaign" value={selectedCampaign?.name || 'New AI campaigns'} />
-                  <DestinationLine label="Brand" value={brandDestinationLabel(selectedGuide?.brand_name || null, selectedBrandGuideId)} />
-                </div>
-              </div>
+              <AiModelStackPicker
+                workMode={workMode}
+                models={activeModelOptions}
+                selectedModelId={selectedModel.id}
+                onModelChange={(modelId) => setSelectedModelIds((current) => ({ ...current, [workMode]: modelId }))}
+                researchProviders={researchProviderOptions}
+                selectedResearchProviderId={selectedResearchProvider.id}
+                onResearchProviderChange={setResearchProvider}
+              />
             </div>
           </ScrollArea>
 
@@ -575,7 +696,7 @@ export function AIAssistant() {
               onClick={startMission}
             >
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              Start Mission
+              Generate with AI
             </Button>
           </div>
         </SheetContent>
@@ -607,6 +728,10 @@ export function AIAssistant() {
                 <MissionContextLabel label="Folder" value={selectedFolder?.name || 'Auto folder'} />
                 {selectedGuide?.brand_name && <MissionContextLabel label="Brand" value={selectedGuide.brand_name} />}
                 <MissionContextLabel label="Mode" value={workMode === 'deep' ? 'Deep Work' : 'Instant'} />
+                <MissionContextLabel label="Model" value={contextString(currentRun?.context, 'aiModelName') || selectedModel.name} />
+                {workMode === 'deep' && (
+                  <MissionContextLabel label="Research" value={contextString(currentRun?.context, 'researchProviderName') || selectedResearchProvider.name} />
+                )}
               </div>
               <Progress value={progress} className="h-2" />
               {running && runningSeconds >= 90 && (
@@ -706,6 +831,138 @@ export function AIAssistant() {
         onSave={saveDestination}
       />
     </>
+  );
+}
+
+function AiModelStackPicker({
+  workMode,
+  models,
+  selectedModelId,
+  onModelChange,
+  researchProviders,
+  selectedResearchProviderId,
+  onResearchProviderChange,
+}: {
+  workMode: WorkMode;
+  models: AiModelOption[];
+  selectedModelId: string;
+  onModelChange: (modelId: string) => void;
+  researchProviders: ResearchProviderOption[];
+  selectedResearchProviderId: ResearchProviderId;
+  onResearchProviderChange: (providerId: ResearchProviderId) => void;
+}) {
+  return (
+    <div className={cn('grid gap-4', workMode === 'deep' && 'lg:grid-cols-[minmax(0,1fr)_minmax(180px,0.65fr)]')}>
+      <div className="space-y-2">
+        <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">AI Model</Label>
+        <div className="grid gap-2">
+          {models.map((model) => (
+            <ModelChoiceButton
+              key={model.id}
+              option={model}
+              selected={model.id === selectedModelId}
+              onClick={() => onModelChange(model.id)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {workMode === 'deep' && (
+        <div className="space-y-2">
+          <Label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Research</Label>
+          <div className="grid gap-2">
+            {researchProviders.map((provider) => (
+              <ResearchChoiceButton
+                key={provider.id}
+                option={provider}
+                selected={provider.id === selectedResearchProviderId}
+                onClick={() => onResearchProviderChange(provider.id)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelChoiceButton({
+  option,
+  selected,
+  onClick,
+}: {
+  option: AiModelOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        'tool-surface tool-surface-interactive flex h-14 w-full items-center gap-2.5 rounded-lg border px-3 text-left transition-colors',
+        selected ? 'border-primary/40 bg-blue-50/70 text-slate-950' : 'border-transparent bg-white text-slate-700 hover:border-slate-200',
+      )}
+    >
+      <ProviderLogo logoSrc={option.logoSrc} fallback={option.logoFallback} />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-semibold">{option.name}</span>
+          {option.default && <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-slate-500">Default</span>}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-500">{option.id}</span>
+      </span>
+      {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
+    </button>
+  );
+}
+
+function ResearchChoiceButton({
+  option,
+  selected,
+  onClick,
+}: {
+  option: ResearchProviderOption;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onClick}
+      className={cn(
+        'tool-surface tool-surface-interactive flex h-14 w-full items-center gap-2.5 rounded-lg border px-3 text-left transition-colors',
+        selected ? 'border-primary/40 bg-blue-50/70 text-slate-950' : 'border-transparent bg-white text-slate-700 hover:border-slate-200',
+      )}
+    >
+      <ProviderLogo logoSrc={option.logoSrc} fallback={option.logoFallback} />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate text-sm font-semibold">{option.name}</span>
+          {option.default && <span className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-slate-500">Default</span>}
+        </span>
+        <span className="mt-0.5 block truncate text-[11px] leading-4 text-slate-500">{option.modelId || option.id}</span>
+      </span>
+      {selected ? <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" /> : <Circle className="h-4 w-4 shrink-0 text-slate-300" />}
+    </button>
+  );
+}
+
+function ProviderLogo({ logoSrc, fallback }: { logoSrc: string; fallback: string }) {
+  return (
+    <span className="relative flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-white text-[11px] font-semibold text-slate-500">
+      <span>{fallback}</span>
+      <img
+        src={logoSrc}
+        alt=""
+        className="absolute inset-0 h-full w-full object-contain p-1"
+        onError={(event) => {
+          event.currentTarget.style.display = 'none';
+        }}
+      />
+    </span>
   );
 }
 
@@ -1238,15 +1495,6 @@ Add a focused specialist perspective to the Social Suite campaign workflow.
 - Keep all output review-ready and aligned with the selected brand guide.`;
 }
 
-function DestinationLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-slate-500">{label}</span>
-      <span className="max-w-[220px] truncate font-medium text-slate-800">{value}</span>
-    </div>
-  );
-}
-
 function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallback?: boolean }) {
   const status = activeFallback ? 'working' : step.status;
   const defaultCollapsed = status !== 'working' && status !== 'failed';
@@ -1318,7 +1566,7 @@ function RunningPanel({
   running: boolean;
   steps: AiRunStep[];
   events: AiRunEvent[];
-  workMode: 'instant' | 'deep';
+  workMode: WorkMode;
   onOpenResearchNotes?: () => void;
 }) {
   const activeStep = steps.find((step) => step.status === 'working')
@@ -1849,7 +2097,7 @@ function syntheticSteps(
   isRunning: boolean,
   activeIndex: number,
   options: {
-    workMode: 'instant' | 'deep';
+    workMode: WorkMode;
     projectName?: string;
     brandName?: string;
     compilingBrandKnowledge: boolean;
@@ -1911,10 +2159,9 @@ function isUuid(value: string) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
-function brandDestinationLabel(name: string | null, guideId: string) {
-  if (!name) return 'No brand guide';
-  if (!isUuid(guideId)) return `${name} (local only)`;
-  return name;
+function contextString(context: Record<string, unknown> | null | undefined, key: string) {
+  const value = context?.[key];
+  return typeof value === 'string' ? value.trim() : '';
 }
 
 function destinationLabel(kind: DestinationKind) {
@@ -2024,7 +2271,7 @@ function eventDisplayMessage(event: AiRunEvent) {
   if (event.event_type === 'web_search') return `Web research started${query ? ` for: ${query}` : '.'}`;
   if (event.event_type === 'web_sources') return `Research found ${sources.length} useful sources and extracted campaign context.`;
   if (event.event_type === 'web_search_failed') return 'Web research could not be completed. Continuing with the brief and brand guide.';
-  if (event.event_type === 'model_call') return 'Draft generation started using the selected work mode.';
+  if (event.event_type === 'model_call') return 'Draft generation started using the selected AI model.';
   if (event.event_type === 'model_fallback') return 'Primary generation could not complete. Structured draft placeholders were prepared for review.';
   return sanitizeActivityText(event.message || event.event_type);
 }
