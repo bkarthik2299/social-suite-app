@@ -7,14 +7,24 @@ type ChatMessage = {
 
 export async function openRouterJson<T>({
   messages,
-  model = Deno.env.get('AI_DEFAULT_MODEL') || 'deepseek/deepseek-v4-flash',
+  model = 'deepseek/deepseek-v4-flash',
   temperature = 0.4,
+  maxTokens,
+  timeoutMs = 150_000,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
 }): Promise<T> {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const body = {
+    model,
+    messages,
+    temperature,
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+  };
+  let response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -22,13 +32,8 @@ export async function openRouterJson<T>({
       'HTTP-Referer': 'https://socialsuite.app',
       'X-Title': 'Social Suite',
     },
-    body: JSON.stringify({
-      model,
-      messages,
-      temperature,
-      response_format: { type: 'json_object' },
-    }),
-  });
+    body: JSON.stringify(body),
+  }, timeoutMs);
 
   if (!response.ok) {
     const text = await response.text();
@@ -41,23 +46,21 @@ export async function openRouterJson<T>({
     throw new Error('OpenRouter returned an empty response');
   }
 
-  try {
-    return JSON.parse(content) as T;
-  } catch {
-    throw new Error('OpenRouter returned invalid JSON');
-  }
+  return parseJsonContent<T>(content);
 }
 
 export async function openRouterText({
   messages,
-  model = Deno.env.get('AI_DEFAULT_MODEL') || 'deepseek/deepseek-v4-flash',
+  model = 'deepseek/deepseek-v4-flash',
   temperature = 0.3,
+  timeoutMs = 120_000,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  timeoutMs?: number;
 }) {
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+  const response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -66,7 +69,7 @@ export async function openRouterText({
       'X-Title': 'Social Suite',
     },
     body: JSON.stringify({ model, messages, temperature }),
-  });
+  }, timeoutMs);
 
   if (!response.ok) {
     const text = await response.text();
@@ -75,4 +78,58 @@ export async function openRouterText({
 
   const data = await response.json();
   return String(data?.choices?.[0]?.message?.content || '').trim();
+}
+
+async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      controller.abort();
+      reject(new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+  });
+
+  try {
+    const request = fetch('https://openrouter.ai/api/v1/chat/completions', {
+      ...init,
+      signal: controller.signal,
+    });
+
+    return await Promise.race([request, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function parseJsonContent<T>(content: string): T {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
+  const candidate = fenced || trimmed;
+
+  try {
+    return JSON.parse(candidate) as T;
+  } catch {
+    const objectStart = candidate.indexOf('{');
+    const objectEnd = candidate.lastIndexOf('}');
+    const arrayStart = candidate.indexOf('[');
+    const arrayEnd = candidate.lastIndexOf(']');
+    const objectCandidate = objectStart >= 0 && objectEnd > objectStart
+      ? candidate.slice(objectStart, objectEnd + 1)
+      : '';
+    const arrayCandidate = arrayStart >= 0 && arrayEnd > arrayStart
+      ? candidate.slice(arrayStart, arrayEnd + 1)
+      : '';
+
+    for (const value of [objectCandidate, arrayCandidate]) {
+      if (!value) continue;
+      try {
+        return JSON.parse(value) as T;
+      } catch {
+        // Continue trying other JSON-looking sections before failing.
+      }
+    }
+  }
+
+  throw new Error('OpenRouter returned invalid JSON');
 }

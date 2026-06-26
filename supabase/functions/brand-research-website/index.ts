@@ -185,10 +185,6 @@ const firecrawlTimeoutMs = () => boundedNumberFromEnv('FIRECRAWL_TIMEOUT_MS', 16
 const modelTimeoutMs = () => boundedNumberFromEnv('BRAND_RESEARCH_MODEL_TIMEOUT_MS', 16000, 8000, 25000);
 
 const instantModel = () =>
-  Deno.env.get('OPENROUTER_INSTANT_MODEL') ||
-  Deno.env.get('AI_INSTANT_MODEL') ||
-  Deno.env.get('AI_FAST_MODEL') ||
-  Deno.env.get('AI_DEFAULT_MODEL') ||
   'deepseek/deepseek-v4-flash';
 
 const normalizeWebsiteUrl = (value: string) => {
