@@ -23,8 +23,33 @@ type PlannerOutput = {
   campaignGuidance: string;
 };
 type AgentSkills = Record<string, string>;
-const defaultDeepModel = 'qwen/qwen3-coder-30b-a3b-instruct';
-const defaultFastModel = 'deepseek/deepseek-chat-v3-0324';
+type AiModelOption = {
+  id: string;
+  name: string;
+  provider: 'DeepSeek' | 'OpenAI' | 'Anthropic';
+};
+type ResearchProviderOption = {
+  id: 'tavily' | 'perplexity';
+  name: string;
+  model?: string;
+};
+
+const instantModels: AiModelOption[] = [
+  { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'DeepSeek' },
+  { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 mini', provider: 'OpenAI' },
+  { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic' },
+];
+
+const deepWorkModels: AiModelOption[] = [
+  { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'DeepSeek' },
+  { id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7', provider: 'Anthropic' },
+  { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'OpenAI' },
+];
+
+const researchProviders: ResearchProviderOption[] = [
+  { id: 'tavily', name: 'Tavily' },
+  { id: 'perplexity', name: 'Perplexity', model: 'perplexity/sonar-pro' },
+];
 
 const stepDefinitions = [
   { agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -95,6 +120,8 @@ Deno.serve(async (req) => {
     if (!body.prompt?.trim()) return jsonResponse({ error: 'prompt is required' }, 400);
 
     const workMode = body.context?.workMode === 'deep' ? 'deep' : 'instant';
+    const selectedModel = modelForMode(workMode, body.context);
+    const selectedResearchProvider = researchProviderFromContext(body.context);
     const { orgId, brandGuideId, brandKnowledgeDocumentId } = await resolveRunContext(supabase, body, userId);
 
     const { data: run, error: runError } = await supabase
@@ -111,7 +138,16 @@ Deno.serve(async (req) => {
         prompt: body.prompt,
         mode: 'approval',
         status: 'running',
-        context: { ...(body.context || {}), workMode },
+        context: {
+          ...(body.context || {}),
+          workMode,
+          aiModelId: selectedModel.id,
+          aiModelName: selectedModel.name,
+          aiModelProvider: selectedModel.provider,
+          researchProvider: selectedResearchProvider.id,
+          researchProviderName: selectedResearchProvider.name,
+          researchModel: selectedResearchProvider.model || null,
+        },
       })
       .select()
       .single();
@@ -138,6 +174,8 @@ Deno.serve(async (req) => {
       runId: run.id,
       stepIds,
       workMode,
+      selectedModel,
+      selectedResearchProvider,
       orgId,
     }));
 
@@ -153,6 +191,8 @@ async function processMission({
   runId,
   stepIds,
   workMode,
+  selectedModel,
+  selectedResearchProvider,
   orgId,
 }: {
   supabase: SupabaseClient;
@@ -160,6 +200,8 @@ async function processMission({
   runId: string;
   stepIds: Record<StepName, string>;
   workMode: WorkMode;
+  selectedModel: AiModelOption;
+  selectedResearchProvider: ResearchProviderOption;
   orgId: string;
 }) {
   let activeStep: StepName = 'Planner Agent';
@@ -188,12 +230,15 @@ async function processMission({
     const agentWorkflow = await loadAgentWorkflow(supabase, orgId);
     const agentSkillContext = formatAgentSkillContext(agentSkills, agentWorkflow);
     await updateStep(activeStep, 'working', `Understanding the brief and preparing ${workMode === 'deep' ? 'a focused research question' : 'campaign guidance'}.`);
-    const plannerOutput = await buildPlannerOutput(body.prompt, destination, agentSkills.planner);
+    const plannerOutput = await buildPlannerOutput(body.prompt, destination, agentSkills.planner, selectedModel.id);
     await addEvent(activeStep, 'planning', `Destination resolved: ${destination.projectName || 'selected project'} -> ${destination.folderName || 'auto folder'}.`, {
       projectName: destination.projectName,
       folderName: destination.folderName,
       campaignName: destination.campaignName,
       workMode,
+      aiModelId: selectedModel.id,
+      aiModelName: selectedModel.name,
+      researchProvider: selectedResearchProvider.id,
       agentWorkflow,
     });
     await addEvent(activeStep, 'research_plan', 'Prepared a focused research question and campaign guidance from the client brief.', {
@@ -222,19 +267,29 @@ async function processMission({
     activeStep = 'Research Agent';
     if (workMode === 'deep') {
       const query = buildResearchQuery(plannerOutput.researchQuery, destination, brandKnowledge.markdown);
-      await updateStep(activeStep, 'working', `Searching the web for useful campaign context: ${query}`);
-      await addEvent(activeStep, 'web_search', `Web research started for: ${query}`, { query });
+      await updateStep(activeStep, 'working', `Searching with ${selectedResearchProvider.name} for useful campaign context: ${query}`);
+      await addEvent(activeStep, 'web_search', `${selectedResearchProvider.name} research started for: ${query}`, {
+        query,
+        provider: selectedResearchProvider.id,
+        researchModel: selectedResearchProvider.model || null,
+      });
 
       try {
-        const research = await tavilySearch(query);
-        const researchDigest = await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research);
+        const research = selectedResearchProvider.id === 'perplexity'
+          ? await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research)
+          : await tavilySearch(query);
+        const researchDigest = selectedResearchProvider.id === 'perplexity' && research.answer
+          ? research.answer
+          : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id);
         researchContext = tavilyContext({ ...research, answer: researchDigest });
         researchSources = research.results;
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
-        await addEvent(activeStep, 'web_sources', `Research found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
+        await addEvent(activeStep, 'web_sources', `${selectedResearchProvider.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
           query: research.query,
           answer: researchDigest,
           campaignGuidance: plannerOutput.campaignGuidance,
+          provider: selectedResearchProvider.id,
+          researchModel: selectedResearchProvider.model || null,
           credits: research.credits,
           responseTime: research.responseTime,
           sources: research.results.map(({ title, url, score, content }) => ({ title, url, score, content: content.slice(0, 500) })),
@@ -246,15 +301,20 @@ async function processMission({
         await updateStep(activeStep, 'skipped', 'Web research could not be completed. Continuing with the brief and brand guide.');
       }
     } else {
-      await addEvent(activeStep, 'instant_mode', 'Instant mode selected; web research was skipped.', { skipped: true });
+      await addEvent(activeStep, 'instant_mode', 'Instant mode selected; web research was skipped.', {
+        skipped: true,
+        researchProvider: selectedResearchProvider.id,
+      });
       await updateStep(activeStep, 'skipped', 'Instant mode selected; using the brief and brand guide without web research.');
     }
 
     activeStep = 'Copywriter Agent';
-    const model = modelForMode(workMode);
+    const model = selectedModel.id;
     await updateStep(activeStep, 'working', 'Generating strategy and channel-ready copy.');
-    await addEvent(activeStep, 'model_call', 'Draft generation started using the selected work mode.', {
+    await addEvent(activeStep, 'model_call', 'Draft generation started using the selected AI model.', {
       model,
+      modelName: selectedModel.name,
+      provider: selectedModel.provider,
       workMode,
       researchSources: researchSources.length,
     });
@@ -489,11 +549,11 @@ function buildResearchQuery(prompt: string, destination: { projectName: string; 
   return truncateAtWord(`${brandHints} ${prompt}`.replace(/\s+/g, ' ').trim(), 260);
 }
 
-async function buildPlannerOutput(prompt: string, destination: { projectName: string; campaignName: string }, plannerSkill = ''): Promise<PlannerOutput> {
+async function buildPlannerOutput(prompt: string, destination: { projectName: string; campaignName: string }, plannerSkill = '', model = instantModels[0].id): Promise<PlannerOutput> {
   const fallback = fallbackPlannerOutput(prompt, destination);
   try {
     const planned = await openRouterJson<unknown>({
-      model: Deno.env.get('AI_FAST_MODEL') || defaultFastModel,
+      model,
       temperature: 0.2,
       messages: [
         {
@@ -534,7 +594,7 @@ function normalizePlannerOutput(input: unknown, fallback: PlannerOutput, prompt:
   };
 }
 
-async function buildResearchDigest(search: TavilySearchResponse, campaignGuidance: string, researchSkill = '') {
+async function buildResearchDigest(search: TavilySearchResponse, campaignGuidance: string, researchSkill = '', model = instantModels[0].id) {
   const fallback = search.results
     .map((source) => source.content)
     .filter(Boolean)
@@ -546,7 +606,7 @@ async function buildResearchDigest(search: TavilySearchResponse, campaignGuidanc
 
   try {
     const digest = await openRouterJson<unknown>({
-      model: Deno.env.get('AI_FAST_MODEL') || defaultFastModel,
+      model,
       temperature: 0.1,
       messages: [
         {
@@ -616,11 +676,81 @@ function extractFirstUrl(value: string) {
   return value.match(/https?:\/\/[^\s)]+/i)?.[0] || '';
 }
 
-function modelForMode(workMode: WorkMode) {
-  if (workMode === 'deep') {
-    return Deno.env.get('AI_DEEP_MODEL') || defaultDeepModel;
-  }
-  return Deno.env.get('AI_FAST_MODEL') || defaultFastModel;
+function modelForMode(workMode: WorkMode, context: Record<string, unknown> | undefined): AiModelOption {
+  const options = workMode === 'deep' ? deepWorkModels : instantModels;
+  const requestedModel = stringFromContext(context, 'aiModelId') || stringFromContext(context, 'modelId');
+  return options.find((model) => model.id === requestedModel) || options[0];
+}
+
+function researchProviderFromContext(context: Record<string, unknown> | undefined): ResearchProviderOption {
+  const requestedProvider = stringFromContext(context, 'researchProvider');
+  return researchProviders.find((provider) => provider.id === requestedProvider) || researchProviders[0];
+}
+
+function stringFromContext(context: Record<string, unknown> | undefined, key: string) {
+  const value = context?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+async function perplexityResearch(query: string, campaignGuidance: string, researchSkill = ''): Promise<TavilySearchResponse> {
+  const payload = await openRouterJson<unknown>({
+    model: 'perplexity/sonar-pro',
+    temperature: 0.1,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You research current web context for a marketing workflow through Perplexity Sonar Pro.',
+          'Return only valid JSON with exactly two keys: answer and sources.',
+          'answer must be 3 to 6 concise, source-grounded findings for campaign planning.',
+          'sources must be an array of up to 5 objects with title, url, and content string keys.',
+          'Use real source URLs only. Do not write campaign copy or invent unsupported claims.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: [
+          campaignGuidance ? `Campaign guidance:\n${campaignGuidance}` : '',
+          researchSkill ? `Research SKILL.md behavior guidance:\n${researchSkill.slice(0, 1600)}` : '',
+          `Research query:\n${query}`,
+        ].filter(Boolean).join('\n\n'),
+      },
+    ],
+  });
+
+  const record = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : {};
+  const sources = Array.isArray(record.sources)
+    ? record.sources
+      .map(normalizeResearchSource)
+      .filter((item): item is TavilySearchResponse['results'][number] => !!item)
+      .slice(0, 5)
+    : [];
+
+  return {
+    query,
+    answer: stringValue(record.answer),
+    results: sources,
+  };
+}
+
+function normalizeResearchSource(input: unknown): TavilySearchResponse['results'][number] | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const record = input as Record<string, unknown>;
+  const url = stringValue(record.url);
+  if (!url) return null;
+  return {
+    title: stringValue(record.title) || url,
+    url,
+    content: stringValue(record.content),
+  };
+}
+
+function stringValue(input: unknown) {
+  if (typeof input === 'string') return input.trim();
+  if (typeof input === 'number' || typeof input === 'boolean') return String(input);
+  return '';
 }
 
 function formatAgentSkillContext(skills: AgentSkills, workflow: string[] = []) {

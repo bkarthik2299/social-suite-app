@@ -57,7 +57,7 @@ const instantModel = () =>
   Deno.env.get('AI_INSTANT_MODEL') ||
   Deno.env.get('AI_FAST_MODEL') ||
   Deno.env.get('AI_DEFAULT_MODEL') ||
-  'qwen/qwen3-coder-30b-a3b-instruct';
+  'deepseek/deepseek-v4-flash';
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);

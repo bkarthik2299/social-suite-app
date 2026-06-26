@@ -81,9 +81,7 @@ Set these in the Supabase dashboard or with `supabase secrets set`:
 - `TRIGGER_SECRET_KEY` (reserved for the durable workflow phase)
 - `AI_DEFAULT_MODEL`
 - `AI_FAST_MODEL`
-- `AI_DEEP_MODEL`
-- `AI_RESEARCH_MODEL`
 
-Use `AI_FAST_MODEL=deepseek/deepseek-chat-v3-0324` for Instant mode and `AI_DEEP_MODEL=qwen/qwen3-coder-30b-a3b-instruct` for the more deliberate Deep Work route. `AI_DEFAULT_MODEL` remains the general server-side fallback. Keep higher-end models for final production QA or premium tiers.
+Mission Mode now uses explicit user-selected models. Defaults are `deepseek/deepseek-v4-flash` for Instant, `deepseek/deepseek-v4-pro` for Deep Work, and Tavily for research. Perplexity research uses `perplexity/sonar-pro` through OpenRouter.
 
 Supabase provides `SUPABASE_URL` and project API keys to Edge Functions. This code supports both the legacy `SUPABASE_ANON_KEY` secret and the newer `SUPABASE_PUBLISHABLE_KEYS` secret shape.
