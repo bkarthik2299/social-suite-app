@@ -20,7 +20,6 @@ export async function openRouterJson<T>({
     model,
     messages,
     temperature,
-    response_format: { type: 'json_object' },
   };
   let response = await fetchOpenRouter({
     method: 'POST',
@@ -35,31 +34,6 @@ export async function openRouterJson<T>({
 
   if (!response.ok) {
     const text = await response.text();
-    if (response.status === 400 && text.includes('response_format')) {
-      const bodyWithoutResponseFormat = { model, messages, temperature };
-      response = await fetchOpenRouter({
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': 'https://socialsuite.app',
-          'X-Title': 'Social Suite',
-        },
-        body: JSON.stringify(bodyWithoutResponseFormat),
-      }, timeoutMs);
-
-      if (response.ok) {
-        const data = await response.json();
-        const content = data?.choices?.[0]?.message?.content;
-        if (!content || typeof content !== 'string') {
-          throw new Error('OpenRouter returned an empty response');
-        }
-        return parseJsonContent<T>(content);
-      }
-
-      const retryText = await response.text();
-      throw new Error(`OpenRouter request failed: ${response.status} ${retryText.slice(0, 500)}`);
-    }
     throw new Error(`OpenRouter request failed: ${response.status} ${text.slice(0, 500)}`);
   }
 
