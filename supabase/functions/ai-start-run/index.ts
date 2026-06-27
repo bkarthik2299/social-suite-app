@@ -1,6 +1,7 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
 import { openRouterJson } from '../_shared/openrouter.ts';
 import { hasCampaignOutput, normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pack.ts';
+import { defaultDeliverableContract, extractDeliverableContract, formatDeliverableContract, resolveDeliverableContract, type DeliverableContract } from '../_shared/deliverable_contract.ts';
 import { tavilyContext, tavilySearch, type TavilySearchResponse } from '../_shared/tavily.ts';
 
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
@@ -21,6 +22,7 @@ type SupabaseClient = ReturnType<typeof getUserClient>;
 type PlannerOutput = {
   researchQuery: string;
   campaignGuidance: string;
+  deliverableContract: DeliverableContract;
 };
 type AgentSkills = Record<string, string>;
 type CampaignGenerationResult = {
@@ -72,14 +74,14 @@ const stepDefinitions = [
   { agent_name: 'Output Mapper Agent', title: 'Output Mapper Agent' },
 ] as const;
 
-const fallbackPack = (prompt: string): CampaignPack => ({
+const fallbackPack = (prompt: string, contract = defaultDeliverableContract): CampaignPack => ({
   strategy: {
     title: 'AI Campaign Draft',
     summary: `Campaign direction generated from: ${prompt.slice(0, 180)}`,
     objectives: ['Clarify the offer', 'Create platform-native draft assets', 'Prepare review-ready campaign content'],
     contentPillars: ['Awareness', 'Education', 'Proof', 'Conversion'],
   },
-  socialPosts: Array.from({ length: 12 }, (_, index) => ({
+  socialPosts: Array.from({ length: contract.socialPosts }, (_, index) => ({
     name: `Social Post ${index + 1}`,
     topic: `Campaign message ${index + 1}`,
     caption: `Draft social caption ${index + 1}. Replace this with generated copy once the AI provider is configured.`,
@@ -87,14 +89,14 @@ const fallbackPack = (prompt: string): CampaignPack => ({
     creativeBrief: 'AI-generated draft placeholder.',
     visualGuide: 'Clean campaign image with a clear subject, brand-safe colors, simple composition, and minimal text overlay.',
   })),
-  googleAds: Array.from({ length: 3 }, (_, index) => ({
+  googleAds: Array.from({ length: contract.googleAds }, (_, index) => ({
     name: `Google Ad ${index + 1}`,
     topic: 'Search campaign concept',
     headlines: [`Campaign Headline ${index + 1}`, 'Brand Benefit', 'Start Today'],
     descriptions: ['Draft search ad description. Configure the AI provider for final copy.'],
     callouts: ['Fast setup', 'Expert support'],
   })),
-  socialAds: Array.from({ length: 4 }, (_, index) => ({
+  socialAds: Array.from({ length: contract.socialAds }, (_, index) => ({
     name: `Paid Social Ad ${index + 1}`,
     topic: 'Paid social concept',
     platform: index % 2 === 0 ? 'facebook' : 'linkedin',
@@ -103,7 +105,7 @@ const fallbackPack = (prompt: string): CampaignPack => ({
     visualGuide: 'Conversion-friendly paid social image with a single clear focal point, calm brand-safe palette, and room for optional CTA text.',
     cta: 'learn_more',
   })),
-  blogOutlines: Array.from({ length: 2 }, (_, index) => ({
+  blogOutlines: Array.from({ length: contract.blogOutlines }, (_, index) => ({
     title: `Blog Outline ${index + 1}`,
     slug: `blog-outline-${index + 1}`,
     excerpt: 'Draft blog outline excerpt.',
@@ -112,7 +114,7 @@ const fallbackPack = (prompt: string): CampaignPack => ({
     keywords: ['campaign', 'brand'],
     outline: ['Introduction', 'Key message', 'Proof points', 'Call to action'],
   })),
-  calendar: Array.from({ length: 30 }, (_, index) => ({
+  calendar: Array.from({ length: contract.calendarItems }, (_, index) => ({
     title: `Campaign touchpoint ${index + 1}`,
     type: index % 5 === 0 ? 'blogs' : index % 3 === 0 ? 'google-ad' : index % 2 === 0 ? 'meta-ad' : 'socials',
     date: new Date(Date.now() + index * 86400000).toISOString().slice(0, 10),
@@ -257,8 +259,9 @@ async function processMission({
     await addEvent(activeStep, 'research_plan', 'Prepared a focused research question and campaign guidance from the client brief.', {
       researchQuery: plannerOutput.researchQuery,
       campaignGuidance: plannerOutput.campaignGuidance,
+      deliverableContract: plannerOutput.deliverableContract,
     });
-    await updateStep(activeStep, 'done', `Planned a balanced pack for ${destination.projectName || 'the selected project'} and prepared a focused research question.`);
+    await updateStep(activeStep, 'done', `Planned ${formatDeliverableContract(plannerOutput.deliverableContract)} for ${destination.projectName || 'the selected project'} and prepared a focused research question.`);
 
     activeStep = 'Brand Guide Agent';
     await updateStep(activeStep, 'working', body.brandKnowledgeDocumentId ? 'Loading the compiled brand knowledge document.' : 'Checking whether a compiled brand guide is available.');
@@ -351,14 +354,15 @@ async function processMission({
         brandKnowledge: brandKnowledge.markdown,
         researchContext,
         agentSkillContext,
+        deliverableContract: plannerOutput.deliverableContract,
         today,
         deadlineAt: missionDeadlineAt,
       });
       for (const failure of generated.failures) {
         await addEvent(activeStep, 'model_section_fallback', `${failure.section} generation used fallback content.`, failure);
       }
-      const candidatePack = hasCampaignOutput(generated.pack) ? generated.pack : fallbackPack(body.prompt);
-      const guardedPack = guardCampaignPack(candidatePack, body.prompt);
+      const candidatePack = hasCampaignOutput(generated.pack) ? generated.pack : fallbackPack(body.prompt, plannerOutput.deliverableContract);
+      const guardedPack = guardCampaignPack(candidatePack, body.prompt, plannerOutput.deliverableContract);
       pack = guardedPack.pack;
       contentGuardrailNotes = guardedPack.notes;
     } catch (error) {
@@ -366,7 +370,7 @@ async function processMission({
         model,
         internalError: error instanceof Error ? error.message : 'Unknown model error',
       });
-      pack = fallbackPack(body.prompt);
+      pack = fallbackPack(body.prompt, plannerOutput.deliverableContract);
     }
     await updateStep(activeStep, 'done', `Generated ${pack.socialPosts.length} social posts, ${pack.googleAds.length} Google ads, ${pack.socialAds.length} paid social ads, and ${pack.blogOutlines.length} blog outlines.`);
 
@@ -388,7 +392,7 @@ async function processMission({
 
     activeStep = 'QA Agent';
     await updateStep(activeStep, 'working', 'Reviewing tone, completeness, date safety, and healthcare guardrails.');
-    const qaFindings = validatePack(pack);
+    const qaFindings = validatePack(pack, plannerOutput.deliverableContract);
     await addEvent(activeStep, 'qa_review', qaFindings.length ? `QA noted: ${qaFindings.join(' ')}` : 'QA passed: required output groups are present and dates are future-safe.', {
       findings: qaFindings,
     });
@@ -553,10 +557,13 @@ async function buildPlannerOutput(prompt: string, destination: { projectName: st
           role: 'system',
           content: [
             'You are the planning stage for a marketing campaign workflow.',
-            'Return only valid JSON with exactly two string keys: researchQuery and campaignGuidance.',
+            'Return only valid JSON with exactly three keys: researchQuery, campaignGuidance, and deliverableContract.',
             'researchQuery must be a concise web-search question, not a copy of the client brief.',
             'Keep researchQuery under 200 characters and focus on evidence, audience insights, responsible messaging principles, local relevance, and channel behavior that web research can improve.',
             'campaignGuidance must summarize the audiences, objective, tone, mandatory outputs, and restrictions in under 900 characters.',
+            'deliverableContract must be an object with numeric keys socialPosts, googleAds, socialAds, blogOutlines, and calendarItems, plus boolean explicitCounts.',
+            'Extract exact requested quantities from the client brief. If the brief specifies any deliverable counts, set unspecified deliverable types to 0 instead of inventing extra work.',
+            'If no deliverable counts are specified, use the default balanced pack: 12 socialPosts, 3 googleAds, 4 socialAds, 2 blogOutlines, and 30 calendarItems.',
             'Do not invent offers, discounts, claims, facts, dates, years, services, or availability. Do not add a year unless it appears in the client brief.',
           ].join(' '),
         },
@@ -581,9 +588,11 @@ function normalizePlannerOutput(input: unknown, fallback: PlannerOutput, prompt:
   if (!input || typeof input !== 'object' || Array.isArray(input)) return fallback;
   const record = input as Record<string, unknown>;
   const researchQuery = typeof record.researchQuery === 'string' ? record.researchQuery.trim() : '';
+  const campaignGuidance = typeof record.campaignGuidance === 'string' ? record.campaignGuidance.trim() : '';
   return {
     researchQuery: researchQuery ? truncateAtWord(removeUnrequestedYears(researchQuery, prompt), 200) : fallback.researchQuery,
-    campaignGuidance: fallback.campaignGuidance,
+    campaignGuidance: campaignGuidance ? truncateAtWord(removeUnrequestedYears(campaignGuidance, prompt), 900) : fallback.campaignGuidance,
+    deliverableContract: resolveDeliverableContract(prompt, record.deliverableContract, fallback.deliverableContract),
   };
 }
 
@@ -643,6 +652,7 @@ async function buildCampaignPackInParts({
   brandKnowledge,
   researchContext,
   agentSkillContext,
+  deliverableContract,
   today,
   deadlineAt,
 }: {
@@ -653,12 +663,14 @@ async function buildCampaignPackInParts({
   brandKnowledge: string;
   researchContext: string;
   agentSkillContext: string;
+  deliverableContract: DeliverableContract;
   today: string;
   deadlineAt: number;
 }): Promise<CampaignGenerationResult> {
-  const fallback = fallbackPack(prompt);
+  const fallback = fallbackPack(prompt, deliverableContract);
   const commonContext = [
     `Calendar dates must start on or after ${today}; never use past dates.`,
+    `Required deliverables: ${formatDeliverableContract(deliverableContract)}. These counts are mandatory; do not add unspecified content types.`,
     destination.projectName ? `Project: ${destination.projectName}` : '',
     destination.campaignName ? `Destination campaign: ${destination.campaignName}` : '',
     plannerOutput.campaignGuidance ? `Planner guidance:\n${plannerOutput.campaignGuidance}` : '',
@@ -689,12 +701,12 @@ async function buildCampaignPackInParts({
       system: [
         'You are Social Suite Mission Mode. Return only valid JSON.',
         'Return exactly one key: socialPosts.',
-        'socialPosts must be an array of exactly 12 objects: { "name": string, "topic": string, "caption": non-empty string, "platforms": string[], "creativeBrief"?: string, "visualGuide": string, "scheduledDate"?: "YYYY-MM-DD" }.',
+        `socialPosts must be an array of exactly ${deliverableContract.socialPosts} objects: { "name": string, "topic": string, "caption": non-empty string, "platforms": string[], "creativeBrief"?: string, "visualGuide": string, "scheduledDate"?: "YYYY-MM-DD" }. If the required count is 0, return an empty array.`,
         'For socialPosts, name and topic are metadata only. The caption must contain only the publishable caption copy and must not repeat the post name, post number, topic label, title, or headline at the start.',
         'For every item, visualGuide must describe image composition, subject, setting, mood, color direction, aspect ratio cue, and text overlay rule. Do not generate an image URL.',
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
-      user: `Create the 12 organic social posts only.\n\n${commonContext}`,
+      user: `Create exactly ${deliverableContract.socialPosts} organic social posts only.\n\n${commonContext}`,
     },
     {
       key: 'paidMedia',
@@ -703,12 +715,12 @@ async function buildCampaignPackInParts({
       system: [
         'You are Social Suite Mission Mode. Return only valid JSON.',
         'Return exactly two keys: googleAds and socialAds.',
-        'googleAds must be an array of exactly 3 objects with non-empty headlines and descriptions arrays. Use no more than 15 headlines per ad, every headline must be 30 characters or fewer, use no more than 4 descriptions per ad, every description must be 90 characters or fewer, and path1/path2 must each be 15 characters or fewer.',
-        'socialAds must be an array of exactly 4 objects: { "name": string, "topic": string, "platform": string, "primaryText": non-empty string, "headline": non-empty string, "description"?: string, "visualGuide": string, "cta": string, "destinationUrl"?: string, "scheduledDate"?: "YYYY-MM-DD" }.',
+        `googleAds must be an array of exactly ${deliverableContract.googleAds} objects with non-empty headlines and descriptions arrays. Use no more than 15 headlines per ad, every headline must be 30 characters or fewer, use no more than 4 descriptions per ad, every description must be 90 characters or fewer, and path1/path2 must each be 15 characters or fewer. If the required count is 0, return an empty array.`,
+        `socialAds must be an array of exactly ${deliverableContract.socialAds} objects: { "name": string, "topic": string, "platform": string, "primaryText": non-empty string, "headline": non-empty string, "description"?: string, "visualGuide": string, "cta": string, "destinationUrl"?: string, "scheduledDate"?: "YYYY-MM-DD" }. If the required count is 0, return an empty array.`,
         'For every socialAds item, visualGuide must describe image composition, subject, setting, mood, color direction, aspect ratio cue, and text overlay rule. Do not generate an image URL.',
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
-      user: `Create the 3 Google ads and 4 paid social ads only.\n\n${commonContext}`,
+      user: `Create exactly ${deliverableContract.googleAds} Google ads and ${deliverableContract.socialAds} paid social ads only.\n\n${commonContext}`,
     },
     {
       key: 'blogOutlines',
@@ -717,10 +729,10 @@ async function buildCampaignPackInParts({
       system: [
         'You are Social Suite Mission Mode. Return only valid JSON.',
         'Return exactly one key: blogOutlines.',
-        'blogOutlines must be an array of exactly 2 objects: { "title": string, "slug": string, "excerpt": string, "metaTitle": string, "metaDescription": string, "keywords": string[], "outline": string[], "publishDate"?: "YYYY-MM-DD" }.',
+        `blogOutlines must be an array of exactly ${deliverableContract.blogOutlines} objects: { "title": string, "slug": string, "excerpt": string, "metaTitle": string, "metaDescription": string, "keywords": string[], "outline": string[], "publishDate"?: "YYYY-MM-DD" }. If the required count is 0, return an empty array.`,
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
-      user: `Create the 2 blog outlines only.\n\n${commonContext}`,
+      user: `Create exactly ${deliverableContract.blogOutlines} blog outlines only.\n\n${commonContext}`,
     },
     {
       key: 'calendar',
@@ -729,11 +741,11 @@ async function buildCampaignPackInParts({
       system: [
         'You are Social Suite Mission Mode. Return only valid JSON.',
         'Return exactly one key: calendar.',
-        'calendar must be an array of exactly 30 objects: { "title": string, "type": "socials" | "google-ad" | "meta-ad" | "blogs", "date": "YYYY-MM-DD" }.',
-        'Dates must start on or after the provided start date and progress through a practical 30-day campaign cadence.',
+        `calendar must be an array of exactly ${deliverableContract.calendarItems} objects: { "title": string, "type": "socials" | "google-ad" | "meta-ad" | "blogs", "date": "YYYY-MM-DD" }. If the required count is 0, return an empty array.`,
+        'Dates must start on or after the provided start date and progress through a practical campaign cadence.',
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
-      user: `Create the 30-day campaign calendar only.\n\n${commonContext}`,
+      user: `Create exactly ${deliverableContract.calendarItems} campaign calendar items only.\n\n${commonContext}`,
     },
   ] as const;
 
@@ -847,6 +859,7 @@ function fallbackPlannerOutput(prompt: string, destination: { projectName: strin
   return {
     researchQuery: truncateAtWord(`${projectName}: evidence-based campaign insights, audience motivations, responsible messaging, and channel strategy for ${promptKeywords}`, 200),
     campaignGuidance: prompt.replace(/\s+/g, ' ').trim().slice(0, 900),
+    deliverableContract: extractDeliverableContract(prompt),
   };
 }
 
@@ -952,10 +965,10 @@ const googleSearchAdLimits = {
   displayPath: 15,
 } as const;
 
-function guardCampaignPack(pack: CampaignPack, prompt: string): { pack: CampaignPack; notes: string[] } {
+function guardCampaignPack(pack: CampaignPack, prompt: string, contract = defaultDeliverableContract): { pack: CampaignPack; notes: string[] } {
   const notes: string[] = [];
   const topic = campaignTopic(prompt);
-  const socialPosts = pack.socialPosts.slice(0, 12).map((post, index) => {
+  const socialPosts = pack.socialPosts.slice(0, contract.socialPosts).map((post, index) => {
     const reasons = unsupportedContentReasons([post.name, post.topic, post.caption, post.creativeBrief, post.visualGuide], prompt);
     if (!reasons.length) return post;
     notes.push(`Social post ${index + 1}: ${reasons.join(', ')}`);
@@ -964,7 +977,7 @@ function guardCampaignPack(pack: CampaignPack, prompt: string): { pack: Campaign
     ...post,
     visualGuide: safeSocialPost(index, topic, post.platforms, post.scheduledDate).visualGuide,
   });
-  const googleAds = pack.googleAds.slice(0, 3).map((ad, index) => {
+  const googleAds = pack.googleAds.slice(0, contract.googleAds).map((ad, index) => {
     const reasons = unsupportedContentReasons([ad.name, ad.topic, ...ad.headlines, ...ad.descriptions, ...(ad.callouts || [])], prompt);
     const limitReasons = googleAdLimitReasons(ad);
     if (!reasons.length && ad.headlines.length && ad.descriptions.length) {
@@ -974,7 +987,7 @@ function guardCampaignPack(pack: CampaignPack, prompt: string): { pack: Campaign
     notes.push(`Google ad ${index + 1}: ${reasons.join(', ') || 'missing required ad copy'}`);
     return enforceGoogleAdLimits(safeGoogleAd(index, topic, ad.startDate));
   });
-  const socialAds = pack.socialAds.slice(0, 4).map((ad, index) => {
+  const socialAds = pack.socialAds.slice(0, contract.socialAds).map((ad, index) => {
     const reasons = unsupportedContentReasons([ad.name, ad.topic, ad.primaryText, ad.headline, ad.description, ad.visualGuide], prompt);
     if (!reasons.length) return ad;
     notes.push(`Paid social ad ${index + 1}: ${reasons.join(', ')}`);
@@ -983,24 +996,24 @@ function guardCampaignPack(pack: CampaignPack, prompt: string): { pack: Campaign
     ...ad,
     visualGuide: safeSocialAd(index, topic, ad.platform, ad.scheduledDate).visualGuide,
   });
-  const blogOutlines = pack.blogOutlines.slice(0, 2).map((blog, index) => {
+  const blogOutlines = pack.blogOutlines.slice(0, contract.blogOutlines).map((blog, index) => {
     const reasons = unsupportedContentReasons([blog.title, blog.excerpt, blog.metaTitle, blog.metaDescription, ...blog.outline], prompt);
     if (!reasons.length) return blog;
     notes.push(`Blog outline ${index + 1}: ${reasons.join(', ')}`);
     return safeBlogOutline(index, topic, blog.publishDate);
   });
-  const calendar = pack.calendar.slice(0, 30).map((item, index) => {
+  const calendar = pack.calendar.slice(0, contract.calendarItems).map((item, index) => {
     const reasons = unsupportedContentReasons([item.title], prompt);
     if (!reasons.length) return item;
     notes.push(`Calendar item ${index + 1}: ${reasons.join(', ')}`);
     return { ...item, title: `Awareness engagement touchpoint ${index + 1}` };
   });
 
-  while (socialPosts.length < 12) socialPosts.push(safeSocialPost(socialPosts.length, topic));
-  while (googleAds.length < 3) googleAds.push(safeGoogleAd(googleAds.length, topic));
-  while (socialAds.length < 4) socialAds.push(safeSocialAd(socialAds.length, topic));
-  while (blogOutlines.length < 2) blogOutlines.push(safeBlogOutline(blogOutlines.length, topic));
-  while (calendar.length < 30) calendar.push(safeCalendarItem(calendar.length));
+  while (socialPosts.length < contract.socialPosts) socialPosts.push(safeSocialPost(socialPosts.length, topic));
+  while (googleAds.length < contract.googleAds) googleAds.push(safeGoogleAd(googleAds.length, topic));
+  while (socialAds.length < contract.socialAds) socialAds.push(safeSocialAd(socialAds.length, topic));
+  while (blogOutlines.length < contract.blogOutlines) blogOutlines.push(safeBlogOutline(blogOutlines.length, topic));
+  while (calendar.length < contract.calendarItems) calendar.push(safeCalendarItem(calendar.length));
 
   const strategyReasons = unsupportedContentReasons([
     pack.strategy.title,
@@ -1186,14 +1199,14 @@ function safeCalendarItem(index: number): CampaignPack['calendar'][number] {
   };
 }
 
-function validatePack(pack: CampaignPack) {
+function validatePack(pack: CampaignPack, contract = defaultDeliverableContract) {
   const findings: string[] = [];
   if (!pack.strategy?.summary) findings.push('Strategy summary is missing.');
-  if (!pack.socialPosts.length) findings.push('Social posts are missing.');
-  if (!pack.googleAds.length) findings.push('Google ads are missing.');
-  if (!pack.socialAds.length) findings.push('Paid social ads are missing.');
-  if (!pack.blogOutlines.length) findings.push('Blog outlines are missing.');
-  if (!pack.calendar.length) findings.push('Calendar is missing.');
+  if (pack.socialPosts.length !== contract.socialPosts) findings.push(`Expected ${contract.socialPosts} social posts but found ${pack.socialPosts.length}.`);
+  if (pack.googleAds.length !== contract.googleAds) findings.push(`Expected ${contract.googleAds} Google ads but found ${pack.googleAds.length}.`);
+  if (pack.socialAds.length !== contract.socialAds) findings.push(`Expected ${contract.socialAds} paid social ads but found ${pack.socialAds.length}.`);
+  if (pack.blogOutlines.length !== contract.blogOutlines) findings.push(`Expected ${contract.blogOutlines} blog outlines but found ${pack.blogOutlines.length}.`);
+  if (pack.calendar.length !== contract.calendarItems) findings.push(`Expected ${contract.calendarItems} calendar items but found ${pack.calendar.length}.`);
   if (pack.socialPosts.some((post) => !post.caption.trim())) findings.push('Some social posts are missing copy.');
   if (pack.socialAds.some((ad) => !ad.primaryText.trim() || !ad.headline.trim())) findings.push('Some paid social ads are missing copy.');
   if (pack.googleAds.some((ad) => !ad.headlines.length || !ad.descriptions.length)) findings.push('Some Google ads are missing copy.');
