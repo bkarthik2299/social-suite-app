@@ -217,6 +217,10 @@ export function AIAssistant() {
     () => [...events].reverse().find((event) => event.event_type === 'web_sources') || null,
     [events],
   );
+  const researchPlanEvent = useMemo(
+    () => [...events].reverse().find((event) => event.event_type === 'research_plan') || null,
+    [events],
+  );
 
   useEffect(() => {
     if (!latestRun) return;
@@ -805,7 +809,7 @@ export function AIAssistant() {
         </DialogContent>
       </Dialog>
 
-      <ResearchNotesSheet event={researchEvent} open={researchNotesOpen} onOpenChange={setResearchNotesOpen} />
+      <ResearchNotesSheet event={researchEvent} planEvent={researchPlanEvent} open={researchNotesOpen} onOpenChange={setResearchNotesOpen} />
       <CustomizeAgentSheet
         agents={agents}
         workflowSlugs={workflowSlugs}
@@ -1514,7 +1518,7 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
 
   return (
     <div className={cn(
-      'tool-surface rounded-xl transition-colors',
+      'tool-surface overflow-hidden rounded-xl transition-colors',
       collapsed ? 'p-3' : 'p-4',
       status === 'working' && 'bg-blue-50/75',
       status === 'failed' && 'bg-red-50',
@@ -1522,7 +1526,7 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
       <button
         type="button"
         aria-expanded={!collapsed}
-        className="flex w-full items-start gap-3 text-left"
+        className="flex w-full min-w-0 items-start gap-3 text-left"
         onClick={() => setCollapsed((value) => !value)}
       >
         <div className={cn(
@@ -1533,13 +1537,13 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
           <Icon className={cn('h-4 w-4', status === 'working' && 'animate-spin')} />
         </div>
         <span className="min-w-0 flex-1 pt-0.5">
-          <span className="block truncate text-sm font-semibold text-slate-900">{step.agent_name}</span>
-          {collapsed && <span className="mt-0.5 block truncate text-xs font-medium capitalize text-slate-500">{stepStatusLabel(status)}</span>}
+          <span className="block break-words text-sm font-semibold leading-5 text-slate-900">{step.agent_name}</span>
+          {collapsed && <span className="mt-0.5 block break-words text-xs font-medium capitalize leading-4 text-slate-500">{stepStatusLabel(status)}</span>}
         </span>
         <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform', !collapsed && 'rotate-180')} />
       </button>
       {!collapsed && (
-        <p className="mt-3 pl-11 text-sm leading-5 text-slate-500">{message}</p>
+        <p className="mt-3 pl-11 text-sm leading-5 text-slate-500 [overflow-wrap:anywhere]">{message}</p>
       )}
     </div>
   );
@@ -1583,7 +1587,7 @@ function RunningPanel({
           </div>
           <div>
             <h3 className="text-lg font-semibold text-slate-900">{activeStep?.agent_name || 'Starting mission'}</h3>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500 [overflow-wrap:anywhere]">
               {sanitizeActivityText(activeStep?.message || (workMode === 'deep' ? 'Preparing research and brand context.' : 'Preparing campaign generation.'))}
             </p>
           </div>
@@ -1664,7 +1668,7 @@ function RunEventRow({ event }: { event: AiRunEvent }) {
     <div className="tool-surface w-full min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="break-words text-sm font-medium text-slate-900">{eventDisplayMessage(event)}</p>
+          <p className="break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere]">{eventDisplayMessage(event)}</p>
           <p className="mt-1 text-xs text-slate-500">{formatTime(event.created_at)}</p>
         </div>
         <Badge variant="outline" className="shrink-0 text-[10px] capitalize">{event.event_type.replace(/_/g, ' ')}</Badge>
@@ -1704,7 +1708,7 @@ function ResearchNotesButton({ onClick }: { onClick: () => void }) {
 function MissionContextLabel({ label, value }: { label: string; value: string }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5 rounded-full bg-white px-2.5 py-1 shadow-[0_8px_20px_-18px_rgba(37,99,235,0.35),0_1px_2px_rgba(15,23,42,0.04)]">
-      <span className="shrink-0 font-semibold uppercase tracking-wide text-slate-500">{label}</span>
+      <span className="shrink-0 font-semibold uppercase tracking-wide text-primary">{label}</span>
       <span className="max-w-[12rem] truncate font-medium text-slate-700">{value}</span>
     </span>
   );
@@ -1712,14 +1716,16 @@ function MissionContextLabel({ label, value }: { label: string; value: string })
 
 function ResearchNotesSheet({
   event,
+  planEvent,
   open,
   onOpenChange,
 }: {
   event: AiRunEvent | null;
+  planEvent: AiRunEvent | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const notes = researchNotesFromEvent(event);
+  const notes = researchNotesFromEvent(event, planEvent);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -1739,7 +1745,7 @@ function ResearchNotesSheet({
         <ScrollArea className="flex-1">
           <div className="space-y-5 px-6 py-5">
             <ResearchNoteSection title="Research Question">
-              <p className="break-words text-sm leading-6 text-slate-700">{notes.query || 'No research query was recorded.'}</p>
+              <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{notes.question || 'No research question was recorded.'}</p>
             </ResearchNoteSection>
 
             {notes.campaignGuidance && (
@@ -2198,14 +2204,39 @@ function eventSources(event: AiRunEvent): Array<{ title: string; url: string; sc
   });
 }
 
-function researchNotesFromEvent(event: AiRunEvent | null) {
+function researchNotesFromEvent(event: AiRunEvent | null, planEvent: AiRunEvent | null) {
   const answer = typeof event?.payload?.answer === 'string' ? event.payload.answer : '';
+  const question = payloadString(event, 'researchQuestion')
+    || payloadString(event, 'plannerResearchQuestion')
+    || payloadString(planEvent, 'researchQuery')
+    || payloadString(event, 'query');
   return {
-    query: typeof event?.payload?.query === 'string' ? event.payload.query : '',
+    question: formatResearchQuestion(question),
     campaignGuidance: typeof event?.payload?.campaignGuidance === 'string' ? event.payload.campaignGuidance : '',
     findings: splitResearchFindings(answer),
     sources: event ? eventSources(event) : [],
   };
+}
+
+function payloadString(event: AiRunEvent | null, key: string) {
+  const value = event?.payload?.[key];
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function formatResearchQuestion(value: string) {
+  const cleaned = sanitizeActivityText(value)
+    .replace(/https?:\/\/[^\s)]+/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+(and|or|for|with|about|to|of|in|on)$/i, '')
+    .replace(/[,:;]+$/, '')
+    .trim();
+
+  if (!cleaned) return '';
+  const question = /^(what|how|why|which|when|where|who|whose|can|could|should|would|do|does|is|are|will)\b/i.test(cleaned)
+    ? cleaned
+    : `What ${cleaned}`;
+  const capitalized = `${question.charAt(0).toUpperCase()}${question.slice(1)}`;
+  return `${capitalized.replace(/[?!.]+$/, '')}?`;
 }
 
 function splitResearchFindings(value: string) {
@@ -2267,8 +2298,10 @@ function draftSelection(keys: string[]): AiDraftSelection {
 
 function eventDisplayMessage(event: AiRunEvent) {
   const sources = eventSources(event);
-  const query = typeof event.payload?.query === 'string' ? event.payload.query : '';
-  if (event.event_type === 'web_search') return `Web research started${query ? ` for: ${query}` : '.'}`;
+  const researchQuestion = payloadString(event, 'researchQuestion') || payloadString(event, 'plannerResearchQuestion');
+  if (event.event_type === 'web_search') return researchQuestion
+    ? `Web research started for: ${formatResearchQuestion(researchQuestion)}`
+    : 'Web research started for the planner question.';
   if (event.event_type === 'web_sources') return `Research found ${sources.length} useful sources and extracted campaign context.`;
   if (event.event_type === 'web_search_failed') return 'Web research could not be completed. Continuing with the brief and brand guide.';
   if (event.event_type === 'model_call') return 'Draft generation started using the selected AI model.';
