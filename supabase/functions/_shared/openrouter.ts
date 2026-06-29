@@ -24,7 +24,7 @@ export async function openRouterJson<T>({
     temperature,
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
   };
-  let response = await fetchOpenRouter({
+  const response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
