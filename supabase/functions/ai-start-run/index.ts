@@ -282,10 +282,12 @@ async function processMission({
     let researchSources: TavilySearchResponse['results'] = [];
     activeStep = 'Research Agent';
     if (workMode === 'deep') {
-      const query = buildResearchQuery(plannerOutput.researchQuery, destination, brandKnowledge.markdown);
-      await updateStep(activeStep, 'working', `Searching with ${selectedResearchProvider.name} for useful campaign context: ${query}`);
-      await addEvent(activeStep, 'web_search', `${selectedResearchProvider.name} research started for: ${query}`, {
+      const researchQuestion = plannerOutput.researchQuery;
+      const query = buildResearchQuery(researchQuestion, destination, brandKnowledge.markdown);
+      await updateStep(activeStep, 'working', `Searching with ${selectedResearchProvider.name} for source-grounded campaign context.`);
+      await addEvent(activeStep, 'web_search', `${selectedResearchProvider.name} research started for the planner question.`, {
         query,
+        researchQuestion,
         provider: selectedResearchProvider.id,
         researchModel: selectedResearchProvider.model || null,
       });
@@ -306,6 +308,7 @@ async function processMission({
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
         await addEvent(activeStep, 'web_sources', `${selectedResearchProvider.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
           query: research.query,
+          researchQuestion,
           answer: researchDigest,
           campaignGuidance: plannerOutput.campaignGuidance,
           provider: selectedResearchProvider.id,
@@ -534,14 +537,15 @@ async function loadAgentWorkflow(supabase: SupabaseClient, orgId: string) {
   return data.map((step) => step.agent_slug).filter(Boolean);
 }
 
-function buildResearchQuery(prompt: string, destination: { projectName: string; campaignName: string }, brandKnowledge: string) {
-  const brandHints = [
+function buildResearchQuery(researchQuestion: string, destination: { projectName: string; campaignName: string }, brandKnowledge: string) {
+  const sourceUrl = extractFirstUrl(brandKnowledge);
+  const brandHints = uniqueStrings([
     destination.projectName,
     destination.campaignName,
-    extractFirstUrl(brandKnowledge),
-  ].filter(Boolean).join(' ');
+    sourceUrl ? sourceDomain(sourceUrl) : '',
+  ]).join(' ');
 
-  return truncateAtWord(`${brandHints} ${prompt}`.replace(/\s+/g, ' ').trim(), 260);
+  return truncateAtWord(`${brandHints} ${researchQuestion}`.replace(/\s+/g, ' ').trim(), 260);
 }
 
 async function buildPlannerOutput(prompt: string, destination: { projectName: string; campaignName: string }, plannerSkill = '', model = instantModels[0].id): Promise<PlannerOutput> {
@@ -558,8 +562,9 @@ async function buildPlannerOutput(prompt: string, destination: { projectName: st
           content: [
             'You are the planning stage for a marketing campaign workflow.',
             'Return only valid JSON with exactly three keys: researchQuery, campaignGuidance, and deliverableContract.',
-            'researchQuery must be a concise web-search question, not a copy of the client brief.',
-            'Keep researchQuery under 200 characters and focus on evidence, audience insights, responsible messaging principles, local relevance, and channel behavior that web research can improve.',
+            'researchQuery must be one polished question for a researcher, not a copy of the client brief.',
+            'Keep researchQuery under 220 characters and focus on evidence, audience insights, responsible messaging principles, local relevance, and channel behavior that web research can improve.',
+            'Do not include raw URLs in researchQuery unless the client brief explicitly asks to research a specific URL.',
             'campaignGuidance must summarize the audiences, objective, tone, mandatory outputs, and restrictions in under 900 characters.',
             'deliverableContract must be an object with numeric keys socialPosts, googleAds, socialAds, blogOutlines, and calendarItems, plus boolean explicitCounts.',
             'Extract exact requested quantities from the client brief. If the brief specifies any deliverable counts, set unspecified deliverable types to 0 instead of inventing extra work.',
@@ -590,7 +595,7 @@ function normalizePlannerOutput(input: unknown, fallback: PlannerOutput, prompt:
   const researchQuery = typeof record.researchQuery === 'string' ? record.researchQuery.trim() : '';
   const campaignGuidance = typeof record.campaignGuidance === 'string' ? record.campaignGuidance.trim() : '';
   return {
-    researchQuery: researchQuery ? truncateAtWord(removeUnrequestedYears(researchQuery, prompt), 200) : fallback.researchQuery,
+    researchQuery: researchQuery ? finalizeResearchQuestion(truncateAtWord(removeUnrequestedYears(researchQuery, prompt), 220)) : fallback.researchQuery,
     campaignGuidance: campaignGuidance ? truncateAtWord(removeUnrequestedYears(campaignGuidance, prompt), 900) : fallback.campaignGuidance,
     deliverableContract: resolveDeliverableContract(prompt, record.deliverableContract, fallback.deliverableContract),
   };
@@ -850,21 +855,57 @@ function truncateAtWord(value: string, maxLength: number) {
 
 function fallbackPlannerOutput(prompt: string, destination: { projectName: string; campaignName: string }): PlannerOutput {
   const projectName = destination.projectName || 'the selected brand';
-  const promptKeywords = prompt
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .slice(0, 28)
-    .join(' ');
+  const objective = promptFocusSnippet(prompt);
   return {
-    researchQuery: truncateAtWord(`${projectName}: evidence-based campaign insights, audience motivations, responsible messaging, and channel strategy for ${promptKeywords}`, 200),
+    researchQuery: finalizeResearchQuestion(truncateAtWord(`What audience insights, source-grounded proof points, responsible messaging guidance, and channel behaviors should shape ${projectName}${objective ? ` for a campaign focused on ${objective}` : ''}`, 220)),
     campaignGuidance: prompt.replace(/\s+/g, ' ').trim().slice(0, 900),
     deliverableContract: extractDeliverableContract(prompt),
   };
 }
 
+function finalizeResearchQuestion(value: string) {
+  const cleaned = value
+    .replace(/\s+/g, ' ')
+    .replace(/\s+(and|or|for|with|about|to|of|in|on)$/i, '')
+    .replace(/[,:;]+$/, '')
+    .trim();
+  if (!cleaned) return '';
+  const question = /^(what|how|why|which|when|where|who|whose|can|could|should|would|do|does|is|are|will)\b/i.test(cleaned)
+    ? cleaned
+    : `What ${cleaned}`;
+  const capitalized = `${question.charAt(0).toUpperCase()}${question.slice(1)}`;
+  return `${capitalized.replace(/[?!.]+$/, '')}?`;
+}
+
+function promptFocusSnippet(prompt: string) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  const objective = normalized.match(/objective\s*:\s*([^.!?]+)/i)?.[1]?.trim();
+  const focus = objective || normalized.split(/[.!?]/)[0]?.trim() || '';
+  return truncateAtWord(focus.replace(/[,:;]+$/, '').trim(), 90);
+}
+
 function extractFirstUrl(value: string) {
   return value.match(/https?:\/\/[^\s)]+/i)?.[0] || '';
+}
+
+function sourceDomain(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, '');
+  } catch {
+    return value;
+  }
+}
+
+function uniqueStrings(values: string[]) {
+  const seen = new Set<string>();
+  return values
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+    .filter((value) => {
+      const key = value.toLowerCase();
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 function modelForMode(workMode: WorkMode, context: Record<string, unknown> | undefined): AiModelOption {
