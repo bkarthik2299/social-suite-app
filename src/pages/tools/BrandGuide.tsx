@@ -708,7 +708,7 @@ export default function BrandGuidePage() {
                                                     Research Website
                                                 </div>
                                                 <p className="max-w-2xl text-sm leading-6 text-slate-600">
-                                                    Pull website copy, visual cues, and positioning into this guide. Review the fields, then use Generate Knowledge Base to compile the canonical markdown.
+                                                    Research the website to capture its brand voice, page content, visual direction, and positioning. Review the extracted insights, make any edits, then generate the Knowledge Base.
                                                 </p>
                                             </div>
                                             <Button
@@ -725,7 +725,7 @@ export default function BrandGuidePage() {
                             </AccordionItem>
 
                             <AccordionItem value="knowledge" id="knowledge" className="tool-surface scroll-mt-24 rounded-xl px-6">
-                                <SectionTrigger icon={FileText} title="Brand Knowledge Base" description="A single markdown source for Social Suite AI runs." />
+                                <SectionTrigger icon={FileText} title="Brand Knowledge Base" description="A reusable source of truth that helps Social Suite AI keep your brand voice, audience, messaging, and positioning consistent across every run." />
                                 <AccordionContent className="space-y-5 pb-6 pt-2">
                                     <div className="rounded-xl bg-slate-50/80 p-4">
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -746,8 +746,8 @@ export default function BrandGuidePage() {
                                                     onClick={generateBrandKnowledge}
                                                     disabled={compileKnowledge.isPending || !guideId}
                                                 >
-                                                    {brandKnowledgeDocument ? <RefreshCw className={cn('h-4 w-4', compileKnowledge.isPending && 'animate-spin')} /> : <Sparkles className="h-4 w-4" />}
-                                                    {brandKnowledgeDocument ? 'Refresh' : 'Generate'}
+                                                    {compileKnowledge.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : brandKnowledgeDocument ? <RefreshCw className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+                                                    {compileKnowledge.isPending ? 'Generating...' : brandKnowledgeDocument ? 'Refresh' : 'Generate'}
                                                 </Button>
                                                 <Button
                                                     variant="outline"
