@@ -8,6 +8,19 @@ import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunSte
 const db = supabase as unknown as SupabaseClient;
 export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
 
+export type AiCommitRunResult = {
+  inserted: {
+    contentCount: number;
+    calendarCount: number;
+    campaignIds: Record<string, string>;
+    destination?: {
+      projectId: string | null;
+      folderId: string | null;
+      folderName: string | null;
+    };
+  };
+};
+
 const isMissingTableError = (error: unknown) => {
   const code = (error as { code?: string })?.code;
   const message = String((error as { message?: string })?.message || '');
@@ -142,9 +155,17 @@ export function useAIMission() {
 
   const commitRun = useMutation({
     mutationFn: async ({ runId, artifactId, selection }: { runId: string; artifactId?: string; selection?: AiDraftSelection }) =>
-      invokeOrThrow<{ inserted: { contentCount: number; calendarCount: number; campaignIds: Record<string, string> } }>('ai-commit-run', { runId, artifactId, selection }),
-    onSuccess: () => {
-      void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
+      invokeOrThrow<AiCommitRunResult>('ai-commit-run', { runId, artifactId, selection }),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['ai_runs', orgId] }),
+        qc.invalidateQueries({ queryKey: ['all_folders'] }),
+        qc.invalidateQueries({ queryKey: ['folders'] }),
+        qc.invalidateQueries({ queryKey: ['all_campaigns'] }),
+        qc.invalidateQueries({ queryKey: ['campaigns'] }),
+        qc.invalidateQueries({ queryKey: ['content_items'] }),
+        qc.invalidateQueries({ queryKey: ['calendar_events'] }),
+      ]);
     },
   });
 

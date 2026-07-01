@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
   BookOpenText,
@@ -65,8 +66,10 @@ import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiRunDetails, useAiWo
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
 import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, sanitizeActivityText, type HandoffDisplayDetails } from '@/lib/aiActivityTrail';
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
+import { folderPath, projectPath } from '@/lib/routes';
+import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
-import type { CampaignType } from '@/types';
+import type { Campaign, CampaignType, Folder, Project } from '@/types';
 import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, BriefToCampaignArtifact } from '@/types/ai';
 
 const agentActivity = [
@@ -171,6 +174,7 @@ const researchProviderOptions: ResearchProviderOption[] = [
 
 export function AIAssistant() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [panelOpen, setPanelOpen] = useState(false);
   const [missionOpen, setMissionOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -432,6 +436,15 @@ export function AIAssistant() {
         description: `${result.inserted.contentCount} content drafts and ${result.inserted.calendarCount} calendar items were added.`,
       });
       setMissionOpen(false);
+      const destinationPath = await folderPathForInsertedDrafts(result.inserted, {
+        currentRun,
+        projects,
+        folders,
+        campaigns,
+        selectedProjectId,
+        selectedFolderId,
+      });
+      navigate(destinationPath);
     } catch (error) {
       toast({ title: 'Could not create drafts', description: errorMessage(error), variant: 'destructive' });
     }
@@ -2364,6 +2377,119 @@ function draftSelection(keys: string[]): AiDraftSelection {
     if (kind in selection && Number.isInteger(index) && index >= 0) selection[kind].push(index);
   }
   return selection;
+}
+
+type InsertedDraftDestination = {
+  projectId?: string | null;
+  folderId?: string | null;
+  folderName?: string | null;
+};
+
+type InsertedDraftNavigationResult = {
+  campaignIds?: Record<string, string>;
+  destination?: InsertedDraftDestination;
+};
+
+async function folderPathForInsertedDrafts(
+  inserted: InsertedDraftNavigationResult,
+  context: {
+    currentRun: AiRun;
+    projects: Project[];
+    folders: Folder[];
+    campaigns: Campaign[];
+    selectedProjectId: string | null;
+    selectedFolderId: string | null;
+  },
+) {
+  const destination = inserted.destination;
+  const selectedCampaign = context.currentRun.campaign_id
+    ? context.campaigns.find((campaign) => campaign.id === context.currentRun.campaign_id) || null
+    : null;
+  let targetFolderId = destination?.folderId
+    || context.currentRun.folder_id
+    || context.selectedFolderId
+    || selectedCampaign?.folderId
+    || null;
+  let knownFolder = targetFolderId
+    ? context.folders.find((folder) => folder.id === targetFolderId) || null
+    : null;
+  let targetProjectId = destination?.projectId
+    || knownFolder?.projectId
+    || context.currentRun.project_id
+    || context.selectedProjectId
+    || null;
+
+  if ((!targetFolderId || !targetProjectId || (!knownFolder && !destination?.folderName)) && inserted.campaignIds) {
+    const remoteFolder = await lookupInsertedFolder(inserted.campaignIds, targetFolderId);
+    if (remoteFolder) {
+      targetFolderId = remoteFolder.id;
+      targetProjectId = targetProjectId || remoteFolder.projectId;
+      knownFolder = context.folders.find((folder) => folder.id === remoteFolder.id) || {
+        id: remoteFolder.id,
+        projectId: remoteFolder.projectId,
+        name: remoteFolder.name,
+        createdAt: '',
+      };
+    }
+  }
+
+  const project = targetProjectId
+    ? context.projects.find((item) => item.id === targetProjectId) || null
+    : null;
+
+  if (!project) return '/projects';
+
+  const folder = knownFolder || (targetFolderId ? {
+    id: targetFolderId,
+    projectId: targetProjectId || project.id,
+    name: destination?.folderName || 'AI Campaigns',
+    createdAt: '',
+  } : null);
+
+  if (!folder) return projectPath(project, context.projects);
+
+  const projectFolders = context.folders.filter((item) => item.projectId === project.id);
+  const peerFolders = projectFolders.some((item) => item.id === folder.id)
+    ? projectFolders
+    : [...projectFolders, folder];
+
+  return folderPath(project, folder, context.projects, peerFolders);
+}
+
+async function lookupInsertedFolder(campaignIds: Record<string, string>, fallbackFolderId: string | null) {
+  const campaignId = Object.values(campaignIds).find(Boolean);
+  if (campaignId) {
+    const { data } = await supabase
+      .from('campaigns')
+      .select('folder_id,folders(id,name,project_id)')
+      .eq('id', campaignId)
+      .maybeSingle();
+    const campaign = data as {
+      folder_id?: string | null;
+      folders?: { id?: string | null; name?: string | null; project_id?: string | null } | Array<{ id?: string | null; name?: string | null; project_id?: string | null }> | null;
+    } | null;
+    const folder = Array.isArray(campaign?.folders) ? campaign?.folders[0] : campaign?.folders;
+    if (campaign?.folder_id && folder?.project_id) {
+      return {
+        id: campaign.folder_id,
+        projectId: folder.project_id,
+        name: folder.name || 'AI Campaigns',
+      };
+    }
+  }
+
+  if (!fallbackFolderId) return null;
+  const { data } = await supabase
+    .from('folders')
+    .select('id,name,project_id')
+    .eq('id', fallbackFolderId)
+    .maybeSingle();
+  if (!data?.id || !data.project_id) return null;
+  return {
+    id: data.id,
+    projectId: data.project_id,
+    name: data.name || 'AI Campaigns',
+  };
 }
 
 function eventDisplayMessage(event: AiRunEvent) {
