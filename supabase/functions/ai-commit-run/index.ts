@@ -30,34 +30,43 @@ Deno.serve(async (req) => {
     if (run.status !== 'needs_approval') return jsonResponse({ error: 'Run is not waiting for approval' }, 409);
 
     let destinationFolderId = run.folder_id as string | null;
+    let destinationProjectId = run.project_id as string | null;
+    let destinationFolderName: string | null = null;
     if (!destinationFolderId && run.campaign_id) {
       const { data: selectedCampaign, error } = await supabase
         .from('campaigns')
-        .select('id,folder_id')
+        .select('id,folder_id,folders(project_id,name)')
         .eq('id', run.campaign_id)
         .single();
       if (error) throw error;
       destinationFolderId = selectedCampaign?.folder_id || null;
+      const campaignFolder = selectedCampaign?.folders as { project_id?: string | null; name?: string | null } | null;
+      destinationProjectId = destinationProjectId || campaignFolder?.project_id || null;
+      destinationFolderName = campaignFolder?.name || null;
     }
 
     if (!destinationFolderId && run.project_id) {
       const { data: existingFolder } = await supabase
         .from('folders')
-        .select('id')
+        .select('id,name,project_id')
         .eq('project_id', run.project_id)
         .ilike('name', 'AI Campaigns')
         .maybeSingle();
 
       if (existingFolder?.id) {
         destinationFolderId = existingFolder.id;
+        destinationFolderName = existingFolder.name || null;
+        destinationProjectId = existingFolder.project_id || destinationProjectId;
       } else {
         const { data: createdFolder, error } = await supabase
           .from('folders')
           .insert({ project_id: run.project_id, name: 'AI Campaigns' })
-          .select('id')
+          .select('id,name,project_id')
           .single();
         if (error) throw error;
         destinationFolderId = createdFolder.id;
+        destinationFolderName = createdFolder.name || null;
+        destinationProjectId = createdFolder.project_id || destinationProjectId;
       }
 
       await supabase.from('ai_runs').update({ folder_id: destinationFolderId }).eq('id', runId);
@@ -65,6 +74,16 @@ Deno.serve(async (req) => {
 
     if (!destinationFolderId && !run.campaign_id) {
       return jsonResponse({ error: 'A project, folder, or campaign destination is required' }, 400);
+    }
+
+    if (destinationFolderId && !destinationFolderName) {
+      const { data: folder } = await supabase
+        .from('folders')
+        .select('id,name,project_id')
+        .eq('id', destinationFolderId)
+        .maybeSingle();
+      destinationFolderName = folder?.name || null;
+      destinationProjectId = destinationProjectId || folder?.project_id || null;
     }
 
     const artifactQuery = supabase.from('ai_artifacts').select('*').eq('run_id', runId).eq('type', 'brief_to_campaign');
@@ -240,7 +259,19 @@ Deno.serve(async (req) => {
     await supabase.from('ai_artifacts').update({ status: 'inserted' }).eq('id', artifact.id);
     await supabase.from('ai_runs').update({ status: 'completed', completed_at: new Date().toISOString() }).eq('id', runId);
 
-    return jsonResponse({ approval, inserted: { contentCount: contentRows.length, calendarCount: calendarRows.length, campaignIds } });
+    return jsonResponse({
+      approval,
+      inserted: {
+        contentCount: contentRows.length,
+        calendarCount: calendarRows.length,
+        campaignIds,
+        destination: {
+          projectId: destinationProjectId,
+          folderId: destinationFolderId,
+          folderName: destinationFolderName,
+        },
+      },
+    });
   } catch (error) {
     return jsonResponse({ error: error instanceof Error ? error.message : 'Unexpected error' }, 500);
   }
