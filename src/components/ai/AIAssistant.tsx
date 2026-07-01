@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -29,6 +29,7 @@ import {
   Trash2,
   UserPlus,
   Workflow,
+  X,
   Zap,
 } from 'lucide-react';
 
@@ -176,6 +177,7 @@ const researchProviderOptions: ResearchProviderOption[] = [
 export function AIAssistant() {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const assistantDismissedRef = useRef(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [missionOpen, setMissionOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
@@ -203,6 +205,7 @@ export function AIAssistant() {
   const [runningSeconds, setRunningSeconds] = useState(0);
   const [minimizedToastRunId, setMinimizedToastRunId] = useState<string | null>(null);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
+  const [assistantDismissed, setAssistantDismissed] = useState(false);
 
   const { data: projects = [], isLoading: projectsLoading, addProject } = useProjects();
   const { data: folders = [], isLoading: foldersLoading } = useAllFolders();
@@ -261,6 +264,8 @@ export function AIAssistant() {
     const openPreviousRun = (event: Event) => {
       const runId = (event as CustomEvent<{ runId?: string }>).detail?.runId;
       if (!runId) return;
+      assistantDismissedRef.current = false;
+      setAssistantDismissed(false);
       setCurrentRun({ id: runId } as AiRun);
       setCurrentArtifact(null);
       setPanelOpen(false);
@@ -365,7 +370,7 @@ export function AIAssistant() {
     || displaySteps[0]
     || null;
   const resumableMission = running || currentRun?.status === 'needs_approval' || currentRun?.status === 'failed';
-  const missionBubbleVisible = Boolean(resumableMission && !missionOpen && !panelOpen && !skillsOpen && !researchNotesOpen);
+  const missionBubbleVisible = Boolean(resumableMission && !assistantDismissed && !missionOpen && !panelOpen && !skillsOpen && !researchNotesOpen);
   const missionBubbleTitle = currentRun?.status === 'needs_approval'
     ? 'Campaign draft pack ready'
     : currentRun?.status === 'failed'
@@ -389,6 +394,8 @@ export function AIAssistant() {
 
     setMissionOpen(true);
     setPanelOpen(false);
+    assistantDismissedRef.current = false;
+    setAssistantDismissed(false);
     setCurrentRun(null);
     setCurrentArtifact(null);
     setMinimizedToastRunId(null);
@@ -408,6 +415,8 @@ export function AIAssistant() {
         });
       }
     }
+
+    if (assistantDismissedRef.current) return;
 
     try {
       const result = await startRun.mutateAsync({
@@ -430,6 +439,7 @@ export function AIAssistant() {
           requestedOutputs: ['strategy', 'socialPosts', 'googleAds', 'socialAds', 'blogOutlines', 'calendar'],
         },
       });
+      if (assistantDismissedRef.current) return;
       setCurrentRun(result.run);
       if (result.artifact) setCurrentArtifact(result.artifact);
       toast({
@@ -437,6 +447,7 @@ export function AIAssistant() {
         description: `${selectedModel.name} is preparing the campaign pack.`,
       });
     } catch (error) {
+      if (assistantDismissedRef.current) return;
       toast({ title: 'AI mission failed', description: errorMessage(error), variant: 'destructive' });
     }
   };
@@ -504,6 +515,21 @@ export function AIAssistant() {
   const confirmCloseMission = () => {
     setCloseConfirmOpen(false);
     setMissionOpen(false);
+  };
+
+  const closeMinimizedMission = () => {
+    assistantDismissedRef.current = true;
+    setAssistantDismissed(true);
+    setMissionOpen(false);
+    setPanelOpen(false);
+    setSkillsOpen(false);
+    setResearchNotesOpen(false);
+    setCloseConfirmOpen(false);
+    setCurrentRun(null);
+    setCurrentArtifact(null);
+    setMissionStartedAt(null);
+    setRunningSeconds(0);
+    setMinimizedToastRunId(null);
   };
 
   const openCreateDestination = (kind: DestinationKind) => {
@@ -906,6 +932,7 @@ export function AIAssistant() {
           setPanelOpen(false);
           setMissionOpen(true);
         }}
+        onClose={closeMinimizedMission}
       />
 
       <ResearchNotesSheet event={researchEvent} planEvent={researchPlanEvent} open={researchNotesOpen} onOpenChange={setResearchNotesOpen} />
@@ -945,6 +972,7 @@ function AIMissionBubble({
   title,
   description,
   onClick,
+  onClose,
 }: {
   visible: boolean;
   running: boolean;
@@ -953,6 +981,7 @@ function AIMissionBubble({
   title: string;
   description: string;
   onClick: () => void;
+  onClose: () => void;
 }) {
   if (!visible) return null;
 
@@ -979,50 +1008,63 @@ function AIMissionBubble({
   const boundedProgress = Math.max(8, Math.min(progress || (running ? 18 : 100), 100));
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          aria-label="Open minimized AI mission"
-          className="group fixed bottom-5 right-5 z-40 flex h-[76px] w-[76px] items-center justify-center rounded-full outline-none transition-transform duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 sm:bottom-7 sm:right-7 sm:h-20 sm:w-20"
-          onClick={onClick}
-        >
-          {running && (
-            <span className="absolute inset-1 rounded-full bg-primary/15 opacity-70 blur-md transition-opacity group-hover:opacity-100" />
-          )}
-          <span
-            className={cn(
-              'relative flex h-full w-full items-center justify-center rounded-full bg-white ring-1 ring-slate-200',
-              tone.glow,
-            )}
+    <div className="fixed bottom-5 right-5 z-40 h-[76px] w-[76px] sm:bottom-7 sm:right-7 sm:h-20 sm:w-20">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label="Open minimized AI mission"
+            className="group relative flex h-full w-full items-center justify-center rounded-full outline-none transition-transform duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4"
+            onClick={onClick}
           >
+            {running && (
+              <span className="absolute inset-1 rounded-full bg-primary/15 opacity-70 blur-md transition-opacity group-hover:opacity-100" />
+            )}
             <span
-              className="absolute inset-0 rounded-full"
-              style={{
-                background: `conic-gradient(${tone.ring} ${boundedProgress * 3.6}deg, rgba(226,232,240,0.95) 0deg)`,
-              }}
-            />
-            <span className="absolute inset-[5px] rounded-full bg-white" />
-            <span className="absolute bottom-1.5 right-3 h-4 w-4 rotate-45 rounded-[5px] bg-white shadow-[4px_4px_14px_-8px_rgba(15,23,42,0.45)] ring-1 ring-slate-200" />
-            <img
-              src="/favicon.jpg"
-              alt=""
-              className="relative h-[54px] w-[54px] rounded-full object-cover shadow-[0_10px_24px_-18px_rgba(15,23,42,0.65)] sm:h-[58px] sm:w-[58px]"
-            />
-            <span className={cn('absolute -right-0.5 -top-0.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-white shadow-sm', tone.badge)}>
-              {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              className={cn(
+                'relative flex h-full w-full items-center justify-center rounded-full bg-white ring-1 ring-slate-200',
+                tone.glow,
+              )}
+            >
+              <span
+                className="absolute inset-0 rounded-full"
+                style={{
+                  background: `conic-gradient(${tone.ring} ${boundedProgress * 3.6}deg, rgba(226,232,240,0.95) 0deg)`,
+                }}
+              />
+              <span className="absolute inset-[5px] rounded-full bg-white" />
+              <span className="absolute bottom-1.5 right-3 h-4 w-4 rotate-45 rounded-[5px] bg-white shadow-[4px_4px_14px_-8px_rgba(15,23,42,0.45)] ring-1 ring-slate-200" />
+              <img
+                src="/favicon.jpg"
+                alt=""
+                className="relative h-[54px] w-[54px] rounded-full object-cover shadow-[0_10px_24px_-18px_rgba(15,23,42,0.65)] sm:h-[58px] sm:w-[58px]"
+              />
+              <span className={cn('absolute -right-0.5 -top-0.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-white shadow-sm', tone.badge)}>
+                {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+              </span>
             </span>
-          </span>
-          <span className="pointer-events-none absolute -left-24 bottom-3 hidden rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_14px_34px_-24px_rgba(15,23,42,0.5)] ring-1 ring-slate-200 transition-opacity group-hover:block sm:-left-28">
-            {tone.label}
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="left" align="center" className="max-w-72 rounded-xl border-0 bg-slate-950 px-4 py-3 text-left text-white shadow-2xl">
-        <p className="text-sm font-semibold">{title}</p>
-        <p className="mt-1 text-xs leading-5 text-slate-300">{description}</p>
-      </TooltipContent>
-    </Tooltip>
+            <span className="pointer-events-none absolute -left-24 bottom-3 hidden rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_14px_34px_-24px_rgba(15,23,42,0.5)] ring-1 ring-slate-200 transition-opacity group-hover:block sm:-left-28">
+              {tone.label}
+            </span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="left" align="center" className="max-w-72 rounded-xl border-0 bg-slate-950 px-4 py-3 text-left text-white shadow-2xl">
+          <p className="text-sm font-semibold">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-slate-300">{description}</p>
+        </TooltipContent>
+      </Tooltip>
+      <button
+        type="button"
+        aria-label="Close minimized AI mission"
+        className="absolute -right-1 -top-1 z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-white shadow-[0_12px_24px_-16px_rgba(15,23,42,0.8)] transition-colors hover:bg-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose();
+        }}
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
   );
 }
 
