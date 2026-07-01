@@ -17,6 +17,7 @@ import {
   Loader2,
   Megaphone,
   MessageSquareText,
+  Minimize2,
   PenLine,
   Plus,
   Save,
@@ -200,6 +201,8 @@ export function AIAssistant() {
   const [selectedDraftKeys, setSelectedDraftKeys] = useState<string[]>([]);
   const [missionStartedAt, setMissionStartedAt] = useState<number | null>(null);
   const [runningSeconds, setRunningSeconds] = useState(0);
+  const [minimizedToastRunId, setMinimizedToastRunId] = useState<string | null>(null);
+  const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
 
   const { data: projects = [], isLoading: projectsLoading, addProject } = useProjects();
   const { data: folders = [], isLoading: foldersLoading } = useAllFolders();
@@ -215,7 +218,7 @@ export function AIAssistant() {
     document: brandKnowledgeDocument,
     compileKnowledge,
   } = useBrandKnowledge(selectedRemoteBrandGuideId);
-  const { startRun, commitRun, cancelRun } = useAIMission();
+  const { startRun, commitRun } = useAIMission();
   const { run: latestRun, steps, events, artifacts } = useAiRunDetails(currentRun?.id || null);
   const latestArtifact = artifacts[0] || null;
   const researchEvent = useMemo(
@@ -273,7 +276,7 @@ export function AIAssistant() {
     toast({ title: 'Campaign draft pack ready', description: 'Review the output before creating drafts.' });
   }, [latestArtifact, latestRun, readyToastRunId, toast]);
 
-  const running = startRun.isPending || compileKnowledge.isPending || currentRun?.status === 'running';
+  const running = startRun.isPending || compileKnowledge.isPending || currentRun?.status === 'queued' || currentRun?.status === 'running';
 
   useEffect(() => {
     if (!running) {
@@ -357,6 +360,22 @@ export function AIAssistant() {
       : running
         ? Math.min(Math.max(12, Math.round((completedSteps / Math.max(displaySteps.length, 1)) * 88)), 84)
         : 0;
+  const activeMissionStep = displaySteps.find((step) => step.status === 'working')
+    || [...displaySteps].reverse().find((step) => step.status === 'done' || step.status === 'skipped')
+    || displaySteps[0]
+    || null;
+  const resumableMission = running || currentRun?.status === 'needs_approval' || currentRun?.status === 'failed';
+  const missionBubbleVisible = Boolean(resumableMission && !missionOpen && !panelOpen && !skillsOpen && !researchNotesOpen);
+  const missionBubbleTitle = currentRun?.status === 'needs_approval'
+    ? 'Campaign draft pack ready'
+    : currentRun?.status === 'failed'
+      ? 'AI mission needs attention'
+      : activeMissionStep?.agent_name || 'AI mission running';
+  const missionBubbleDescription = currentRun?.status === 'needs_approval'
+    ? 'Open the mission to review and create drafts.'
+    : currentRun?.status === 'failed'
+      ? currentRun.error || 'Open the mission to review what happened.'
+      : sanitizeActivityText(activeMissionStep?.message || 'Agents are working in the background.');
 
   const startMission = async () => {
     if (!prompt.trim()) {
@@ -372,6 +391,7 @@ export function AIAssistant() {
     setPanelOpen(false);
     setCurrentRun(null);
     setCurrentArtifact(null);
+    setMinimizedToastRunId(null);
     setMissionStartedAt(Date.now());
     setRunningSeconds(0);
 
@@ -454,10 +474,35 @@ export function AIAssistant() {
     setSelectedDraftKeys(availableDraftKeys);
   }, [artifact?.id, availableDraftKeys]);
 
-  const cancelMission = async () => {
-    if (currentRun?.id && currentRun.status !== 'completed') {
-      await cancelRun.mutateAsync(currentRun.id).catch(() => null);
+  const minimizeMission = () => {
+    setMissionOpen(false);
+
+    if (running) {
+      const noticeId = currentRun?.id || 'starting';
+      if (minimizedToastRunId !== noticeId) {
+        setMinimizedToastRunId(noticeId);
+        toast({
+          title: 'AI mission minimized',
+          description: 'The agents will keep working. Use the bubble to reopen the live run.',
+        });
+      }
     }
+  };
+
+  const handleMissionOpenChange = (open: boolean) => {
+    if (open) {
+      setMissionOpen(true);
+      return;
+    }
+    if (running) {
+      setCloseConfirmOpen(true);
+      return;
+    }
+    setMissionOpen(false);
+  };
+
+  const confirmCloseMission = () => {
+    setCloseConfirmOpen(false);
     setMissionOpen(false);
   };
 
@@ -720,9 +765,24 @@ export function AIAssistant() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={missionOpen} onOpenChange={setMissionOpen}>
-        <DialogContent className="h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden border-0 bg-slate-50 p-0 shadow-2xl sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-2xl">
-          <DialogHeader className="bg-white px-4 py-4 pr-14 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)] sm:px-6 sm:py-5 sm:pr-14">
+      <Dialog open={missionOpen} onOpenChange={handleMissionOpenChange}>
+        <DialogContent
+          closeClassName="right-5 top-5"
+          className="h-[calc(100vh-1rem)] w-[calc(100vw-1rem)] max-w-[1440px] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden border-0 bg-slate-50 p-0 shadow-2xl sm:h-[calc(100vh-2rem)] sm:w-[calc(100vw-2rem)] sm:rounded-2xl"
+        >
+          {resumableMission && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute right-16 top-5 z-10 h-8 w-8 rounded-lg opacity-70 transition-colors hover:bg-blue-50 hover:text-primary hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              aria-label="Minimize AI mission"
+              onClick={minimizeMission}
+            >
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          )}
+          <DialogHeader className="bg-white px-4 py-4 pr-36 shadow-[0_8px_28px_-30px_rgba(37,99,235,0.45),0_1px_3px_rgba(15,23,42,0.04)] sm:px-6 sm:py-5 sm:pr-36">
             <div className="space-y-3">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
@@ -756,7 +816,7 @@ export function AIAssistant() {
                 <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
                   <Clock3 className="mt-0.5 h-4 w-4 shrink-0" />
                   <span>
-                    This mission has been running for {formatElapsedTime(runningSeconds)}. You can close this window and reopen it from AI History while it continues.
+                    This mission has been running for {formatElapsedTime(runningSeconds)}. You can minimize this window and reopen it from the AI bubble while it continues.
                   </span>
                 </div>
               )}
@@ -808,9 +868,6 @@ export function AIAssistant() {
             <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setPanelOpen(true)}>
               Back to Prompt
             </Button>
-            <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={cancelMission}>
-              Close
-            </Button>
             <Button
               className="gap-2 rounded-xl bg-primary px-5 text-white hover:bg-primary/90"
               disabled={!currentRun || !artifact || currentRun.status !== 'needs_approval' || commitRun.isPending || selectedDraftKeys.length === 0}
@@ -822,6 +879,34 @@ export function AIAssistant() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={closeConfirmOpen} onOpenChange={setCloseConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>AI is generating, do you want to close?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The mission will keep running in the background. You can reopen it from the AI bubble when you are ready.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep open</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmCloseMission}>Close window</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AIMissionBubble
+        visible={missionBubbleVisible}
+        running={running}
+        progress={progress}
+        status={currentRun?.status || (running ? 'running' : null)}
+        title={missionBubbleTitle}
+        description={missionBubbleDescription}
+        onClick={() => {
+          setPanelOpen(false);
+          setMissionOpen(true);
+        }}
+      />
 
       <ResearchNotesSheet event={researchEvent} planEvent={researchPlanEvent} open={researchNotesOpen} onOpenChange={setResearchNotesOpen} />
       <CustomizeAgentSheet
@@ -849,6 +934,95 @@ export function AIAssistant() {
         onSave={saveDestination}
       />
     </>
+  );
+}
+
+function AIMissionBubble({
+  visible,
+  running,
+  progress,
+  status,
+  title,
+  description,
+  onClick,
+}: {
+  visible: boolean;
+  running: boolean;
+  progress: number;
+  status: AiRun['status'] | null;
+  title: string;
+  description: string;
+  onClick: () => void;
+}) {
+  if (!visible) return null;
+
+  const tone = status === 'needs_approval'
+    ? {
+      ring: '#10b981',
+      glow: 'shadow-[0_22px_55px_-26px_rgba(16,185,129,0.75)]',
+      badge: 'bg-emerald-500',
+      label: 'Ready',
+    }
+    : status === 'failed'
+      ? {
+        ring: '#ef4444',
+        glow: 'shadow-[0_22px_55px_-26px_rgba(239,68,68,0.75)]',
+        badge: 'bg-red-500',
+        label: 'Attention',
+      }
+      : {
+        ring: '#2563eb',
+        glow: 'shadow-[0_22px_55px_-26px_rgba(37,99,235,0.75)]',
+        badge: 'bg-blue-500',
+        label: 'Working',
+      };
+  const boundedProgress = Math.max(8, Math.min(progress || (running ? 18 : 100), 100));
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label="Open minimized AI mission"
+          className="group fixed bottom-5 right-5 z-40 flex h-[76px] w-[76px] items-center justify-center rounded-full outline-none transition-transform duration-200 hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-4 sm:bottom-7 sm:right-7 sm:h-20 sm:w-20"
+          onClick={onClick}
+        >
+          {running && (
+            <span className="absolute inset-1 rounded-full bg-primary/15 opacity-70 blur-md transition-opacity group-hover:opacity-100" />
+          )}
+          <span
+            className={cn(
+              'relative flex h-full w-full items-center justify-center rounded-full bg-white ring-1 ring-slate-200',
+              tone.glow,
+            )}
+          >
+            <span
+              className="absolute inset-0 rounded-full"
+              style={{
+                background: `conic-gradient(${tone.ring} ${boundedProgress * 3.6}deg, rgba(226,232,240,0.95) 0deg)`,
+              }}
+            />
+            <span className="absolute inset-[5px] rounded-full bg-white" />
+            <span className="absolute bottom-1.5 right-3 h-4 w-4 rotate-45 rounded-[5px] bg-white shadow-[4px_4px_14px_-8px_rgba(15,23,42,0.45)] ring-1 ring-slate-200" />
+            <img
+              src="/favicon.jpg"
+              alt=""
+              className="relative h-[54px] w-[54px] rounded-full object-cover shadow-[0_10px_24px_-18px_rgba(15,23,42,0.65)] sm:h-[58px] sm:w-[58px]"
+            />
+            <span className={cn('absolute -right-0.5 -top-0.5 flex h-7 w-7 items-center justify-center rounded-full border-2 border-white text-white shadow-sm', tone.badge)}>
+              {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CheckCircle2 className="h-3.5 w-3.5" />}
+            </span>
+          </span>
+          <span className="pointer-events-none absolute -left-24 bottom-3 hidden rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-[0_14px_34px_-24px_rgba(15,23,42,0.5)] ring-1 ring-slate-200 transition-opacity group-hover:block sm:-left-28">
+            {tone.label}
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="left" align="center" className="max-w-72 rounded-xl border-0 bg-slate-950 px-4 py-3 text-left text-white shadow-2xl">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-slate-300">{description}</p>
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
