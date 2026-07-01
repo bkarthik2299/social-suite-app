@@ -47,6 +47,17 @@ type RunStepDefinition = {
   is_default: boolean;
   skill_md: string;
 };
+type HandoffSection = {
+  title: string;
+  body: string | string[];
+};
+type HandoffPayload = {
+  title: string;
+  summary: string;
+  sections?: HandoffSection[];
+  metrics?: Record<string, unknown>;
+  sources?: Array<{ title: string; url: string; score?: number }>;
+};
 
 const instantModels: AiModelOption[] = [
   { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'DeepSeek' },
@@ -247,6 +258,16 @@ async function processMission({
   let researchContext = '';
   const completedCustomSteps = new Set<string>();
   const stepSlugFor = (nameOrSlug: StepName) => builtInSlugByName.get(nameOrSlug) || nameOrSlug;
+  const stepDefinitionFor = (nameOrSlug: StepName) => {
+    const slug = stepSlugFor(nameOrSlug);
+    return runStepDefinitions.find((step) => step.slug === slug || step.agent_name === nameOrSlug) || null;
+  };
+  const nextAgentNameFor = (nameOrSlug: StepName) => {
+    const step = stepDefinitionFor(nameOrSlug);
+    if (!step) return null;
+    const index = runStepDefinitions.findIndex((item) => item.slug === step.slug);
+    return index >= 0 ? runStepDefinitions[index + 1]?.agent_name || null : null;
+  };
 
   const updateStep = async (name: StepName, status: 'queued' | 'working' | 'done' | 'failed' | 'skipped', message: string) => {
     const stepId = stepIds[stepSlugFor(name)];
@@ -268,6 +289,32 @@ async function processMission({
     });
   };
 
+  const addHandoffEvent = async (name: StepName, handoff: HandoffPayload) => {
+    const step = stepDefinitionFor(name);
+    const agentName = step?.agent_name || name;
+    const nextAgent = nextAgentNameFor(name);
+    const stepId = stepIds[stepSlugFor(name)] || null;
+    if (stepId) {
+      const { data: existing } = await supabase
+        .from('ai_run_events')
+        .select('id,payload')
+        .eq('run_id', runId)
+        .eq('step_id', stepId)
+        .eq('event_type', 'agent_handoff')
+        .limit(20);
+      if ((existing || []).some((event) => {
+        const payload = event.payload as Record<string, unknown> | null;
+        return payload?.title === handoff.title;
+      })) return;
+    }
+    await addEvent(name, 'agent_handoff', `${agentName} prepared a handoff${nextAgent ? ` for ${nextAgent}` : ''}.`, {
+      ...handoff,
+      agentName,
+      agentSlug: step?.slug || stepSlugFor(name),
+      nextAgent,
+    });
+  };
+
   const customStepsBefore = (nextBuiltInSlug: string) => {
     const nextIndex = runStepDefinitions.findIndex((step) => step.slug === nextBuiltInSlug);
     if (nextIndex < 0) return [];
@@ -281,6 +328,16 @@ async function processMission({
       await updateStep(step.slug, 'working', `${step.agent_name} is adding workspace guidance for downstream agents.`);
       await addEvent(step.slug, 'workspace_agent_guidance', `${step.agent_name} guidance was added to the campaign context.`, {
         agentSlug: step.slug,
+      });
+      await addHandoffEvent(step.slug, {
+        title: 'Workspace guidance handoff',
+        summary: `${step.agent_name} added its workspace guidance to the context that downstream agents receive.`,
+        sections: [
+          {
+            title: 'Guidance preview',
+            body: handoffText(agentSkills[step.slug] || step.skill_md || 'No custom SKILL.md guidance was available.'),
+          },
+        ],
       });
       completedCustomSteps.add(step.slug);
       await updateStep(step.slug, 'done', `${step.agent_name} guidance was included for downstream agents.`);
@@ -315,6 +372,17 @@ async function processMission({
             repairs: guarded.notes,
           });
         }
+        await addHandoffEvent(step.slug, {
+          title: 'Workspace review handoff',
+          summary: guarded.notes.length
+            ? `${step.agent_name} reviewed the draft pack and ${guarded.notes.length} guardrail repairs were applied before the next agent.`
+            : `${step.agent_name} reviewed the draft pack and passed the current structure forward.`,
+          sections: packHandoffSections(nextPack),
+          metrics: {
+            ...packCounts(nextPack),
+            guardrailRepairs: guarded.notes.length,
+          },
+        });
         completedCustomSteps.add(step.slug);
         await updateStep(step.slug, 'done', `${step.agent_name} reviewed the draft pack without changing the required output structure.`);
       } catch (error) {
@@ -352,6 +420,16 @@ async function processMission({
       campaignGuidance: plannerOutput.campaignGuidance,
       deliverableContract: plannerOutput.deliverableContract,
     });
+    await addHandoffEvent(activeStep, {
+      title: 'Planner handoff',
+      summary: `Planner prepared ${formatDeliverableContract(plannerOutput.deliverableContract)} and a focused research question for the next agent.`,
+      sections: [
+        { title: 'Research question', body: plannerOutput.researchQuery || 'No outside research question was needed.' },
+        { title: 'Campaign guidance', body: handoffText(plannerOutput.campaignGuidance) },
+        { title: 'Requested output map', body: formatDeliverableContract(plannerOutput.deliverableContract) },
+      ],
+      metrics: { deliverableContract: plannerOutput.deliverableContract },
+    });
     await updateStep(activeStep, 'done', `Planned ${formatDeliverableContract(plannerOutput.deliverableContract)} for ${destination.projectName || 'the selected project'} and prepared a focused research question.`);
     await completeCustomGuidanceStepsBefore('brand-guide');
 
@@ -364,9 +442,25 @@ async function processMission({
         title: brandKnowledge.title,
         characters: brandKnowledge.markdown.length,
       });
+      await addHandoffEvent(activeStep, {
+        title: 'Brand context handoff',
+        summary: `Loaded ${brandKnowledge.title || 'the selected brand knowledge document'} and passed brand context to downstream agents.`,
+        sections: [
+          { title: 'Brand source', body: brandKnowledge.title || 'Compiled brand knowledge document' },
+          { title: 'Context preview', body: brandKnowledgePreview(brandKnowledge.markdown) },
+        ],
+        metrics: { characters: brandKnowledge.markdown.length },
+      });
       await updateStep(activeStep, 'done', `Loaded ${brandKnowledge.title || 'brand knowledge'} and filtered tone, voice, writing rules, and campaign guardrails.`);
     } else {
       await addEvent(activeStep, 'brand_context', 'No compiled brand knowledge document was selected; continuing with prompt context.', { documentId: null });
+      await addHandoffEvent(activeStep, {
+        title: 'Brand context handoff',
+        summary: 'No compiled brand knowledge document was selected, so downstream agents used the original brief and planner guidance as the primary source.',
+        sections: [
+          { title: 'Brand source', body: 'No compiled brand knowledge document selected.' },
+        ],
+      });
       await updateStep(activeStep, 'skipped', 'No compiled brand knowledge document was selected; using the brief as the primary source.');
     }
     await completeCustomGuidanceStepsBefore('research');
@@ -409,16 +503,49 @@ async function processMission({
           responseTime: research.responseTime,
           sources: research.results.map(({ title, url, score, content }) => ({ title, url, score, content: content.slice(0, 500) })),
         });
+        await addHandoffEvent(activeStep, {
+          title: 'Research handoff',
+          summary: `Research distilled ${research.results.length} source${research.results.length === 1 ? '' : 's'} into campaign context for drafting.`,
+          sections: [
+            { title: 'Research question', body: formatResearchQuestionForHandoff(researchQuestion) },
+            { title: 'Key findings', body: handoffResearchFindings(researchDigest) },
+            { title: 'Campaign focus', body: handoffText(plannerOutput.campaignGuidance) },
+          ],
+          metrics: {
+            provider: selectedResearchProvider.name,
+            sourceCount: research.results.length,
+            credits: research.credits,
+            responseTime: research.responseTime,
+          },
+          sources: handoffSources(research.results),
+        });
         await updateStep(activeStep, 'done', `Reviewed ${research.results.length} web sources and extracted useful campaign angles.`);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Web research failed';
         await addEvent(activeStep, 'web_search_failed', 'Web research could not be completed. Continuing with the brief and brand guide.', { internalError: message });
+        await addHandoffEvent(activeStep, {
+          title: 'Research handoff',
+          summary: 'Web research could not be completed, so drafting continued with the brief, planner guidance, and any available brand context.',
+          sections: [
+            { title: 'Research question attempted', body: formatResearchQuestionForHandoff(plannerOutput.researchQuery) || 'No research question was recorded.' },
+            { title: 'Fallback context', body: 'Downstream agents received planner guidance and brand context without external research findings.' },
+          ],
+        });
         await updateStep(activeStep, 'skipped', 'Web research could not be completed. Continuing with the brief and brand guide.');
       }
     } else {
       await addEvent(activeStep, 'instant_mode', 'Instant mode selected; web research was skipped.', {
         skipped: true,
         researchProvider: selectedResearchProvider.id,
+      });
+      await addHandoffEvent(activeStep, {
+        title: 'Research handoff',
+        summary: 'Instant mode skipped web research, so downstream agents used the brief, planner guidance, and brand context.',
+        sections: [
+          { title: 'Mode', body: 'Instant mode' },
+          { title: 'Fallback context', body: 'No external research was passed forward.' },
+        ],
+        metrics: { skipped: true },
       });
       await updateStep(activeStep, 'skipped', 'Instant mode selected; using the brief and brand guide without web research.');
     }
@@ -468,6 +595,15 @@ async function processMission({
       });
       pack = fallbackPack(body.prompt, plannerOutput.deliverableContract);
     }
+    await addHandoffEvent(activeStep, {
+      title: 'Draft pack handoff',
+      summary: `Copywriter created the campaign draft pack for platform review.`,
+      sections: packHandoffSections(pack),
+      metrics: {
+        ...packCounts(pack),
+        guardrailRepairs: contentGuardrailNotes.length,
+      },
+    });
     await updateStep(activeStep, 'done', `Generated ${pack.socialPosts.length} social posts, ${pack.googleAds.length} Google ads, ${pack.socialAds.length} paid social ads, and ${pack.blogOutlines.length} blog outlines.`);
     pack = await applyCustomPackStepsBefore('platform-specialist', pack);
 
@@ -485,6 +621,12 @@ async function processMission({
       blogOutlines: pack.blogOutlines.length,
       calendarItems: pack.calendar.length,
     });
+    await addHandoffEvent(activeStep, {
+      title: 'Platform mapping handoff',
+      summary: 'Platform Specialist normalized the draft pack for Social Suite fields, channel names, ad structures, and calendar dates.',
+      sections: packHandoffSections(pack),
+      metrics: packCounts(pack),
+    });
     await updateStep(activeStep, 'done', `Mapped ${pack.calendar.length} calendar items and structured every output for its campaign type.`);
     pack = await applyCustomPackStepsBefore('qa', pack);
 
@@ -493,6 +635,19 @@ async function processMission({
     const qaFindings = validatePack(pack, plannerOutput.deliverableContract);
     await addEvent(activeStep, 'qa_review', qaFindings.length ? `QA noted: ${qaFindings.join(' ')}` : 'QA passed: required output groups are present and dates are future-safe.', {
       findings: qaFindings,
+    });
+    await addHandoffEvent(activeStep, {
+      title: 'QA handoff',
+      summary: qaFindings.length
+        ? `QA completed with ${qaFindings.length} note${qaFindings.length === 1 ? '' : 's'} for review.`
+        : 'QA passed the required output groups, tone guardrails, and calendar readiness checks.',
+      sections: [
+        {
+          title: qaFindings.length ? 'QA notes' : 'QA result',
+          body: qaFindings.length ? qaFindings : 'No blocking QA notes were recorded.',
+        },
+      ],
+      metrics: { findingCount: qaFindings.length },
     });
     await updateStep(activeStep, qaFindings.length ? 'done' : 'done', qaFindings.length ? `QA completed with ${qaFindings.length} notes for review.` : 'QA passed required output groups, tone guardrails, and calendar readiness.');
     pack = await applyCustomPackStepsBefore('output-mapper', pack);
@@ -514,6 +669,18 @@ async function processMission({
     if (artifactError) throw artifactError;
 
     await addEvent(activeStep, 'artifact_ready', 'Campaign draft pack is ready for review.', { artifactId: artifact.id });
+    await addHandoffEvent(activeStep, {
+      title: 'Review artifact handoff',
+      summary: 'Output Mapper saved the campaign pack as a review artifact for approval before draft creation.',
+      sections: [
+        { title: 'Artifact', body: 'Brief to Campaign Draft Pack' },
+        { title: 'Strategy summary', body: handoffText(pack.strategy?.summary || 'Campaign draft pack is ready for review.') },
+      ],
+      metrics: {
+        artifactId: artifact.id,
+        ...packCounts(pack),
+      },
+    });
     await updateStep(activeStep, 'done', 'Saved the review artifact. The next click can create Social Suite drafts.');
 
     await supabase.from('ai_runs').update({
@@ -532,6 +699,101 @@ async function processMission({
     }).catch(() => null);
     await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId).catch(() => null);
   }
+}
+
+function handoffText(value: string, maxLength = 900) {
+  const cleaned = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return 'No separate output was recorded for this step.';
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength - 3).trim()}...` : cleaned;
+}
+
+function brandKnowledgePreview(markdown: string) {
+  const headings = markdown
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => /^#{1,3}\s+\S/.test(line))
+    .slice(0, 6)
+    .map((line) => line.replace(/^#{1,3}\s+/, ''));
+
+  if (headings.length) {
+    return headings.map((heading) => handoffText(heading, 120));
+  }
+
+  return handoffText(markdown, 900);
+}
+
+function handoffResearchFindings(value: string) {
+  const findings = value
+    .split(/;\s+|(?<=[.!?])\s+(?=[A-Z0-9])/)
+    .map((item) => handoffText(item, 360))
+    .filter(Boolean)
+    .slice(0, 6);
+
+  return findings.length ? findings : 'No separate research digest was recorded.';
+}
+
+function formatResearchQuestionForHandoff(value: string) {
+  const cleaned = handoffText(value, 260).replace(/[?!.]+$/, '').trim();
+  return cleaned && cleaned !== 'No separate output was recorded for this step.' ? `${cleaned}?` : '';
+}
+
+function handoffSources(sources: TavilySearchResponse['results']) {
+  return sources.slice(0, 6).flatMap((source) => {
+    if (!source.url) return [];
+    return [{
+      title: handoffText(source.title || source.url, 140),
+      url: source.url,
+      score: source.score,
+    }];
+  });
+}
+
+function packCounts(pack: CampaignPack) {
+  return {
+    socialPosts: pack.socialPosts.length,
+    googleAds: pack.googleAds.length,
+    socialAds: pack.socialAds.length,
+    blogOutlines: pack.blogOutlines.length,
+    calendarItems: pack.calendar.length,
+  };
+}
+
+function packHandoffSections(pack: CampaignPack): HandoffSection[] {
+  return [
+    {
+      title: 'Strategy',
+      body: handoffText(pack.strategy?.summary || 'Campaign pack is ready for review.'),
+    },
+    {
+      title: 'Social posts',
+      body: draftNames(pack.socialPosts.map((item) => item.name || item.topic)),
+    },
+    {
+      title: 'Google ads',
+      body: draftNames(pack.googleAds.map((item, index) => item.name || item.headlines?.[0] || `Google Ad ${index + 1}`)),
+    },
+    {
+      title: 'Paid social ads',
+      body: draftNames(pack.socialAds.map((item) => item.name || item.headline || item.topic)),
+    },
+    {
+      title: 'Blog outlines',
+      body: draftNames(pack.blogOutlines.map((item) => item.title)),
+    },
+    {
+      title: 'Calendar',
+      body: draftNames(pack.calendar.map((item) => `${item.date}: ${item.title}`)),
+    },
+  ].filter((section) => Array.isArray(section.body) ? section.body.length > 0 : Boolean(section.body));
+}
+
+function draftNames(values: string[]) {
+  const names = values
+    .map((value) => handoffText(value, 120))
+    .filter(Boolean)
+    .slice(0, 5);
+  if (values.length > names.length) names.push(`+${values.length - names.length} more`);
+  return names;
 }
 
 async function resolveRunContext(supabase: SupabaseClient, body: RequestBody, userId: string) {

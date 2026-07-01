@@ -63,6 +63,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useToast } from '@/components/ui/use-toast';
 import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
+import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, sanitizeActivityText, type HandoffDisplayDetails } from '@/lib/aiActivityTrail';
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
 import { cn } from '@/lib/utils';
 import type { CampaignType } from '@/types';
@@ -1576,7 +1577,7 @@ function RunningPanel({
   const activeStep = steps.find((step) => step.status === 'working')
     || [...steps].reverse().find((step) => step.status === 'done' || step.status === 'skipped')
     || steps[0];
-  const recentEvents = [...events].slice(-6).reverse();
+  const recentEvents = activityTrailEvents(events, 6);
 
   return (
     <div className="tool-surface min-h-[420px] w-full min-w-0 max-w-full overflow-hidden rounded-xl bg-white p-4 sm:p-5">
@@ -1663,17 +1664,43 @@ function RunActivityTrail({
 
 function RunEventRow({ event }: { event: AiRunEvent }) {
   const sources = eventSources(event);
+  const handoff = eventHandoffDetails(event);
+  const [expanded, setExpanded] = useState(false);
+  const canExpand = !!handoff;
+  const badgeLabel = event.event_type === 'agent_handoff' ? 'handoff' : event.event_type.replace(/_/g, ' ');
+  const eventHeader = (
+    <>
+      <div className="min-w-0">
+        <p className="break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere]">{eventDisplayMessage(event)}</p>
+        <p className="mt-1 text-xs text-slate-500">{formatTime(event.created_at)}</p>
+      </div>
+      <span className="flex shrink-0 items-center gap-2">
+        <Badge variant="outline" className="text-[10px] capitalize">{badgeLabel}</Badge>
+        {canExpand && <ChevronDown className={cn('h-4 w-4 text-slate-400 transition-transform', expanded && 'rotate-180')} />}
+      </span>
+    </>
+  );
 
   return (
     <div className="tool-surface w-full min-w-0 max-w-full overflow-hidden rounded-xl px-4 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="break-words text-sm font-medium text-slate-900 [overflow-wrap:anywhere]">{eventDisplayMessage(event)}</p>
-          <p className="mt-1 text-xs text-slate-500">{formatTime(event.created_at)}</p>
+      {canExpand ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          className="flex w-full min-w-0 items-start justify-between gap-3 text-left"
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {eventHeader}
+        </button>
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          {eventHeader}
         </div>
-        <Badge variant="outline" className="shrink-0 text-[10px] capitalize">{event.event_type.replace(/_/g, ' ')}</Badge>
-      </div>
-      {sources.length > 0 && (
+      )}
+
+      {handoff && expanded && <RunEventHandoffDetails handoff={handoff} />}
+
+      {!handoff && sources.length > 0 && (
         <div className="mt-3 flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden">
           {sources.map((source) => (
             <a
@@ -1686,6 +1713,71 @@ function RunEventRow({ event }: { event: AiRunEvent }) {
               {source.title || source.url}
             </a>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RunEventHandoffDetails({ handoff }: { handoff: HandoffDisplayDetails }) {
+  return (
+    <div className="mt-4 border-t border-slate-100 pt-4">
+      <p className="text-sm leading-6 text-slate-600 [overflow-wrap:anywhere]">{handoff.summary}</p>
+      {handoff.nextAgent && (
+        <p className="mt-2 text-xs font-medium text-slate-500">
+          Passed to <span className="text-slate-700">{handoff.nextAgent}</span>
+        </p>
+      )}
+
+      {handoff.sections.length > 0 && (
+        <div className="mt-4 space-y-4">
+          {handoff.sections.map((section, index) => (
+            <section key={`${section.title}-${index}`} className="min-w-0">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.title}</h4>
+              {Array.isArray(section.body) ? (
+                <ul className="mt-2 space-y-2">
+                  {section.body.map((item, itemIndex) => (
+                    <li key={`${item}-${itemIndex}`} className="flex gap-2 text-sm leading-6 text-slate-700">
+                      <span className="mt-2.5 h-1 w-1 shrink-0 rounded-full bg-primary" />
+                      <span className="min-w-0 break-words [overflow-wrap:anywhere]">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 whitespace-pre-line break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{section.body}</p>
+              )}
+            </section>
+          ))}
+        </div>
+      )}
+
+      {handoff.metrics.length > 0 && (
+        <dl className="mt-4 grid gap-2 border-t border-slate-100 pt-4 sm:grid-cols-2">
+          {handoff.metrics.map((metric) => (
+            <div key={metric.label} className="min-w-0">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{metric.label}</dt>
+              <dd className="mt-0.5 break-words text-sm font-medium text-slate-700 [overflow-wrap:anywhere]">{metric.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {handoff.sources.length > 0 && (
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sources</h4>
+          <div className="mt-2 flex min-w-0 max-w-full flex-wrap gap-2 overflow-hidden">
+            {handoff.sources.map((source) => (
+              <a
+                key={source.url || source.title}
+                href={source.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block min-w-0 max-w-full truncate rounded-full bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-blue-50 hover:text-primary sm:max-w-[36rem]"
+              >
+                {source.title || source.url}
+              </a>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -1851,7 +1943,7 @@ function ArtifactPreview({
   const socialAdCount = pack.socialAds?.length || 0;
   const blogCount = pack.blogOutlines?.length || 0;
   const calendarCount = pack.calendar?.length || 0;
-  const recentEvents = [...events].slice(-8).reverse();
+  const recentEvents = activityTrailEvents(events, 8);
   const allKeys = draftKeys(pack);
   const selectedCount = allKeys.filter((key) => selectedKeys.has(key)).length;
 
@@ -2187,23 +2279,6 @@ function formatTime(value: string | null) {
   return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-function eventSources(event: AiRunEvent): Array<{ title: string; url: string; score?: number; content?: string }> {
-  const sources = event.payload?.sources;
-  if (!Array.isArray(sources)) return [];
-
-  return sources.flatMap((source) => {
-    if (!source || typeof source !== 'object') return [];
-    const item = source as { title?: unknown; url?: unknown; score?: unknown; content?: unknown };
-    if (typeof item.url !== 'string' || !item.url) return [];
-    return [{
-      title: typeof item.title === 'string' && item.title ? item.title : item.url,
-      url: item.url,
-      score: typeof item.score === 'number' ? item.score : undefined,
-      content: typeof item.content === 'string' ? item.content : undefined,
-    }];
-  });
-}
-
 function researchNotesFromEvent(event: AiRunEvent | null, planEvent: AiRunEvent | null) {
   const answer = typeof event?.payload?.answer === 'string' ? event.payload.answer : '';
   const question = payloadString(event, 'researchQuestion')
@@ -2216,11 +2291,6 @@ function researchNotesFromEvent(event: AiRunEvent | null, planEvent: AiRunEvent 
     findings: splitResearchFindings(answer),
     sources: event ? eventSources(event) : [],
   };
-}
-
-function payloadString(event: AiRunEvent | null, key: string) {
-  const value = event?.payload?.[key];
-  return typeof value === 'string' ? value.trim() : '';
 }
 
 function formatResearchQuestion(value: string) {
@@ -2297,6 +2367,8 @@ function draftSelection(keys: string[]): AiDraftSelection {
 }
 
 function eventDisplayMessage(event: AiRunEvent) {
+  const handoff = eventHandoffDetails(event);
+  if (handoff) return `${handoff.agentName}: ${handoff.title}`;
   const sources = eventSources(event);
   const researchQuestion = payloadString(event, 'researchQuestion') || payloadString(event, 'plannerResearchQuestion');
   if (event.event_type === 'web_search') return researchQuestion
@@ -2307,13 +2379,6 @@ function eventDisplayMessage(event: AiRunEvent) {
   if (event.event_type === 'model_call') return 'Draft generation started using the selected AI model.';
   if (event.event_type === 'model_fallback') return 'Primary generation could not complete. Structured draft placeholders were prepared for review.';
   return sanitizeActivityText(event.message || event.event_type);
-}
-
-function sanitizeActivityText(value: string) {
-  return value
-    .replace(/Tavily/gi, 'web research')
-    .replace(/OpenRouter model\s+\S+/gi, 'the selected AI route')
-    .replace(/OpenRouter/gi, 'AI generation');
 }
 
 function errorMessage(error: unknown): string {
