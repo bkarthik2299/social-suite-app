@@ -3,6 +3,7 @@ import { DndContext, DragOverlay, closestCenter, pointerWithin, rectIntersection
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { useAuth } from '@/context/AuthContext';
 import { useTasks, useProjects, useAllCampaigns } from '@/hooks/useDatabase';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check } from 'lucide-react';
@@ -350,11 +351,23 @@ export default function Tasks() {
   const { data: dbTasks, addTask, updateTask, deleteTask, moveTask } = useTasks();
   const { data: projects = [] } = useProjects();
   const { data: campaigns = [] } = useAllCampaigns();
+  const { membership, user } = useAuth();
   const { toast } = useToast();
 
-  const teamMembers = useMemo(() => [
-    { id: 'tm-1', name: 'You', role: 'admin', avatar: 'https://ui-avatars.com/api/?name=You&background=0D8ABC&color=fff' }
-  ], []);
+  const currentUserId = user?.id || '';
+  const currentUserName = user?.user_metadata?.full_name || user?.email || 'You';
+  const teamMembers = useMemo(() => {
+    if (!currentUserId) return [];
+
+    return [
+      {
+        id: currentUserId,
+        name: 'You',
+        role: membership?.role || 'admin',
+        avatar: user?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserName)}&background=0D8ABC&color=fff`,
+      }
+    ];
+  }, [currentUserId, currentUserName, membership?.role, user?.user_metadata?.avatar_url]);
 
   const tasks = useMemo(() => dbTasks || [], [dbTasks]);
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
@@ -398,7 +411,7 @@ export default function Tasks() {
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
       // Assigned to Me filter
-      if (filters.assignedToMe && task.assigneeId !== 'tm-1') return false;
+      if (filters.assignedToMe && task.assigneeId !== currentUserId) return false;
 
       // Team member filter (multi-select)
       if (filters.teamMemberIds.length > 0 && !filters.teamMemberIds.includes(task.assigneeId || '')) return false;
@@ -431,7 +444,7 @@ export default function Tasks() {
 
       return true;
     });
-  }, [tasks, filters]);
+  }, [tasks, filters, currentUserId]);
 
   // Check if any filters are active
   const hasActiveFilters = filters.assignedToMe || filters.teamMemberIds.length > 0 || filters.statuses.length > 0 || filters.dueDateRange || filters.projectIds.length > 0;
