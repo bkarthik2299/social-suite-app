@@ -2,14 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from "@/components/ui/button";
-import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target, Copy, ExternalLink, Loader2, User } from 'lucide-react';
+import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target, Copy, ExternalLink, Loader2, User, Check, Minus, Instagram, Facebook } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
     ContextMenu,
     ContextMenuContent,
@@ -1306,6 +1305,16 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
 function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImport: (posts: ReviewPost[]) => void, targetFeedId: string, buttonLabel?: string, treeData: TreeItem[] }) {
     const [open, setOpen] = useState(false);
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+    const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+    type SelectionState = 'checked' | 'mixed' | 'unchecked' | 'disabled';
+
+    useEffect(() => {
+        if (open) {
+            setExpandedIds(new Set(getDefaultExpandedIds(treeData)));
+        }
+    }, [open, treeData]);
 
     // Flatten helper to find posts in the new tree structure
     const findPostById = (id: string, items: TreeItem[]): TreeItem | undefined => {
@@ -1377,50 +1386,263 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
         setSelectedIds([]);
     };
 
-    const toggleSelection = (id: string) => {
-        setSelectedIds(prev =>
-            prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    function getDefaultExpandedIds(items: TreeItem[]) {
+        const ids: string[] = [];
+
+        const walk = (nodes: TreeItem[]) => {
+            nodes.forEach(node => {
+                if ((node.type === 'project' || node.type === 'folder') && node.children?.length) {
+                    ids.push(node.id);
+                    walk(node.children);
+                }
+            });
+        };
+
+        walk(items);
+        return ids;
+    }
+
+    const getCampaignIds = (item: TreeItem): string[] => {
+        if (item.type === 'campaign') return [item.id];
+        return item.children?.flatMap(getCampaignIds) || [];
+    };
+
+    const getSelectionTargetIds = (item: TreeItem): string[] => {
+        if (item.type === 'project' || item.type === 'folder') return getCampaignIds(item);
+        if (item.type === 'campaign' || item.type === 'post') return [item.id];
+        return [];
+    };
+
+    const getSelectionState = (item: TreeItem): SelectionState => {
+        const targetIds = getSelectionTargetIds(item);
+        if (targetIds.length === 0) return 'disabled';
+
+        const selectedCount = targetIds.filter(id => selectedIdSet.has(id)).length;
+        if (selectedCount === 0) return 'unchecked';
+        if (selectedCount === targetIds.length) return 'checked';
+        return 'mixed';
+    };
+
+    const toggleItemSelection = (item: TreeItem) => {
+        const targetIds = getSelectionTargetIds(item);
+        if (targetIds.length === 0) return;
+
+        setSelectedIds(prev => {
+            const previous = new Set(prev);
+            const allSelected = targetIds.every(id => previous.has(id));
+
+            if (allSelected) {
+                targetIds.forEach(id => previous.delete(id));
+            } else {
+                targetIds.forEach(id => previous.add(id));
+            }
+
+            return Array.from(previous);
+        });
+    };
+
+    const toggleExpanded = (id: string) => {
+        setExpandedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) {
+                next.delete(id);
+            } else {
+                next.add(id);
+            }
+            return next;
+        });
+    };
+
+    const countType = (item: TreeItem, type: TreeItem['type']): number => {
+        const ownCount = item.type === type ? 1 : 0;
+        return ownCount + (item.children?.reduce((total, child) => total + countType(child, type), 0) || 0);
+    };
+
+    const pluralize = (count: number, singular: string, plural = `${singular}s`) =>
+        `${count} ${count === 1 ? singular : plural}`;
+
+    const getItemMeta = (item: TreeItem) => {
+        if (item.type === 'project') {
+            const folderCount = item.children?.filter(child => child.type === 'folder').length || 0;
+            const campaignCount = countType(item, 'campaign');
+            return `${pluralize(folderCount, 'folder')} - ${pluralize(campaignCount, 'campaign')}`;
+        }
+
+        if (item.type === 'folder') {
+            const campaignCount = countType(item, 'campaign');
+            const postCount = countType(item, 'post');
+            return postCount > 0
+                ? `${pluralize(campaignCount, 'campaign')} - ${pluralize(postCount, 'asset')}`
+                : pluralize(campaignCount, 'campaign');
+        }
+
+        if (item.type === 'campaign') {
+            const postCount = countType(item, 'post');
+            return `${formatCampaignType(item.campaignType)} - ${pluralize(postCount, 'asset')}`;
+        }
+
+        return formatLabel(item.originalPost?.type) || 'Post';
+    };
+
+    const getTypeVisual = (type: unknown) => {
+        switch (getString(type)) {
+            case 'socials':
+            case 'social-post':
+            case 'post':
+                return {
+                    Icon: Instagram,
+                    label: 'Social',
+                    chipClass: 'border-rose-100 bg-rose-50 text-rose-600',
+                };
+            case 'meta-ad':
+            case 'social-ad':
+                return {
+                    Icon: Facebook,
+                    label: 'Meta Ads',
+                    chipClass: 'border-blue-100 bg-blue-50 text-blue-600',
+                };
+            case 'google-ad':
+                return {
+                    Icon: Search,
+                    label: 'Google Ads',
+                    chipClass: 'border-amber-100 bg-amber-50 text-amber-600',
+                };
+            case 'blogs':
+            case 'blog':
+                return {
+                    Icon: FileText,
+                    label: 'Blog',
+                    chipClass: 'border-emerald-100 bg-emerald-50 text-emerald-600',
+                };
+            default:
+                return {
+                    Icon: Layers,
+                    label: 'Campaign',
+                    chipClass: 'border-primary/15 bg-primary/10 text-primary',
+                };
+        }
+    };
+
+    const TreeItemIcon = ({ item }: { item: TreeItem }) => {
+        if (item.type === 'project') {
+            return <Folder className="h-4 w-4 shrink-0 fill-slate-800 text-slate-800" />;
+        }
+
+        if (item.type === 'folder') {
+            return <Folder className="h-4 w-4 shrink-0 text-primary" />;
+        }
+
+        if (item.type === 'campaign' || item.type === 'post') {
+            const visual = getTypeVisual(item.type === 'campaign' ? item.campaignType : item.originalPost?.type);
+            const Icon = visual.Icon;
+
+            return (
+                <span
+                    className={cn("flex h-6 w-6 shrink-0 items-center justify-center rounded-md border", visual.chipClass)}
+                    title={visual.label}
+                    aria-hidden="true"
+                >
+                    <Icon className="h-3.5 w-3.5" />
+                </span>
+            );
+        }
+
+        return <ImageIcon className="h-4 w-4 shrink-0 text-slate-500" />;
+    };
+
+    const getCheckboxLabel = (item: TreeItem) => {
+        if (item.type === 'project') return `Select all campaigns in project ${item.name}`;
+        if (item.type === 'folder') return `Select all campaigns in folder ${item.name}`;
+        if (item.type === 'campaign') return `Select campaign ${item.name}`;
+        return `Select post ${item.name}`;
+    };
+
+    const TreeCheckbox = ({ item, state }: { item: TreeItem, state: SelectionState }) => {
+        const disabled = state === 'disabled';
+
+        return (
+            <button
+                type="button"
+                role="checkbox"
+                aria-checked={state === 'mixed' ? 'mixed' : state === 'checked'}
+                aria-label={getCheckboxLabel(item)}
+                title={getCheckboxLabel(item)}
+                disabled={disabled}
+                onClick={(event) => {
+                    event.stopPropagation();
+                    toggleItemSelection(item);
+                }}
+                className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
+                    state === 'checked' && "border-primary bg-primary text-primary-foreground",
+                    state === 'mixed' && "border-primary bg-primary/10 text-primary",
+                    state === 'unchecked' && "border-slate-300 bg-white text-transparent hover:border-primary",
+                    disabled && "cursor-not-allowed border-slate-200 bg-slate-50 text-transparent"
+                )}
+            >
+                {state === 'checked' && <Check className="h-3 w-3" />}
+                {state === 'mixed' && <Minus className="h-3 w-3" />}
+            </button>
         );
     };
 
     // Recursive tree renderer
     const renderTree = (items: TreeItem[], level = 0) => {
-        return items.map(item => {
-            const isSelectable = item.type === 'post' || item.type === 'campaign';
-            const isSelected = selectedIds.includes(item.id);
+        return (
+            <div className={cn(level === 0 ? "space-y-1" : "mt-1 space-y-1")}>
+                {items.map(item => {
+                    const hasChildren = !!item.children?.length;
+                    const isExpanded = expandedIds.has(item.id);
+                    const selectionState = getSelectionState(item);
 
-            return (
-                <div key={item.id} className="select-none">
-                    <div
-                        className={cn(
-                            "flex items-center gap-2 py-2 px-2 hover:bg-slate-50 rounded-md",
-                            level > 0 && "ml-6",
-                            isSelectable && "cursor-pointer"
-                        )}
-                        onClick={() => isSelectable && toggleSelection(item.id)}
-                    >
-                        {isSelectable ? (
-                            <div className={cn(
-                                "w-4 h-4 rounded border flex items-center justify-center transition-colors shrink-0",
-                                isSelected ? "bg-primary border-primary" : "border-slate-300"
-                            )}>
-                                {isSelected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                    return (
+                        <div key={item.id} className="select-none">
+                            <div
+                                className={cn(
+                                    "grid grid-cols-[20px_20px_minmax(0,1fr)] items-center gap-2 rounded-lg py-1.5 pr-3 transition-colors hover:bg-slate-50",
+                                    item.type === 'project' && "bg-slate-50/80 font-semibold text-slate-900",
+                                    item.type === 'folder' && "text-slate-800",
+                                    item.type === 'campaign' && "text-slate-700",
+                                    item.type === 'post' && "text-slate-600"
+                                )}
+                                style={{ paddingLeft: `${8 + level * 22}px` }}
+                            >
+                                {hasChildren ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => toggleExpanded(item.id)}
+                                        className="flex h-5 w-5 items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"
+                                        aria-label={isExpanded ? `Collapse ${item.name}` : `Expand ${item.name}`}
+                                        aria-expanded={isExpanded}
+                                        title={isExpanded ? "Collapse" : "Expand"}
+                                    >
+                                        {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                                    </button>
+                                ) : (
+                                    <span className="h-5 w-5" />
+                                )}
+
+                                <TreeCheckbox item={item} state={selectionState} />
+
+                                <button
+                                    type="button"
+                                    onClick={() => hasChildren ? toggleExpanded(item.id) : toggleItemSelection(item)}
+                                    className="min-w-0 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                                >
+                                    <span className="flex min-w-0 items-center gap-2">
+                                        <TreeItemIcon item={item} />
+                                        <span className="min-w-0 flex-1 truncate text-sm">{item.name}</span>
+                                        <span className="hidden shrink-0 text-xs font-normal text-slate-400 sm:inline">{getItemMeta(item)}</span>
+                                    </span>
+                                </button>
                             </div>
-                        ) : (
-                            <div className="w-4 shrink-0" />
-                        )}
 
-                        {item.type === 'folder' ? <Folder className="w-4 h-4 text-primary/70 shrink-0" /> :
-                            item.type === 'project' ? <Folder className="w-4 h-4 text-slate-800 fill-slate-800 shrink-0" /> :
-                                item.type === 'campaign' ? <Layers className="w-4 h-4 text-primary shrink-0" /> :
-                                    <ImageIcon className="w-4 h-4 text-slate-500 shrink-0" />}
-
-                        <span className={cn("text-sm truncate", item.type === 'project' && "font-semibold")}>{item.name}</span>
-                    </div>
-                    {item.children && item.children.length > 0 && renderTree(item.children, level + 1)}
-                </div>
-            );
-        });
+                            {hasChildren && isExpanded && renderTree(item.children || [], level + 1)}
+                        </div>
+                    );
+                })}
+            </div>
+        );
     };
 
     return (
@@ -1433,11 +1655,11 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
             <DialogContent className="grid max-h-[85vh] max-w-3xl grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto] gap-0 overflow-hidden p-0">
                 <DialogHeader className="min-w-0 border-b border-slate-200 px-6 py-5">
                     <DialogTitle>Import Posts</DialogTitle>
-                    <DialogDescription>Select posts from your projects to add to this client feed.</DialogDescription>
+                    <DialogDescription>Select campaigns or individual posts from your projects to add to this client feed.</DialogDescription>
                 </DialogHeader>
 
                 <div className="min-h-0 min-w-0 px-6 py-4">
-                    <div className="h-[min(54vh,460px)] rounded-xl border border-slate-200 bg-white">
+                    <div className="h-[min(58vh,500px)] rounded-lg border border-slate-200 bg-white">
                     <ScrollArea className="h-full">
                         <div className="p-4">
                         {treeData.length === 0 ? (
