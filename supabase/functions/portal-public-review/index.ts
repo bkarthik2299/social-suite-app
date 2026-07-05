@@ -45,12 +45,14 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'status') {
-      return await updateStatus(service, token, cleanText(body.postId), cleanText(body.status));
+      return await updateStatus(service, supabaseUrl, serviceRoleKey, token, cleanText(body.postId), cleanText(body.status));
     }
 
     if (action === 'comment') {
       return await addComment(
         service,
+        supabaseUrl,
+        serviceRoleKey,
         token,
         cleanText(body.postId),
         cleanText(body.reviewerName).slice(0, 80),
@@ -96,7 +98,41 @@ async function getPortal(service: ReturnType<typeof createClient>, token: string
   });
 }
 
-async function updateStatus(service: ReturnType<typeof createClient>, token: string, postId: string, status: string) {
+const portalFeedRealtimeTopic = (token: string, feedId: string) => `portal-feed:${token}:${feedId}`;
+
+async function broadcastPortalChange(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  token: string,
+  feedId: string,
+  reason: string,
+) {
+  try {
+    await fetch(
+      `${supabaseUrl}/realtime/v1/api/broadcast/${encodeURIComponent(portalFeedRealtimeTopic(token, feedId))}/events/feed-changed`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: serviceRoleKey,
+          authorization: `Bearer ${serviceRoleKey}`,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ feedId, reason, at: new Date().toISOString() }),
+      },
+    );
+  } catch (error) {
+    console.warn('Portal realtime broadcast failed', error);
+  }
+}
+
+async function updateStatus(
+  service: ReturnType<typeof createClient>,
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  token: string,
+  postId: string,
+  status: string,
+) {
   if (!['pending', 'approved', 'rejected', 'changes_requested'].includes(status)) {
     return jsonResponse({ error: 'Unsupported review status.' }, 400);
   }
@@ -109,11 +145,15 @@ async function updateStatus(service: ReturnType<typeof createClient>, token: str
     .eq('id', post.id);
   if (error) throw error;
 
+  await broadcastPortalChange(supabaseUrl, serviceRoleKey, token, post.feed_id, 'status-updated');
+
   return jsonResponse({ ok: true });
 }
 
 async function addComment(
   service: ReturnType<typeof createClient>,
+  supabaseUrl: string,
+  serviceRoleKey: string,
   token: string,
   postId: string,
   reviewerName: string,
@@ -133,6 +173,8 @@ async function addComment(
       is_client: true,
     });
   if (error) throw error;
+
+  await broadcastPortalChange(supabaseUrl, serviceRoleKey, token, post.feed_id, 'comment-added');
 
   return jsonResponse({ ok: true });
 }

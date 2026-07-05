@@ -6,6 +6,7 @@
  * All mutations automatically invalidate related queries.
  */
 
+import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -20,7 +21,88 @@ type ContentItemRow = Database['public']['Tables']['content_items']['Row'];
 type NoteRow = Database['public']['Tables']['notes']['Row'];
 type TaskRow = Database['public']['Tables']['tasks']['Row'];
 type PortalClientUpdate = Database['public']['Tables']['portal_clients']['Update'];
+type PortalReviewPostRow = Database['public']['Tables']['portal_review_posts']['Row'];
+type PortalReviewPostInsert = Database['public']['Tables']['portal_review_posts']['Insert'];
+type PortalCommentRow = Database['public']['Tables']['portal_comments']['Row'];
+type PortalReviewPostWithComments = PortalReviewPostRow & {
+    portal_comments?: PortalCommentRow[] | null;
+};
 type JsonRecord = Record<string, unknown>;
+type AddPortalReviewPostInput = {
+    id: string;
+    content_item_id?: string;
+    content_type: string;
+    snapshot: JsonRecord;
+};
+
+const getTime = (value?: string | null) => value ? new Date(value).getTime() || 0 : 0;
+
+const sortPortalReviewPosts = (posts: PortalReviewPostWithComments[]) =>
+    [...posts].sort((a, b) => getTime(b.created_at) - getTime(a.created_at));
+
+const sortPortalComments = (comments: PortalCommentRow[]) =>
+    [...comments].sort((a, b) => getTime(a.created_at) - getTime(b.created_at));
+
+const normalizePortalReviewPost = (
+    post: PortalReviewPostRow | PortalReviewPostWithComments,
+    existing?: PortalReviewPostWithComments,
+): PortalReviewPostWithComments => ({
+    ...existing,
+    ...post,
+    portal_comments: sortPortalComments([
+        ...((post as PortalReviewPostWithComments).portal_comments || existing?.portal_comments || []),
+    ]),
+});
+
+const upsertPortalReviewPost = (
+    posts: PortalReviewPostWithComments[] = [],
+    post: PortalReviewPostRow | PortalReviewPostWithComments,
+) => {
+    const existing = posts.find(item => item.id === post.id);
+    const nextPost = normalizePortalReviewPost(post, existing);
+    const nextPosts = existing
+        ? posts.map(item => item.id === post.id ? nextPost : item)
+        : [nextPost, ...posts];
+
+    return sortPortalReviewPosts(nextPosts);
+};
+
+const removePortalReviewPost = (posts: PortalReviewPostWithComments[] = [], id?: string) =>
+    id ? posts.filter(post => post.id !== id) : posts;
+
+const upsertPortalComment = (
+    posts: PortalReviewPostWithComments[] = [],
+    comment: PortalCommentRow,
+) => posts.map(post => {
+    if (post.id !== comment.post_id) return post;
+
+    const comments = post.portal_comments || [];
+    const exists = comments.some(item => item.id === comment.id);
+    const nextComments = exists
+        ? comments.map(item => item.id === comment.id ? { ...item, ...comment } : item)
+        : [...comments, comment];
+
+    return {
+        ...post,
+        portal_comments: sortPortalComments(nextComments),
+    };
+});
+
+const removePortalComment = (posts: PortalReviewPostWithComments[] = [], id?: string) =>
+    id
+        ? posts.map(post => ({
+            ...post,
+            portal_comments: (post.portal_comments || []).filter(comment => comment.id !== id),
+        }))
+        : posts;
+
+const toPortalReviewPostInsert = (feedId: string, post: AddPortalReviewPostInput): PortalReviewPostInsert => ({
+    id: post.id,
+    content_item_id: post.content_item_id || null,
+    content_type: post.content_type,
+    snapshot: post.snapshot as Json,
+    feed_id: feedId,
+});
 
 export type BrandGuide = {
     id: string;
@@ -915,9 +997,10 @@ export function usePortalFeeds(clientId: string) {
 
 export function usePortalReviewPosts(feedId: string) {
     const qc = useQueryClient();
+    const queryKey = useMemo(() => keys.portalReviewPosts(feedId), [feedId]);
 
-    const query = useQuery({
-        queryKey: keys.portalReviewPosts(feedId),
+    const query = useQuery<PortalReviewPostWithComments[]>({
+        queryKey,
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('portal_review_posts')
@@ -925,50 +1008,284 @@ export function usePortalReviewPosts(feedId: string) {
                 .eq('feed_id', feedId)
                 .order('created_at', { ascending: false });
             if (error) throw error;
-            return data;
+            return sortPortalReviewPosts(
+                ((data || []) as PortalReviewPostWithComments[]).map(post => normalizePortalReviewPost(post))
+            );
         },
         enabled: !!feedId,
     });
 
+    useEffect(() => {
+        if (!feedId) return;
+
+        const channel = supabase
+            .channel(`portal-review-posts:${feedId}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'portal_review_posts',
+                    filter: `feed_id=eq.${feedId}`,
+                },
+                (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        const deletedId = (payload.old as Partial<PortalReviewPostRow>)?.id;
+                        qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                            removePortalReviewPost(current || [], deletedId)
+                        );
+                        return;
+                    }
+
+                    const nextPost = payload.new as PortalReviewPostRow;
+                    if (!nextPost?.id) return;
+
+                    qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                        upsertPortalReviewPost(current || [], nextPost)
+                    );
+                }
+            )
+            .subscribe((status) => {
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    void qc.invalidateQueries({ queryKey });
+                }
+            });
+
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+    }, [feedId, qc, queryKey]);
+
+    const commentPostIds = (query.data || [])
+        .map(post => post.id)
+        .filter(Boolean)
+        .sort()
+        .join(',');
+
+    useEffect(() => {
+        if (!feedId || !commentPostIds) return;
+
+        const postIds = commentPostIds.split(',').filter(Boolean);
+        const postIdSet = new Set(postIds);
+        const filter = postIds.length <= 100
+            ? `post_id=in.(${postIds.join(',')})`
+            : undefined;
+        const channelKey = postIds.length > 8
+            ? `${postIds.length}:${postIds[0]}:${postIds[postIds.length - 1]}`
+            : postIds.join(':');
+
+        const channel = supabase
+            .channel(`portal-comments:${feedId}:${channelKey}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'portal_comments',
+                    ...(filter ? { filter } : {}),
+                },
+                (payload) => {
+                    if (payload.eventType === 'DELETE') {
+                        const deletedId = (payload.old as Partial<PortalCommentRow>)?.id;
+                        qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                            removePortalComment(current || [], deletedId)
+                        );
+                        return;
+                    }
+
+                    const comment = payload.new as PortalCommentRow;
+                    if (!comment?.id || !postIdSet.has(comment.post_id)) return;
+
+                    qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                        upsertPortalComment(current || [], comment)
+                    );
+                }
+            )
+            .subscribe((status) => {
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+                    void qc.invalidateQueries({ queryKey });
+                }
+            });
+
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+    }, [commentPostIds, feedId, qc, queryKey]);
+
     const addReviewPost = useMutation({
-        mutationFn: async (post: {
-            content_item_id?: string;
-            content_type: string;
-            snapshot: Record<string, unknown>;
-        }) => {
-            const { error } = await supabase
+        mutationFn: async (post: AddPortalReviewPostInput) => {
+            const { data, error } = await supabase
                 .from('portal_review_posts')
-                .insert({ ...post, snapshot: post.snapshot as Json, feed_id: feedId });
+                .insert(toPortalReviewPostInsert(feedId, post))
+                .select('*, portal_comments(*)')
+                .single();
             if (error) throw error;
+            return data as PortalReviewPostWithComments;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalReviewPosts(feedId) }),
+        onMutate: async (post) => {
+            await qc.cancelQueries({ queryKey });
+            const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
+            const now = new Date().toISOString();
+
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                upsertPortalReviewPost(current || [], {
+                    id: post.id,
+                    feed_id: feedId,
+                    content_item_id: post.content_item_id || null,
+                    content_type: post.content_type,
+                    snapshot: post.snapshot as Json,
+                    status: 'pending',
+                    created_at: now,
+                    updated_at: now,
+                    portal_comments: [],
+                })
+            );
+
+            return { previous };
+        },
+        onError: (_error, _post, context) => {
+            if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        },
+        onSuccess: (post) => {
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                upsertPortalReviewPost(current || [], post)
+            );
+        },
+    });
+
+    const addReviewPosts = useMutation({
+        mutationFn: async (posts: AddPortalReviewPostInput[]) => {
+            if (posts.length === 0) return [];
+
+            const { data, error } = await supabase
+                .from('portal_review_posts')
+                .insert(posts.map(post => toPortalReviewPostInsert(feedId, post)))
+                .select('*, portal_comments(*)');
+            if (error) throw error;
+            return data as PortalReviewPostWithComments[];
+        },
+        onMutate: async (posts) => {
+            await qc.cancelQueries({ queryKey });
+            const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
+            const now = new Date().toISOString();
+
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                posts.reduce(
+                    (nextPosts, post) => upsertPortalReviewPost(nextPosts, {
+                        id: post.id,
+                        feed_id: feedId,
+                        content_item_id: post.content_item_id || null,
+                        content_type: post.content_type,
+                        snapshot: post.snapshot as Json,
+                        status: 'pending',
+                        created_at: now,
+                        updated_at: now,
+                        portal_comments: [],
+                    }),
+                    current || [],
+                )
+            );
+
+            return { previous };
+        },
+        onError: (_error, _posts, context) => {
+            if (context) qc.setQueryData(queryKey, context.previous);
+        },
+        onSuccess: (posts) => {
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                posts.reduce(
+                    (nextPosts, post) => upsertPortalReviewPost(nextPosts, post),
+                    current || [],
+                )
+            );
+        },
     });
 
     const updateReviewStatus = useMutation({
         mutationFn: async ({ id, status }: { id: string; status: string }) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('portal_review_posts')
                 .update({ status })
-                .eq('id', id);
+                .eq('id', id)
+                .select('*, portal_comments(*)')
+                .single();
             if (error) throw error;
+            return data as PortalReviewPostWithComments;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalReviewPosts(feedId) }),
+        onMutate: async ({ id, status }) => {
+            await qc.cancelQueries({ queryKey });
+            const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
+            const now = new Date().toISOString();
+
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                (current || []).map(post =>
+                    post.id === id ? { ...post, status, updated_at: now } : post
+                )
+            );
+
+            return { previous };
+        },
+        onError: (_error, _variables, context) => {
+            if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        },
+        onSuccess: (post) => {
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                upsertPortalReviewPost(current || [], post)
+            );
+        },
     });
 
     const addComment = useMutation({
         mutationFn: async ({ postId, comment }: {
             postId: string;
-            comment: { author: string; text: string; avatar?: string; is_client?: boolean };
+            comment: { id: string; author: string; text: string; avatar?: string; is_client?: boolean; created_at?: string };
         }) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('portal_comments')
-                .insert({ ...comment, post_id: postId });
+                .insert({
+                    id: comment.id,
+                    author: comment.author,
+                    text: comment.text,
+                    avatar: comment.avatar,
+                    is_client: comment.is_client,
+                    created_at: comment.created_at,
+                    post_id: postId,
+                })
+                .select('*')
+                .single();
             if (error) throw error;
+            return data as PortalCommentRow;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalReviewPosts(feedId) }),
+        onMutate: async ({ postId, comment }) => {
+            await qc.cancelQueries({ queryKey });
+            const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
+            const optimisticComment: PortalCommentRow = {
+                id: comment.id,
+                post_id: postId,
+                author: comment.author,
+                text: comment.text,
+                avatar: comment.avatar || null,
+                is_client: comment.is_client ?? false,
+                created_at: comment.created_at || new Date().toISOString(),
+            };
+
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                upsertPortalComment(current || [], optimisticComment)
+            );
+
+            return { previous };
+        },
+        onError: (_error, _variables, context) => {
+            if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        },
+        onSuccess: (comment) => {
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                upsertPortalComment(current || [], comment)
+            );
+        },
     });
 
-    return { ...query, addReviewPost, updateReviewStatus, addComment };
+    return { ...query, addReviewPost, addReviewPosts, updateReviewStatus, addComment };
 }
 
 // ── ORG TOOLS ──────────────────────────────────────────────────────────

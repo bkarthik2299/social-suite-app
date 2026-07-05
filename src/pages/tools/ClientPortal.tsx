@@ -252,6 +252,25 @@ const buildClientReviewUrl = (accessToken?: string | null, feedId?: string | nul
     return feedId ? `${base}/${feedId}` : base;
 };
 
+const portalFeedRealtimeTopic = (accessToken?: string | null, feedId?: string | null) =>
+    accessToken && feedId ? `portal-feed:${accessToken}:${feedId}` : '';
+
+const notifyPortalFeedChanged = async (accessToken?: string | null, feedId?: string | null, reason = 'updated') => {
+    const topic = portalFeedRealtimeTopic(accessToken, feedId);
+    if (!topic) return;
+
+    const channel = supabase.channel(topic);
+    try {
+        await channel.send({
+            type: 'broadcast',
+            event: 'feed-changed',
+            payload: { feedId, reason, at: new Date().toISOString() },
+        });
+    } finally {
+        void supabase.removeChannel(channel);
+    }
+};
+
 const copyTextToClipboard = async (text: string) => {
     try {
         if (navigator.clipboard?.writeText) {
@@ -448,15 +467,15 @@ export function ClientPortalPublicReview() {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
-    const loadPortal = async (nextFeedId = selectedFeedId) => {
+    const loadPortal = async (nextFeedId = selectedFeedId, options: { silent?: boolean } = {}) => {
         if (!token) {
             setError('This review link is missing a client access token.');
             setLoading(false);
             return;
         }
 
-        setLoading(true);
-        setError('');
+        if (!options.silent) setLoading(true);
+        if (!options.silent) setError('');
         try {
             const { data, error: invokeError } = await supabase.functions.invoke('portal-public-review', {
                 body: {
@@ -472,9 +491,11 @@ export function ClientPortalPublicReview() {
             setPayload(nextPayload);
             setSelectedFeedId(nextPayload.selectedFeedId || '');
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Could not load this client review feed.');
+            if (!options.silent) {
+                setError(err instanceof Error ? err.message : 'Could not load this client review feed.');
+            }
         } finally {
-            setLoading(false);
+            if (!options.silent) setLoading(false);
         }
     };
 
@@ -482,6 +503,23 @@ export function ClientPortalPublicReview() {
         void loadPortal(feedId || '');
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [token, feedId]);
+
+    useEffect(() => {
+        const topic = portalFeedRealtimeTopic(token, selectedFeedId);
+        if (!topic) return;
+
+        const channel = supabase
+            .channel(topic)
+            .on('broadcast', { event: 'feed-changed' }, () => {
+                void loadPortal(selectedFeedId, { silent: true });
+            })
+            .subscribe();
+
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedFeedId, token]);
 
     const posts = useMemo(() => (payload?.posts || []).map(mapReviewPostRecord), [payload?.posts]);
     const selectedFeed = payload?.feeds.find(feed => feed.id === selectedFeedId) || null;
@@ -493,10 +531,54 @@ export function ClientPortalPublicReview() {
         window.localStorage.setItem(`portal-reviewer-${token}`, name);
     };
 
+    const updatePublicPostStatus = (postId: string, status: string) => {
+        setPayload(previous => previous ? {
+            ...previous,
+            posts: previous.posts.map(post => {
+                const record = getRecord(post);
+                return getString(record.id) === postId
+                    ? { ...record, status }
+                    : post;
+            }),
+        } : previous);
+    };
+
+    const addPublicComment = (postId: string, comment: Record<string, unknown>) => {
+        setPayload(previous => previous ? {
+            ...previous,
+            posts: previous.posts.map(post => {
+                const record = getRecord(post);
+                if (getString(record.id) !== postId) return post;
+
+                return {
+                    ...record,
+                    portal_comments: [...getArray(record.portal_comments), comment],
+                };
+            }),
+        } : previous);
+    };
+
     const runClientAction = async (body: Record<string, unknown>, successTitle: string) => {
         if (!reviewerName.trim()) {
             toast({ title: 'Add your name first', description: 'Your name is required before approving or commenting.' });
             return;
+        }
+
+        const previousPayload = payload;
+        const action = getString(body.action);
+        const postId = getString(body.postId);
+
+        if (action === 'status' && postId) {
+            updatePublicPostStatus(postId, getString(body.status));
+        } else if (action === 'comment' && postId) {
+            addPublicComment(postId, {
+                id: crypto.randomUUID(),
+                author: reviewerName,
+                text: getString(body.text),
+                created_at: new Date().toISOString(),
+                avatar: null,
+                is_client: true,
+            });
         }
 
         setSaving(true);
@@ -512,8 +594,9 @@ export function ClientPortalPublicReview() {
             if (data?.error) throw new Error(data.error);
 
             toast({ title: successTitle });
-            await loadPortal(selectedFeedId);
+            void loadPortal(selectedFeedId, { silent: true });
         } catch (err) {
+            setPayload(previousPayload);
             toast({
                 title: 'Review action failed',
                 description: err instanceof Error ? err.message : 'Please try again.',
@@ -626,7 +709,7 @@ export function ClientPortalPublicReview() {
                         <p className="mt-2 text-sm text-slate-500">The Social Suite team has not added content to this feed.</p>
                     </div>
                 ) : (
-                    <div className={cn("space-y-6", saving && "pointer-events-none opacity-70")}>
+                    <div className="space-y-6">
                         {posts.map(post => (
                             <PostCard
                                 key={post.id}
@@ -957,10 +1040,13 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
         setAccessToken(client.accessToken || '');
     }, [client.accessToken]);
 
-    const { data: dbPosts = [], addReviewPost, updateReviewStatus, addComment } = usePortalReviewPosts(selectedFeedId || '');
+    const { data: dbPosts = [], addReviewPosts, updateReviewStatus, addComment } = usePortalReviewPosts(selectedFeedId || '');
     const feedPosts = dbPosts.map(mapReviewPostRecord);
     const selectedFeed = selectedFeedId ? clientFeeds.find(feed => feed.id === selectedFeedId) : null;
     const shareUrl = buildClientReviewUrl(accessToken, selectedFeedId);
+    const notifySelectedFeedChanged = (reason: string) => {
+        void notifyPortalFeedChanged(accessToken, selectedFeedId, reason);
+    };
 
     const handleCreateFeedClick = () => {
         setNewFeedName('');
@@ -999,9 +1085,10 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
     };
 
     const handleImportPosts = (newPosts: ReviewPost[]) => {
-        newPosts.forEach(post => {
+        const postsToImport = newPosts.map(post => {
             const { id, feedId, status, date, comments, _contentItemId, contentType, ...snapshot } = post;
-            addReviewPost.mutate({
+            return {
+                id,
                 content_item_id: _contentItemId,
                 content_type: contentType,
                 snapshot: {
@@ -1009,9 +1096,45 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                     platform: post.platform,
                     content: post.content,
                     image_url: post.image,
-                }
-            });
+                },
+            };
         });
+
+        addReviewPosts.mutate(postsToImport, {
+            onSuccess: () => {
+                notifySelectedFeedChanged('posts-imported');
+            },
+            onError: (error) => {
+                toast({
+                    title: 'Import failed',
+                    description: error instanceof Error ? error.message : 'Please try again.',
+                    variant: 'destructive',
+                });
+            },
+        });
+    };
+
+    const handleStatusChange = (postId: string, status: ReviewPost['status']) => {
+        updateReviewStatus.mutate(
+            { id: postId, status },
+            { onSuccess: () => notifySelectedFeedChanged('status-updated') }
+        );
+    };
+
+    const handleAddFeedComment = (postId: string, text: string) => {
+        addComment.mutate(
+            {
+                postId,
+                comment: {
+                    id: crypto.randomUUID(),
+                    author: 'You',
+                    text,
+                    is_client: false,
+                    created_at: new Date().toISOString(),
+                }
+            },
+            { onSuccess: () => notifySelectedFeedChanged('comment-added') }
+        );
     };
 
     const handleCopyShareLink = async () => {
@@ -1192,11 +1315,8 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                         <PostCard
                                             key={post.id}
                                             post={post}
-                                            onStatusChange={(postId, status) => updateReviewStatus.mutate({ id: postId, status })}
-                                            onAddComment={(postId, text) => addComment.mutate({
-                                                postId,
-                                                comment: { author: 'You', text, is_client: false }
-                                            })}
+                                            onStatusChange={handleStatusChange}
+                                            onAddComment={handleAddFeedComment}
                                         />
                                     ))
                                 )}
@@ -1313,6 +1433,7 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
     useEffect(() => {
         if (open) {
             setExpandedIds(new Set(getDefaultExpandedIds(treeData)));
+            setSelectedIds([]);
         }
     }, [open, treeData]);
 
@@ -1334,7 +1455,7 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
             if (!item) return null;
 
             const basePost = {
-                id: Date.now().toString() + Math.random().toString(36).slice(2),
+                id: crypto.randomUUID(),
                 status: 'pending' as const,
                 date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
                 feedId: targetFeedId,
