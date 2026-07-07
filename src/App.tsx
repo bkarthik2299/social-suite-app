@@ -101,6 +101,7 @@ const App = () => {
                 <Route path="/tools/vault" element={<ProtectedRoute><PasswordVault /></ProtectedRoute>} />
                 <Route path="/tools/feed" element={<ProtectedRoute><FeedMonitor /></ProtectedRoute>} />
                 <Route path="/tools/client-portal" element={<ProtectedRoute><ClientPortal /></ProtectedRoute>} />
+                <Route path="/tools/client-portal/:feedSlug" element={<ProtectedRoute><ClientPortal /></ProtectedRoute>} />
                 <Route path="/tools/brand-guide" element={<ProtectedRoute><BrandGuide /></ProtectedRoute>} />
                 <Route path="/tools/sm-preview" element={<ProtectedRoute><SocialPreview /></ProtectedRoute>} />
                 <Route path="/tools/notes" element={<ProtectedRoute><Notes /></ProtectedRoute>} />
