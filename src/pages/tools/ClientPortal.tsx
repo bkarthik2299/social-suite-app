@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from "@/components/ui/button";
 import { Plus, Search, Filter, CheckCircle2, XCircle, MessageSquare, ArrowLeft, MoreHorizontal, ChevronDown, ChevronRight, Image as ImageIcon, Folder, ThumbsUp, Globe, Heart, Send, Bookmark, Pencil, Trash2, Maximize2, Layers, CalendarDays, FileText, Hash, Megaphone, MousePointerClick, Target, Copy, ExternalLink, Loader2, User, Check, Minus, Instagram, Facebook } from 'lucide-react';
@@ -28,10 +28,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { cn } from '@/lib/utils';
 import { Textarea } from "@/components/ui/textarea";
-import { ContentItem, useProjects, useAllFolders, useAllCampaigns, useAllContentItems, usePortalClients, usePortalFeeds, usePortalReviewPosts } from '@/hooks/useDatabase';
+import { ContentItem, useProjects, useAllFolders, useAllCampaigns, useAllContentItems, usePortalClients, usePortalFeeds, useAllPortalFeeds, usePortalReviewPosts } from '@/hooks/useDatabase';
 import { GoogleAd, SocialAd, BlogPost } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/use-toast';
+import { useAuth } from '@/context/AuthContext';
 
 // Types
 type Client = {
@@ -97,6 +98,9 @@ type ReviewPost = {
     name?: string;
     creativeBrief?: string;
     topic?: string;
+    visualGuide?: string;
+    visualIdea?: string;
+    visualDescription?: string;
     hashtags?: string[];
     platforms?: string[];
     scheduledDate?: string;
@@ -173,6 +177,58 @@ const formatCampaignType = (value: unknown): string => {
     }
 };
 
+const firstText = (...values: unknown[]): string => {
+    for (const value of values) {
+        const text = getString(value).trim();
+        if (text) return text;
+    }
+    return '';
+};
+
+const getPostVisualIdea = (post: ReviewPost): string => {
+    const record = getRecord(post);
+    return firstText(
+        post.visualGuide,
+        post.visualIdea,
+        post.visualDescription,
+        record.visual_idea,
+        record.visual_description,
+        record.visualGuide,
+        record.creativeBrief
+    );
+};
+
+const slugifyPortalFeed = (value: string): string =>
+    value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/(^-|-$)/g, '');
+
+const getPortalFeedSlug = (feed: { id: string; name: string }): string => {
+    const base = slugifyPortalFeed(feed.name) || 'feed';
+    return `${base}-${feed.id.slice(0, 8)}`;
+};
+
+const isPortalFeedSlugMatch = (slug: string, feed: { id: string; name: string }): boolean => {
+    const normalizedSlug = slugifyPortalFeed(slug);
+    return normalizedSlug === getPortalFeedSlug(feed)
+        || normalizedSlug === slugifyPortalFeed(feed.name)
+        || normalizedSlug === feed.id.toLowerCase()
+        || normalizedSlug === feed.id.slice(0, 8).toLowerCase();
+};
+
+const getSignedInUserName = (user: { email?: string | null; user_metadata?: Record<string, unknown> } | null): string => {
+    if (!user) return 'Social Suite Team';
+    const metadata = getRecord(user.user_metadata);
+    return firstText(
+        metadata.full_name,
+        metadata.name,
+        metadata.display_name,
+        user.email?.split('@')[0],
+        'Social Suite Team'
+    );
+};
+
 const toReviewPlatform = (value: unknown): ReviewPost['platform'] => {
     const platform = getString(value);
     if (platform === 'google-ad') return 'google';
@@ -232,12 +288,13 @@ const formatReviewDate = (value: unknown): string => {
     if (Number.isNaN(date.getTime())) return rawDate;
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
-const mapPortalComments = (value: unknown): Comment[] =>
+const mapPortalComments = (value: unknown, internalAuthorFallback = 'Social Suite Team'): Comment[] =>
     getArray(value).map((comment, index) => {
         const record = getRecord(comment);
+        const author = getString(record.author) || 'Unknown';
         return {
             id: getString(record.id) || `${index}`,
-            author: getString(record.author) || 'Unknown',
+            author: author.trim().toLowerCase() === 'you' ? internalAuthorFallback : author,
             text: getString(record.text),
             date: formatReviewDate(record.created_at) || 'Just now',
             avatar: getString(record.avatar) || undefined,
@@ -261,6 +318,24 @@ const notifyPortalFeedChanged = async (accessToken?: string | null, feedId?: str
 
     const channel = supabase.channel(topic);
     try {
+        const subscribed = await new Promise<boolean>((resolve) => {
+            const timeoutId = window.setTimeout(() => resolve(false), 2500);
+
+            channel.subscribe((status) => {
+                if (status === 'SUBSCRIBED') {
+                    window.clearTimeout(timeoutId);
+                    resolve(true);
+                }
+
+                if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+                    window.clearTimeout(timeoutId);
+                    resolve(false);
+                }
+            });
+        });
+
+        if (!subscribed) return;
+
         await channel.send({
             type: 'broadcast',
             event: 'feed-changed',
@@ -299,7 +374,7 @@ const copyTextToClipboard = async (text: string) => {
     }
 };
 
-const mapReviewPostRecord = (value: unknown): ReviewPost => {
+const mapReviewPostRecord = (value: unknown, internalAuthorFallback?: string): ReviewPost => {
     const record = getRecord(value);
     const snapshot = getRecord(record.snapshot);
     const contentType = toReviewContentType(record.content_type || snapshot.contentType);
@@ -313,17 +388,20 @@ const mapReviewPostRecord = (value: unknown): ReviewPost => {
         status: toReviewStatus(record.status),
         date: formatReviewDate(record.created_at),
         feedId: getString(record.feed_id),
-        comments: mapPortalComments(record.portal_comments),
+        comments: mapPortalComments(record.portal_comments, internalAuthorFallback),
         contentType,
     };
 };
 
 export default function ClientPortal() {
+    const navigate = useNavigate();
+    const { feedSlug = '' } = useParams<{ feedSlug?: string }>();
     const { data: projects = [] } = useProjects();
     const { data: folders = [] } = useAllFolders();
     const { data: campaigns = [] } = useAllCampaigns();
     const { data: contentItems = [] } = useAllContentItems();
     const { data: dbClients = [], addClient, updateClient, deleteClient } = usePortalClients();
+    const { data: allPortalFeeds = [] } = useAllPortalFeeds();
     
     const [view, setView] = useState<'grid' | 'workspace'>('grid');
     const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
@@ -339,6 +417,15 @@ export default function ClientPortal() {
     const selectedClient = selectedClientId
         ? clients.find(c => c.id === selectedClientId)
         : null;
+    const routeFeed = feedSlug
+        ? allPortalFeeds.find(feed => isPortalFeedSlugMatch(feedSlug, feed)) || null
+        : null;
+
+    useEffect(() => {
+        if (!feedSlug || !routeFeed?.client_id) return;
+        setSelectedClientId(routeFeed.client_id);
+        setView('workspace');
+    }, [feedSlug, routeFeed?.client_id]);
 
     const handleClientSelect = (clientId: string) => {
         setSelectedClientId(clientId);
@@ -348,7 +435,12 @@ export default function ClientPortal() {
     const handleBackToGrid = () => {
         setSelectedClientId(null);
         setView('grid');
+        navigate('/tools/client-portal');
     };
+
+    const handleFeedPathChange = useCallback((feed: ClientFeed, options?: { replace?: boolean }) => {
+        navigate(`/tools/client-portal/${getPortalFeedSlug(feed)}`, { replace: options?.replace });
+    }, [navigate]);
 
     const handleRenameClient = (id: string, newName: string) => {
         updateClient.mutate({ id, updates: { name: newName } });
@@ -447,6 +539,8 @@ export default function ClientPortal() {
                     onBack={handleBackToGrid}
                     treeData={projectTreeData}
                     onEnsureAccessToken={handleEnsureClientAccessToken}
+                    requestedFeedId={routeFeed?.client_id === selectedClient.id ? routeFeed.id : null}
+                    onFeedPathChange={handleFeedPathChange}
                 />
             )}
         </AppLayout>
@@ -521,7 +615,21 @@ export function ClientPortalPublicReview() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedFeedId, token]);
 
-    const posts = useMemo(() => (payload?.posts || []).map(mapReviewPostRecord), [payload?.posts]);
+    useEffect(() => {
+        if (!token || !selectedFeedId) return;
+
+        const intervalId = window.setInterval(() => {
+            void loadPortal(selectedFeedId, { silent: true });
+        }, 5000);
+
+        return () => window.clearInterval(intervalId);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedFeedId, token]);
+
+    const posts = useMemo(
+        () => (payload?.posts || []).map(post => mapReviewPostRecord(post, 'Social Suite Team')),
+        [payload?.posts]
+    );
     const selectedFeed = payload?.feeds.find(feed => feed.id === selectedFeedId) || null;
 
     const saveReviewerName = () => {
@@ -594,6 +702,7 @@ export function ClientPortalPublicReview() {
             if (data?.error) throw new Error(data.error);
 
             toast({ title: successTitle });
+            void notifyPortalFeedChanged(token, selectedFeedId, `${action || 'review'}-updated`);
             void loadPortal(selectedFeedId, { silent: true });
         } catch (err) {
             setPayload(previousPayload);
@@ -1003,10 +1112,13 @@ interface ClientWorkspaceProps {
     onBack: () => void;
     treeData: TreeItem[];
     onEnsureAccessToken: (clientId: string) => Promise<string>;
+    requestedFeedId?: string | null;
+    onFeedPathChange: (feed: ClientFeed, options?: { replace?: boolean }) => void;
 }
 
-function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken }: ClientWorkspaceProps) {
+function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken, requestedFeedId, onFeedPathChange }: ClientWorkspaceProps) {
     const { toast } = useToast();
+    const { user } = useAuth();
     const { data: dbFeeds = [], addFeed, deleteFeed } = usePortalFeeds(clientId);
     const clientFeeds = useMemo(
         () => dbFeeds.map(f => ({ id: f.id, clientId: f.client_id, name: f.name, postCount: 0 })),
@@ -1020,14 +1132,21 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
             return;
         }
 
+        if (requestedFeedId && clientFeeds.some(feed => feed.id === requestedFeedId)) {
+            if (selectedFeedId !== requestedFeedId) setSelectedFeedId(requestedFeedId);
+            return;
+        }
+
         const selectedFeedExists = selectedFeedId
             ? clientFeeds.some(feed => feed.id === selectedFeedId)
             : false;
 
         if (!selectedFeedExists) {
-            setSelectedFeedId(clientFeeds[0].id);
+            const nextFeed = clientFeeds[0];
+            setSelectedFeedId(nextFeed.id);
+            onFeedPathChange(nextFeed, { replace: true });
         }
-    }, [clientFeeds, selectedFeedId]);
+    }, [clientFeeds, onFeedPathChange, requestedFeedId, selectedFeedId]);
     
     const [isCreateFeedOpen, setIsCreateFeedOpen] = useState(false);
     const [newFeedName, setNewFeedName] = useState('');
@@ -1035,18 +1154,36 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
     const [copyingLink, setCopyingLink] = useState(false);
     const [manualShareUrl, setManualShareUrl] = useState('');
     const [feedPendingDelete, setFeedPendingDelete] = useState<ClientFeed | null>(null);
+    const [postPendingRemove, setPostPendingRemove] = useState<ReviewPost | null>(null);
 
     useEffect(() => {
         setAccessToken(client.accessToken || '');
     }, [client.accessToken]);
 
-    const { data: dbPosts = [], addReviewPosts, updateReviewStatus, addComment } = usePortalReviewPosts(selectedFeedId || '');
-    const feedPosts = dbPosts.map(mapReviewPostRecord);
+    const { data: dbPosts = [], addReviewPosts, updateReviewStatus, addComment, deleteReviewPost, refetch: refetchReviewPosts } = usePortalReviewPosts(selectedFeedId || '');
+    const signedInUserName = getSignedInUserName(user);
+    const feedPosts = dbPosts.map(post => mapReviewPostRecord(post, signedInUserName));
     const selectedFeed = selectedFeedId ? clientFeeds.find(feed => feed.id === selectedFeedId) : null;
     const shareUrl = buildClientReviewUrl(accessToken, selectedFeedId);
     const notifySelectedFeedChanged = (reason: string) => {
         void notifyPortalFeedChanged(accessToken, selectedFeedId, reason);
     };
+
+    useEffect(() => {
+        const topic = portalFeedRealtimeTopic(accessToken, selectedFeedId);
+        if (!topic) return;
+
+        const channel = supabase
+            .channel(topic)
+            .on('broadcast', { event: 'feed-changed' }, () => {
+                void refetchReviewPosts();
+            })
+            .subscribe();
+
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+    }, [accessToken, refetchReviewPosts, selectedFeedId]);
 
     const handleCreateFeedClick = () => {
         setNewFeedName('');
@@ -1127,7 +1264,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                 postId,
                 comment: {
                     id: crypto.randomUUID(),
-                    author: 'You',
+                    author: signedInUserName,
                     text,
                     is_client: false,
                     created_at: new Date().toISOString(),
@@ -1135,6 +1272,29 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
             },
             { onSuccess: () => notifySelectedFeedChanged('comment-added') }
         );
+    };
+
+    const handleRemovePost = () => {
+        if (!postPendingRemove) return;
+        const removedPost = postPendingRemove;
+
+        deleteReviewPost.mutate(removedPost.id, {
+            onSuccess: () => {
+                setPostPendingRemove(null);
+                notifySelectedFeedChanged('post-removed');
+                toast({
+                    title: 'Post removed',
+                    description: `"${removedPost.name || removedPost.title || removedPost.content || 'Review item'}" was removed from this feed.`,
+                });
+            },
+            onError: (error) => {
+                toast({
+                    title: 'Could not remove post',
+                    description: error instanceof Error ? error.message : 'Please try again.',
+                    variant: 'destructive',
+                });
+            },
+        });
     };
 
     const handleCopyShareLink = async () => {
@@ -1217,7 +1377,10 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                 >
                                     <button
                                         type="button"
-                                        onClick={() => setSelectedFeedId(feed.id)}
+                                        onClick={() => {
+                                            setSelectedFeedId(feed.id);
+                                            onFeedPathChange(feed);
+                                        }}
                                         className={cn(
                                             "min-w-0 flex-1 px-3 py-2.5 text-left text-sm transition-colors",
                                             selectedFeedId === feed.id && "font-medium"
@@ -1317,6 +1480,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                             post={post}
                                             onStatusChange={handleStatusChange}
                                             onAddComment={handleAddFeedComment}
+                                            onRemove={() => setPostPendingRemove(post)}
                                         />
                                     ))
                                 )}
@@ -1376,6 +1540,27 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                             className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                         >
                             Delete Feed
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            <AlertDialog open={!!postPendingRemove} onOpenChange={(open) => !open && setPostPendingRemove(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Remove post from feed?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This removes "{postPendingRemove?.name || postPendingRemove?.title || postPendingRemove?.content || 'this review item'}" from this client feed, including its approvals and comments. The original project content stays unchanged.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={deleteReviewPost.isPending}>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={handleRemovePost}
+                            disabled={deleteReviewPost.isPending}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                        >
+                            {deleteReviewPost.isPending ? 'Removing...' : 'Remove Post'}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>
@@ -1523,15 +1708,13 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
         return ids;
     }
 
-    const getCampaignIds = (item: TreeItem): string[] => {
-        if (item.type === 'campaign') return [item.id];
-        return item.children?.flatMap(getCampaignIds) || [];
+    const getPostIds = (item: TreeItem): string[] => {
+        if (item.type === 'post') return [item.id];
+        return item.children?.flatMap(getPostIds) || [];
     };
 
     const getSelectionTargetIds = (item: TreeItem): string[] => {
-        if (item.type === 'project' || item.type === 'folder') return getCampaignIds(item);
-        if (item.type === 'campaign' || item.type === 'post') return [item.id];
-        return [];
+        return getPostIds(item);
     };
 
     const getSelectionState = (item: TreeItem): SelectionState => {
@@ -1672,10 +1855,10 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
     };
 
     const getCheckboxLabel = (item: TreeItem) => {
-        if (item.type === 'project') return `Select all campaigns in project ${item.name}`;
-        if (item.type === 'folder') return `Select all campaigns in folder ${item.name}`;
-        if (item.type === 'campaign') return `Select campaign ${item.name}`;
-        return `Select post ${item.name}`;
+        if (item.type === 'project') return `Select all posts, ads, and blogs in project ${item.name}`;
+        if (item.type === 'folder') return `Select all posts, ads, and blogs in folder ${item.name}`;
+        if (item.type === 'campaign') return `Select all posts, ads, and blogs in campaign ${item.name}`;
+        return `Select content item ${item.name}`;
     };
 
     const TreeCheckbox = ({ item, state }: { item: TreeItem, state: SelectionState }) => {
@@ -1798,7 +1981,7 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
                 <DialogFooter className="min-w-0 border-t border-slate-200 px-6 py-4">
                     <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
                     <Button onClick={handleImport} disabled={selectedIds.length === 0} className="bg-primary hover:bg-primary/90 text-primary-foreground">
-                        Import {selectedIds.length} Posts
+                        Import {selectedIds.length} {selectedIds.length === 1 ? 'Item' : 'Items'}
                     </Button>
                 </DialogFooter>
             </DialogContent>
@@ -1814,10 +1997,12 @@ function PostCard({
     post,
     onStatusChange,
     onAddComment,
+    onRemove,
 }: {
     post: ReviewPost,
     onStatusChange: (postId: string, status: ReviewPost['status']) => void,
     onAddComment: (postId: string, text: string) => void,
+    onRemove?: () => void,
 }) {
     const [commentText, setCommentText] = useState('');
     const [isCommentsOpen, setIsCommentsOpen] = useState(false);
@@ -1864,6 +2049,18 @@ function PostCard({
                     >
                         <Maximize2 className="w-4 h-4" />
                     </Button>
+                    {onRemove && (
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-slate-400 hover:bg-rose-50 hover:text-destructive"
+                            onClick={onRemove}
+                            title="Remove from feed"
+                            aria-label="Remove from feed"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                        </Button>
+                    )}
                     <StatusBadge status={post.status} />
                 </div>
             </div>
@@ -2087,6 +2284,8 @@ function PostDetailsDialog({ open, onOpenChange, post }: { open: boolean, onOpen
             </div>
             <div className="rounded-lg border border-slate-200 bg-white px-4">
                 <DetailField label="Platform" value={getPlatformLabel(post.platform)} />
+                <DetailField label="Topic" value={post.topic || post.name} />
+                <DetailField label="Visual idea" value={getPostVisualIdea(post)} />
                 <DetailField label="Primary text" value={post.primaryText || post.content} />
                 <DetailField label="Headline" value={post.headline || post.name} />
                 <DetailField label="Description" value={post.description} />
@@ -2107,6 +2306,7 @@ function PostDetailsDialog({ open, onOpenChange, post }: { open: boolean, onOpen
                 <div className="rounded-lg border border-slate-200 bg-white px-4">
                     <TagList label="Platforms" values={platforms.map(getPlatformLabel)} />
                     <DetailField label="Topic" value={post.topic || post.name} />
+                    <DetailField label="Visual idea" value={getPostVisualIdea(post)} />
                     <DetailField label="Scheduled date" value={post.scheduledDate} />
                     <DetailField label="Full caption" value={post.content || post.caption} />
                     <TagList label="Hashtags" values={hashtags.map(tag => tag.startsWith('#') ? tag : `#${tag}`)} />
@@ -2194,8 +2394,11 @@ function PostDetailsDialog({ open, onOpenChange, post }: { open: boolean, onOpen
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-[min(calc(100vw-2rem),1120px)] max-h-[92vh] overflow-hidden p-0">
-                <DialogHeader className="border-b border-slate-200 px-6 py-5 text-left">
+            <DialogContent
+                className="max-w-[min(calc(100vw-2rem),1120px)] max-h-[92vh] overflow-hidden p-0"
+                closeClassName="right-5 top-5 h-9 w-9 rounded-full bg-white/95 text-slate-500 opacity-100 shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 hover:text-slate-900 focus:ring-slate-300 focus:ring-offset-0"
+            >
+                <DialogHeader className="border-b border-slate-200 px-6 py-5 pr-16 text-left">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                         <div className="min-w-0">
                             <DialogTitle className="text-2xl font-bold leading-tight text-slate-950">
@@ -2464,11 +2667,33 @@ const getCampaignReviewFocus = (campaignType: string | undefined) => {
     }
 };
 
+function PreviewBrief({ items }: { items: Array<{ label: string; value?: string }> }) {
+    const visibleItems = items
+        .map(item => ({ ...item, value: item.value?.trim() || '' }))
+        .filter(item => item.value);
+
+    if (visibleItems.length === 0) return null;
+
+    return (
+        <div className="grid gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+            {visibleItems.map(item => (
+                <div key={item.label} className="grid gap-1">
+                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{item.label}</p>
+                    <p className="text-sm leading-6 text-slate-700">{item.value}</p>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 function SocialPostViewer({ post }: { post: ReviewPost }) {
     const platforms = post.platforms?.length ? post.platforms : [post.platform];
     const caption = summarizeText(post.content || post.caption, 'Caption copy has not been added yet.', 360);
     const hashtags = getStringArray(post.hashtags).slice(0, 5);
-    const title = post.name || post.topic || 'Social post preview';
+    const topic = firstText(post.topic, post.name);
+    const visualIdea = getPostVisualIdea(post);
+    const visualIdeaPreview = visualIdea || 'Visual direction has not been added yet.';
+    const title = topic || 'Social post preview';
 
     return (
         <div className="tool-surface mx-auto max-w-[520px] overflow-hidden rounded-xl">
@@ -2500,19 +2725,25 @@ function SocialPostViewer({ post }: { post: ReviewPost }) {
                 ) : (
                     <div className="min-h-56 p-8 flex flex-col items-center justify-center text-center">
                         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                            <MessageSquare className="h-7 w-7" />
+                            <ImageIcon className="h-7 w-7" />
                         </div>
-                        <p className="max-w-md text-sm leading-6 text-slate-600">{caption}</p>
+                        <p className="max-w-md text-sm leading-6 text-slate-600">
+                            {visualIdea || topic || visualIdeaPreview}
+                        </p>
                     </div>
                 )}
             </div>
 
-            <div className="p-4">
-                {post.image && (
-                    <p className="mb-4 whitespace-pre-wrap text-sm leading-6 text-slate-700">{caption}</p>
-                )}
+            <div className="space-y-4 p-4">
+                <PreviewBrief
+                    items={[
+                        { label: 'Topic', value: topic },
+                        { label: 'Visual idea', value: visualIdeaPreview },
+                        { label: 'Caption', value: caption },
+                    ]}
+                />
                 {hashtags.length > 0 && (
-                    <div className="mb-4 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2">
                         {hashtags.map(tag => (
                             <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
                                 <Hash className="h-3 w-3" />
@@ -2575,6 +2806,10 @@ function SocialAdViewer({ post }: { post: ReviewPost }) {
     const domain = destination.replace(/^https?:\/\//, '').split('/')[0] || 'company-website.com';
     const primaryText = summarizeText(post.primaryText || post.content, 'Paid social copy has not been added yet.', 280);
     const headline = post.headline || post.name || 'Paid social headline';
+    const topic = firstText(post.topic, post.name, headline);
+    const visualIdea = getPostVisualIdea(post);
+    const visualIdeaPreview = visualIdea || 'Visual direction has not been added yet.';
+    const description = summarizeText(post.description || post.primaryText || post.content, 'Description copy has not been added yet.', 220);
     const cta = formatLabel(post.ctaText || post.cta) || 'Learn More';
 
     return (
@@ -2606,12 +2841,22 @@ function SocialAdViewer({ post }: { post: ReviewPost }) {
                 ) : (
                     <div className="h-64 flex flex-col items-center justify-center bg-slate-50 p-8 text-center">
                         <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                            <Megaphone className="h-8 w-8" />
+                            <ImageIcon className="h-8 w-8" />
                         </div>
-                        <p className="text-sm font-semibold text-slate-900">{headline}</p>
-                        {post.description && <p className="mt-1 max-w-sm text-xs text-slate-500">{post.description}</p>}
+                        <p className="text-sm font-semibold text-slate-900">{visualIdea || headline}</p>
+                        {topic && <p className="mt-1 max-w-sm text-xs text-slate-500">{topic}</p>}
                     </div>
                 )}
+            </div>
+
+            <div className="px-4 py-3">
+                <PreviewBrief
+                    items={[
+                        { label: 'Topic', value: topic },
+                        { label: 'Visual idea', value: visualIdeaPreview },
+                        { label: 'Description', value: description },
+                    ]}
+                />
             </div>
 
             <div className="bg-slate-50 p-3 flex items-center justify-between border-t border-slate-200/60">

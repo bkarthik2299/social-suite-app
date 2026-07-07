@@ -299,6 +299,7 @@ const keys = {
     feedPosts: (orgId: string) => ['feed_posts', orgId] as const,
     portalClients: (orgId: string) => ['portal_clients', orgId] as const,
     portalFeeds: (clientId: string) => ['portal_feeds', clientId] as const,
+    allPortalFeeds: (orgId: string) => ['portal_feeds', 'all', orgId] as const,
     portalReviewPosts: (feedId: string) => ['portal_review_posts', feedId] as const,
     portalComments: (postId: string) => ['portal_comments', postId] as const,
     orgTools: (orgId: string) => ['org_tools', orgId] as const,
@@ -935,6 +936,8 @@ export function usePortalClients() {
 
 export function usePortalFeeds(clientId: string) {
     const qc = useQueryClient();
+    const { organization } = useAuth();
+    const orgId = organization?.id ?? '';
 
     const query = useQuery({
         queryKey: keys.portalFeeds(clientId),
@@ -957,7 +960,10 @@ export function usePortalFeeds(clientId: string) {
                 .insert({ name, client_id: clientId });
             if (error) throw error;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.portalFeeds(clientId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.portalFeeds(clientId) });
+            if (orgId) qc.invalidateQueries({ queryKey: keys.allPortalFeeds(orgId) });
+        },
     });
 
     const deleteFeed = useMutation({
@@ -988,11 +994,33 @@ export function usePortalFeeds(clientId: string) {
         },
         onSuccess: (_data, id) => {
             qc.invalidateQueries({ queryKey: keys.portalFeeds(clientId) });
+            if (orgId) qc.invalidateQueries({ queryKey: keys.allPortalFeeds(orgId) });
             qc.invalidateQueries({ queryKey: keys.portalReviewPosts(id) });
         },
     });
 
     return { ...query, addFeed, deleteFeed };
+}
+
+export type PortalFeedRecord = Database['public']['Tables']['portal_feeds']['Row'];
+
+export function useAllPortalFeeds() {
+    const { organization } = useAuth();
+    const orgId = organization?.id ?? '';
+
+    return useQuery({
+        queryKey: keys.allPortalFeeds(orgId),
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('portal_feeds')
+                .select('*, portal_clients!inner(org_id)')
+                .eq('portal_clients.org_id', orgId)
+                .order('created_at', { ascending: false });
+            if (error) throw error;
+            return (data || []) as PortalFeedRecord[];
+        },
+        enabled: !!orgId,
+    });
 }
 
 export function usePortalReviewPosts(feedId: string) {
@@ -1013,6 +1041,8 @@ export function usePortalReviewPosts(feedId: string) {
             );
         },
         enabled: !!feedId,
+        refetchInterval: feedId ? 5000 : false,
+        refetchIntervalInBackground: false,
     });
 
     useEffect(() => {
@@ -1285,7 +1315,36 @@ export function usePortalReviewPosts(feedId: string) {
         },
     });
 
-    return { ...query, addReviewPost, addReviewPosts, updateReviewStatus, addComment };
+    const deleteReviewPost = useMutation({
+        mutationFn: async (id: string) => {
+            const { error } = await supabase
+                .from('portal_review_posts')
+                .delete()
+                .eq('id', id);
+            if (error) throw error;
+            return id;
+        },
+        onMutate: async (id) => {
+            await qc.cancelQueries({ queryKey });
+            const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
+
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                removePortalReviewPost(current || [], id)
+            );
+
+            return { previous };
+        },
+        onError: (_error, _id, context) => {
+            if (context?.previous) qc.setQueryData(queryKey, context.previous);
+        },
+        onSuccess: (id) => {
+            qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
+                removePortalReviewPost(current || [], id)
+            );
+        },
+    });
+
+    return { ...query, addReviewPost, addReviewPosts, updateReviewStatus, addComment, deleteReviewPost };
 }
 
 // ── ORG TOOLS ──────────────────────────────────────────────────────────
