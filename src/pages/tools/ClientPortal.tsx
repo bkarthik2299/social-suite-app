@@ -198,6 +198,23 @@ const getPostVisualIdea = (post: ReviewPost): string => {
     );
 };
 
+const commentAuthorTones = [
+    'text-blue-700',
+    'text-emerald-700',
+    'text-violet-700',
+    'text-amber-700',
+    'text-rose-700',
+    'text-cyan-700',
+];
+
+const getCommentAuthorTone = (author: string): string => {
+    const key = author.trim().toLowerCase() || 'unknown';
+    const hash = Array.from(key).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return commentAuthorTones[hash % commentAuthorTones.length];
+};
+
+const getCommentAuthorKey = (author: string): string => author.trim().toLowerCase() || 'unknown';
+
 const slugifyPortalFeed = (value: string): string =>
     value
         .toLowerCase()
@@ -388,6 +405,7 @@ const mapReviewPostRecord = (value: unknown, internalAuthorFallback?: string): R
         status: toReviewStatus(record.status),
         date: formatReviewDate(record.created_at),
         feedId: getString(record.feed_id),
+        _contentItemId: getString(record.content_item_id) || undefined,
         comments: mapPortalComments(record.portal_comments, internalAuthorFallback),
         contentType,
     };
@@ -1332,7 +1350,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
     return (
         <div className="flex h-[calc(100vh-120px)] gap-6">
             {/* Sidebar */}
-            <div className="tool-surface flex w-72 flex-col gap-4 rounded-xl p-4">
+            <div className="tool-surface flex w-80 flex-col gap-4 rounded-xl p-4">
                 <Button variant="ghost" className="self-start -ml-2 text-slate-500 hover:text-slate-900 gap-2 mb-2" onClick={onBack}>
                     <ArrowLeft className="w-4 h-4" /> Back to Clients
                 </Button>
@@ -1369,7 +1387,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                 <div
                                     key={feed.id}
                                     className={cn(
-                                        "group/feed flex items-center rounded-lg transition-all",
+                                        "group/feed grid grid-cols-[minmax(0,1fr)_28px] items-center gap-2 rounded-lg px-2 py-2 transition-all",
                                         selectedFeedId === feed.id
                                             ? "bg-primary/10 text-primary shadow-sm"
                                             : "text-slate-600 hover:bg-slate-50"
@@ -1382,16 +1400,17 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                             onFeedPathChange(feed);
                                         }}
                                         className={cn(
-                                            "min-w-0 flex-1 px-3 py-2.5 text-left text-sm transition-colors",
+                                            "min-w-0 text-left text-[13px] leading-5 transition-colors",
                                             selectedFeedId === feed.id && "font-medium"
                                         )}
+                                        title={feed.name}
                                     >
-                                        <span className="block truncate">{feed.name}</span>
+                                        <span className="line-clamp-2 break-words">{feed.name}</span>
                                     </button>
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="mr-1 h-7 w-7 shrink-0 text-slate-400 hover:bg-rose-50 hover:text-destructive"
+                                        className="h-7 w-7 self-center text-slate-400 hover:bg-rose-50 hover:text-destructive"
                                         onClick={(event) => {
                                             event.stopPropagation();
                                             setFeedPendingDelete(feed);
@@ -2007,6 +2026,13 @@ function PostCard({
     const [commentText, setCommentText] = useState('');
     const [isCommentsOpen, setIsCommentsOpen] = useState(false);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const commentAuthorToneByKey = useMemo(() => {
+        const authorKeys = Array.from(new Set(post.comments.map(comment => getCommentAuthorKey(comment.author))));
+        return authorKeys.reduce<Record<string, string>>((tones, key, index) => {
+            tones[key] = commentAuthorTones[index % commentAuthorTones.length];
+            return tones;
+        }, {});
+    }, [post.comments]);
 
     const handleAddComment = () => {
         const text = commentText.trim();
@@ -2134,38 +2160,43 @@ function PostCard({
                     </div>
 
                     {/* Comments */}
-                    <div className="flex-1 flex flex-col min-h-[250px] p-4 bg-slate-50/50">
+                    <div className="flex min-h-[250px] flex-col border-t border-slate-100 bg-slate-50/50 p-4 md:border-t-0">
                         <div className="flex items-center gap-2 mb-3">
                             <MessageSquare className="w-4 h-4 text-slate-400" />
                             <h4 className="text-sm font-semibold text-slate-600">Comments</h4>
                             <Badge variant="secondary" className="h-5 px-1.5 bg-slate-200 text-slate-600 ml-auto">{post.comments.length}</Badge>
                         </div>
 
-                        <ScrollArea className="flex-1 -mr-2 pr-2 mb-3">
+                        <div className="mb-3 max-h-[min(34vh,320px)] min-h-[150px] overflow-y-auto pr-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                             {post.comments.length === 0 ? (
                                 <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs italic py-8">
                                     <MessageSquare className="w-8 h-8 mb-2 opacity-20" />
                                     No comments yet
                                 </div>
                             ) : (
-                                <div className="space-y-3">
+                                <div className="divide-y divide-slate-100">
                                     {post.comments.map(comment => (
-                                        <div key={comment.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm text-sm">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <span className="font-semibold text-slate-800 text-xs">{comment.author}</span>
-                                                <span className="text-[10px] text-slate-400">{comment.date}</span>
+                                        <div key={comment.id} className="py-3 text-sm first:pt-0 last:pb-0">
+                                            <div className="flex justify-between items-start gap-3 mb-1">
+                                                <span className={cn(
+                                                    "font-semibold text-xs",
+                                                    commentAuthorToneByKey[getCommentAuthorKey(comment.author)] || getCommentAuthorTone(comment.author)
+                                                )}>
+                                                    {comment.author}
+                                                </span>
+                                                <span className="shrink-0 text-[10px] text-slate-400">{comment.date}</span>
                                             </div>
-                                            <p className="text-slate-600 leading-relaxed">{comment.text}</p>
+                                            <p className="text-slate-600 leading-relaxed break-words">{comment.text}</p>
                                         </div>
                                     ))}
                                 </div>
                             )}
-                        </ScrollArea>
+                        </div>
 
-                        <div className="mt-auto flex items-end rounded-xl bg-white p-1 shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary/20">
+                        <div className="mt-auto flex min-h-[48px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-sm transition-all focus-within:border-primary/30 focus-within:ring-2 focus-within:ring-primary/10">
                             <Textarea
                                 placeholder="Add a comment..."
-                                className="min-h-[40px] max-h-[100px] border-0 focus-visible:ring-0 resize-none text-sm bg-transparent placeholder:text-slate-400"
+                                className="min-h-[24px] max-h-[96px] flex-1 resize-none border-0 bg-transparent p-0 text-sm leading-6 placeholder:text-slate-400 focus-visible:ring-0"
                                 value={commentText}
                                 onChange={(e) => setCommentText(e.target.value)}
                                 onKeyDown={(e) => {
@@ -2177,8 +2208,9 @@ function PostCard({
                             />
                             <Button
                                 size="icon"
-                                className="h-8 w-8 shrink-0 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground mb-0.5 mr-0.5"
+                                className="h-8 w-8 shrink-0 rounded-full bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 disabled:bg-slate-200 disabled:text-slate-400 disabled:opacity-100"
                                 onClick={handleAddComment}
+                                disabled={!commentText.trim()}
                                 aria-label="Send comment"
                             >
                                 <Send className="w-3.5 h-3.5" />
