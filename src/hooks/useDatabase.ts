@@ -35,6 +35,12 @@ type AddPortalReviewPostInput = {
     snapshot: JsonRecord;
 };
 
+const getString = (value: unknown): string => typeof value === 'string' ? value : '';
+const getStringArray = (value: unknown): string[] => Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    : [];
+const getFirstString = (value: unknown): string => getStringArray(value)[0] || getString(value);
+
 const getTime = (value?: string | null) => value ? new Date(value).getTime() || 0 : 0;
 
 const sortPortalReviewPosts = (posts: PortalReviewPostWithComments[]) =>
@@ -103,6 +109,61 @@ const toPortalReviewPostInsert = (feedId: string, post: AddPortalReviewPostInput
     snapshot: post.snapshot as Json,
     feed_id: feedId,
 });
+
+const toPortalReviewContentType = (value: unknown) => {
+    switch (getString(value)) {
+        case 'post':
+        case 'socials':
+        case 'social-post':
+            return 'social-post';
+        case 'google-ad':
+            return 'google-ad';
+        case 'meta-ad':
+        case 'social-ad':
+            return 'social-ad';
+        case 'blog':
+        case 'blogs':
+            return 'blog';
+        default:
+            return 'social-post';
+    }
+};
+
+const getPortalReviewContent = (contentType: string, payload: JsonRecord, fallback = 'Untitled') => {
+    switch (contentType) {
+        case 'google-ad':
+            return getFirstString(payload.headlines) || getString(payload.headline) || getString(payload.content) || fallback;
+        case 'social-ad':
+            return getString(payload.primaryText) || getString(payload.headline) || getString(payload.content) || fallback;
+        case 'blog':
+            return getString(payload.content) || getString(payload.excerpt) || getString(payload.title) || fallback;
+        default:
+            return getString(payload.caption) || getString(payload.content) || fallback;
+    }
+};
+
+const getPortalReviewImage = (payload: JsonRecord) =>
+    getString(payload.image_url) || getString(payload.image) || getString(payload.featuredImage);
+
+const buildPortalReviewSnapshot = (item: ContentItemRow | ContentItem) => {
+    const payload = toPayloadRecord(item.payload);
+    const contentType = toPortalReviewContentType(item.type);
+    const platform = getString(payload.platform) || getFirstString(payload.platforms) || contentType;
+    const content = getPortalReviewContent(contentType, payload, item.name || 'Untitled');
+    const image = getPortalReviewImage(payload);
+    const ctaText = getString(payload.ctaText) || getString(payload.cta);
+    const snapshot: JsonRecord = {
+        ...payload,
+        name: item.name,
+        platform,
+        content,
+    };
+
+    if (image) snapshot.image_url = image;
+    if (ctaText) snapshot.ctaText = ctaText;
+
+    return { contentType, snapshot };
+};
 
 export type BrandGuide = {
     id: string;
@@ -545,15 +606,39 @@ export function useContentItems(campaignId: string) {
                 .insert({ ...item, payload: item.payload as Json, campaign_id: campaignId });
             if (error) throw error;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) });
+            qc.invalidateQueries({ queryKey: ['all_content_items'] });
+        },
     });
 
     const updateContentItem = useMutation({
         mutationFn: async ({ id, updates }: { id: string; updates: Partial<{ name: string; status: string; payload: Record<string, unknown> }> }) => {
-            const { error } = await supabase.from('content_items').update(updates as { name?: string; status?: string; payload?: Json }).eq('id', id);
+            const { data, error } = await supabase
+                .from('content_items')
+                .update(updates as { name?: string; status?: string; payload?: Json })
+                .eq('id', id)
+                .select('*')
+                .single();
             if (error) throw error;
+
+            const { contentType, snapshot } = buildPortalReviewSnapshot(data as ContentItemRow);
+            const { error: syncError } = await supabase
+                .from('portal_review_posts')
+                .update({
+                    content_type: contentType,
+                    snapshot: snapshot as Json,
+                })
+                .eq('content_item_id', id);
+            if (syncError) throw syncError;
+
+            return mapContentItem(data as ContentItemWithCampaign);
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) });
+            qc.invalidateQueries({ queryKey: ['all_content_items'] });
+            qc.invalidateQueries({ queryKey: ['portal_review_posts'] });
+        },
     });
 
     const deleteContentItem = useMutation({
@@ -561,7 +646,10 @@ export function useContentItems(campaignId: string) {
             const { error } = await supabase.from('content_items').delete().eq('id', id);
             if (error) throw error;
         },
-        onSuccess: () => qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) }),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) });
+            qc.invalidateQueries({ queryKey: ['all_content_items'] });
+        },
     });
 
     return { ...query, addContentItem, updateContentItem, deleteContentItem };
