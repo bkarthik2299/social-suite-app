@@ -726,15 +726,27 @@ async function processMission({
     }).eq('id', runId);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected error';
-    await updateStep(activeStep, 'failed', message).catch(() => null);
-    await supabase.from('ai_run_events').insert({
-      run_id: runId,
-      step_id: stepIds[stepSlugFor(activeStep)] || null,
-      event_type: 'run_failed',
-      message,
-      payload: {},
-    }).catch(() => null);
-    await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId).catch(() => null);
+    try {
+      await updateStep(activeStep, 'failed', message);
+    } catch {
+      // Best-effort failure reporting should not block the run status update.
+    }
+    try {
+      await supabase.from('ai_run_events').insert({
+        run_id: runId,
+        step_id: stepIds[stepSlugFor(activeStep)] || null,
+        event_type: 'run_failed',
+        message,
+        payload: {},
+      });
+    } catch {
+      // Continue to the authoritative run status update below.
+    }
+    try {
+      await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId);
+    } catch {
+      // Nothing else can be done from the Edge Function once the final status write fails.
+    }
   }
 }
 
