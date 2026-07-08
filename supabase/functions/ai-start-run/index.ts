@@ -82,6 +82,8 @@ const PLANNER_TIMEOUT_MS = 25_000;
 const RESEARCH_TIMEOUT_MS = 45_000;
 const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
 const SECTION_TIMEOUT_MS = 22_000;
+const CUSTOM_AGENT_MIN_BUDGET_MS = 45_000;
+const CUSTOM_AGENT_TIMEOUT_MS = 12_000;
 
 const stepDefinitions = [
   { slug: 'planner', agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -348,6 +350,15 @@ async function processMission({
     let nextPack = currentPack;
     for (const step of customStepsBefore(nextBuiltInSlug)) {
       const skill = agentSkills[step.slug] || step.skill_md || '';
+      if (remainingMissionMs() < CUSTOM_AGENT_MIN_BUDGET_MS) {
+        await addEvent(step.slug, 'workspace_agent_skipped', `${step.agent_name} was skipped to preserve time for QA and artifact saving.`, {
+          agentSlug: step.slug,
+          internalError: `Only ${Math.round(remainingMissionMs() / 1000)}s remained in the mission budget.`,
+        });
+        completedCustomSteps.add(step.slug);
+        await updateStep(step.slug, 'skipped', `${step.agent_name} was skipped to preserve time for QA and artifact saving.`);
+        continue;
+      }
       await updateStep(step.slug, 'working', `${step.agent_name} is reviewing the draft pack with its workspace skill.`);
       await addEvent(step.slug, 'workspace_agent_review', `${step.agent_name} started a guarded review of the draft pack.`, {
         agentSlug: step.slug,
@@ -483,22 +494,40 @@ async function processMission({
         if (researchTimeoutMs <= 12_000) {
           throw new Error('Deep research skipped because the mission time budget was nearly exhausted.');
         }
-        const research = selectedResearchProvider.id === 'perplexity'
-          ? await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs)
-          : await tavilySearch(query);
-        const researchDigest = selectedResearchProvider.id === 'perplexity' && research.answer
+        let researchProviderUsed = selectedResearchProvider;
+        let research: TavilySearchResponse;
+        if (selectedResearchProvider.id === 'perplexity') {
+          try {
+            research = await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs);
+          } catch (perplexityError) {
+            const fallbackTimeoutMs = Math.max(10_000, Math.min(20_000, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS));
+            if (fallbackTimeoutMs <= 10_000) throw perplexityError;
+            const fallbackProvider = researchProviders.find((provider) => provider.id === 'tavily') || { id: 'tavily', name: 'Tavily' } as ResearchProviderOption;
+            await addEvent(activeStep, 'research_provider_fallback', 'Perplexity returned an unusable response, so Tavily research was started.', {
+              primaryProvider: selectedResearchProvider.id,
+              fallbackProvider: fallbackProvider.id,
+              internalError: perplexityError instanceof Error ? perplexityError.message : 'Perplexity research failed',
+            });
+            research = await tavilySearch(query, fallbackTimeoutMs);
+            researchProviderUsed = fallbackProvider;
+          }
+        } else {
+          research = await tavilySearch(query, researchTimeoutMs);
+        }
+        const researchDigest = researchProviderUsed.id === 'perplexity' && research.answer
           ? research.answer
           : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()));
         researchContext = tavilyContext({ ...research, answer: researchDigest });
         researchSources = research.results;
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
-        await addEvent(activeStep, 'web_sources', `${selectedResearchProvider.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
+        await addEvent(activeStep, 'web_sources', `${researchProviderUsed.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
           query: research.query,
           researchQuestion,
           answer: researchDigest,
           campaignGuidance: plannerOutput.campaignGuidance,
-          provider: selectedResearchProvider.id,
-          researchModel: selectedResearchProvider.model || null,
+          provider: researchProviderUsed.id,
+          researchModel: researchProviderUsed.model || null,
+          requestedProvider: selectedResearchProvider.id,
           credits: research.credits,
           responseTime: research.responseTime,
           sources: research.results.map(({ title, url, score, content }) => ({ title, url, score, content: content.slice(0, 500) })),
@@ -512,7 +541,8 @@ async function processMission({
             { title: 'Campaign focus', body: handoffText(plannerOutput.campaignGuidance) },
           ],
           metrics: {
-            provider: selectedResearchProvider.name,
+            provider: researchProviderUsed.name,
+            requestedProvider: selectedResearchProvider.name,
             sourceCount: research.results.length,
             credits: research.credits,
             responseTime: research.responseTime,
@@ -584,16 +614,20 @@ async function processMission({
       for (const failure of generated.failures) {
         await addEvent(activeStep, 'model_section_fallback', `${failure.section} generation used fallback content.`, failure);
       }
+      const fatalFailures = generated.failures.filter((failure) => isFatalGenerationFailure(failure.section, plannerOutput.deliverableContract));
+      if (fatalFailures.length) {
+        throw new Error(`AI generation failed for ${fatalFailures.map((failure) => failure.section).join(', ')}. No placeholder drafts were saved.`);
+      }
       const candidatePack = hasCampaignOutput(generated.pack) ? generated.pack : fallbackPack(body.prompt, plannerOutput.deliverableContract);
       const guardedPack = guardCampaignPack(candidatePack, body.prompt, plannerOutput.deliverableContract);
       pack = guardedPack.pack;
       contentGuardrailNotes = guardedPack.notes;
     } catch (error) {
-      await addEvent(activeStep, 'model_fallback', 'Primary generation could not complete. Structured draft placeholders were prepared for review.', {
+      await addEvent(activeStep, 'model_fallback', 'Primary generation could not complete. The run was stopped before placeholder drafts could be saved.', {
         model,
         internalError: error instanceof Error ? error.message : 'Unknown model error',
       });
-      pack = fallbackPack(body.prompt, plannerOutput.deliverableContract);
+      throw new Error(error instanceof Error ? error.message : 'AI draft generation failed.');
     }
     await addHandoffEvent(activeStep, {
       title: 'Draft pack handoff',
@@ -636,6 +670,9 @@ async function processMission({
     await addEvent(activeStep, 'qa_review', qaFindings.length ? `QA noted: ${qaFindings.join(' ')}` : 'QA passed: required output groups are present and dates are future-safe.', {
       findings: qaFindings,
     });
+    if (qaFindings.length) {
+      throw new Error(`QA blocked the draft pack: ${qaFindings.join(' ')}`);
+    }
     await addHandoffEvent(activeStep, {
       title: 'QA handoff',
       summary: qaFindings.length
@@ -1089,10 +1126,10 @@ async function buildCampaignPackInParts({
     destination.projectName ? `Project: ${destination.projectName}` : '',
     destination.campaignName ? `Destination campaign: ${destination.campaignName}` : '',
     plannerOutput.campaignGuidance ? `Planner guidance:\n${plannerOutput.campaignGuidance}` : '',
-    brandKnowledge ? `Brand knowledge:\n${brandKnowledge}` : '',
-    researchContext ? `Deep research context:\n${researchContext}` : '',
-    agentSkillContext ? `Workspace agent skill guidance:\n${agentSkillContext}` : '',
-    `Brief:\n${prompt}`,
+    brandKnowledge ? `Brand knowledge:\n${truncateContext(brandKnowledge, 7000)}` : '',
+    researchContext ? `Deep research context:\n${truncateContext(researchContext, 3500)}` : '',
+    agentSkillContext ? `Workspace agent skill guidance:\n${truncateContext(agentSkillContext, 4500)}` : '',
+    `Brief:\n${truncateContext(prompt, 5000)}`,
   ].filter(Boolean).join('\n\n');
 
   const sectionSpecs = [
@@ -1122,6 +1159,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.socialPosts} organic social posts only.\n\n${commonContext}`,
+      maxTokens: 5200,
     },
     {
       key: 'paidMedia',
@@ -1136,6 +1174,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.googleAds} Google ads and ${deliverableContract.socialAds} paid social ads only.\n\n${commonContext}`,
+      maxTokens: 4200,
     },
     {
       key: 'blogOutlines',
@@ -1148,6 +1187,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.blogOutlines} blog outlines only.\n\n${commonContext}`,
+      maxTokens: 2400,
     },
     {
       key: 'calendar',
@@ -1161,6 +1201,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.calendarItems} campaign calendar items only.\n\n${commonContext}`,
+      maxTokens: 3200,
     },
   ] as const;
 
@@ -1175,15 +1216,10 @@ async function buildCampaignPackInParts({
   const sectionTimeoutMs = Math.max(8_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
   const results = await Promise.all(sectionSpecs.map(async (section) => {
     try {
-      const value = await openRouterJson<unknown>({
+      const value = await generateCampaignSection({
         model,
-        temperature: 0.35,
-        maxTokens: section.key === 'calendar' ? 1600 : section.key === 'socialPosts' ? 2600 : 1800,
+        section,
         timeoutMs: sectionTimeoutMs,
-        messages: [
-          { role: 'system', content: campaignSafetyInstructions(section.system) },
-          { role: 'user', content: section.user },
-        ],
       });
       return { section, value, error: '' };
     } catch (error) {
@@ -1214,11 +1250,65 @@ async function buildCampaignPackInParts({
     blogOutlines: sectionValue('blogOutlines'),
     calendar: sectionValue('calendar'),
   };
+  const normalizedPack = normalizeCampaignPack(rawPack);
+  const countFailures = campaignCountFailures(normalizedPack, deliverableContract);
 
   return {
-    pack: normalizeCampaignPack(rawPack),
-    failures,
+    pack: normalizedPack,
+    failures: [...failures, ...countFailures],
   };
+}
+
+async function generateCampaignSection({
+  model,
+  section,
+  timeoutMs,
+}: {
+  model: string;
+  section: {
+    key: string;
+    label: string;
+    system: string;
+    user: string;
+    maxTokens?: number;
+  };
+  timeoutMs: number;
+}) {
+  const attempts = [
+    {
+      temperature: 0.25,
+      user: section.user,
+    },
+    {
+      temperature: 0.1,
+      user: [
+        'Retry because the previous response was unusable.',
+        'Return a single valid JSON object only. No markdown, no commentary, no partial JSON.',
+        `The root key(s) for this section are mandatory. Section: ${section.label}.`,
+        section.user,
+      ].join('\n\n'),
+    },
+  ];
+
+  let lastError = '';
+  for (const attempt of attempts) {
+    try {
+      return await openRouterJson<unknown>({
+        model,
+        temperature: attempt.temperature,
+        maxTokens: section.maxTokens || 2200,
+        timeoutMs,
+        messages: [
+          { role: 'system', content: campaignSafetyInstructions(section.system) },
+          { role: 'user', content: attempt.user },
+        ],
+      });
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Unknown model error';
+    }
+  }
+
+  throw new Error(lastError || 'Section generation failed');
 }
 
 async function applyWorkspaceAgentToPack({
@@ -1256,7 +1346,7 @@ async function applyWorkspaceAgentToPack({
     model,
     temperature: 0.2,
     maxTokens: 5000,
-    timeoutMs: Math.min(SECTION_TIMEOUT_MS, remainingMs),
+    timeoutMs: Math.min(CUSTOM_AGENT_TIMEOUT_MS, remainingMs),
     messages: [
       {
         role: 'system',
@@ -1317,6 +1407,44 @@ function unwrapSectionValue(input: unknown, key: string) {
 
 function campaignRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+}
+
+function truncateContext(value: string, maxLength: number) {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, maxLength - 140).trim()} ... [trimmed to keep generation reliable]`;
+}
+
+function isFatalGenerationFailure(section: string, contract = defaultDeliverableContract) {
+  if (section === 'Strategy') return true;
+  if (section === 'Social posts') return contract.socialPosts > 0;
+  if (section === 'Ads') return contract.googleAds > 0 || contract.socialAds > 0;
+  if (section === 'Blog outlines') return contract.blogOutlines > 0;
+  if (section === 'Calendar') return contract.calendarItems > 0;
+  return true;
+}
+
+function campaignCountFailures(pack: CampaignPack, contract = defaultDeliverableContract): Array<{ section: string; error: string }> {
+  const failures: Array<{ section: string; error: string }> = [];
+  if (!pack.strategy?.summary || strategyNeedsRationale(pack.strategy.summary)) {
+    failures.push({ section: 'Strategy', error: 'Strategy generation did not produce a useful campaign rationale.' });
+  }
+  if (pack.socialPosts.length !== contract.socialPosts) {
+    failures.push({ section: 'Social posts', error: `Expected ${contract.socialPosts} social posts but generated ${pack.socialPosts.length}.` });
+  }
+  if (pack.googleAds.length !== contract.googleAds || pack.socialAds.length !== contract.socialAds) {
+    failures.push({ section: 'Ads', error: `Expected ${contract.googleAds} Google ads and ${contract.socialAds} paid social ads but generated ${pack.googleAds.length} and ${pack.socialAds.length}.` });
+  }
+  if (pack.blogOutlines.length !== contract.blogOutlines) {
+    failures.push({ section: 'Blog outlines', error: `Expected ${contract.blogOutlines} blog outlines but generated ${pack.blogOutlines.length}.` });
+  }
+  if (pack.calendar.length !== contract.calendarItems) {
+    failures.push({ section: 'Calendar', error: `Expected ${contract.calendarItems} calendar items but generated ${pack.calendar.length}.` });
+  }
+  if (fallbackPlaceholderFindings(pack).length) {
+    failures.push({ section: 'All sections', error: 'Generated pack still contained placeholder/default fallback copy.' });
+  }
+  return failures;
 }
 
 function removeUnrequestedYears(value: string, prompt: string) {
@@ -1755,5 +1883,36 @@ function validatePack(pack: CampaignPack, contract = defaultDeliverableContract)
   if (pack.socialAds.some((ad) => !ad.primaryText.trim() || !ad.headline.trim())) findings.push('Some paid social ads are missing copy.');
   if (pack.googleAds.some((ad) => !ad.headlines.length || !ad.descriptions.length)) findings.push('Some Google ads are missing copy.');
   if (pack.googleAds.some((ad) => googleAdLimitReasons(ad).length)) findings.push('Some Google ads exceed platform limits.');
+  findings.push(...fallbackPlaceholderFindings(pack));
   return findings;
+}
+
+function fallbackPlaceholderFindings(pack: CampaignPack) {
+  const checks = [
+    {
+      label: 'Social posts contain fallback placeholder copy.',
+      values: pack.socialPosts.flatMap((post) => [post.name, post.topic, post.caption, post.creativeBrief, post.visualGuide]),
+    },
+    {
+      label: 'Google ads contain fallback placeholder copy.',
+      values: pack.googleAds.flatMap((ad) => [ad.name, ad.topic, ...ad.headlines, ...ad.descriptions, ...(ad.callouts || [])]),
+    },
+    {
+      label: 'Paid social ads contain fallback placeholder copy.',
+      values: pack.socialAds.flatMap((ad) => [ad.name, ad.topic, ad.primaryText, ad.headline, ad.description, ad.visualGuide]),
+    },
+    {
+      label: 'Blog outlines contain fallback placeholder copy.',
+      values: pack.blogOutlines.flatMap((blog) => [blog.title, blog.excerpt, blog.metaTitle, blog.metaDescription, ...blog.outline]),
+    },
+    {
+      label: 'Calendar contains fallback placeholder copy.',
+      values: pack.calendar.flatMap((item) => [item.title]),
+    },
+  ];
+
+  const placeholderPattern = /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement touchpoint)\b/i;
+  return checks
+    .filter((check) => check.values.filter(Boolean).some((value) => placeholderPattern.test(String(value))))
+    .map((check) => check.label);
 }
