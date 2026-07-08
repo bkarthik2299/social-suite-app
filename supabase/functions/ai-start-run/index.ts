@@ -1714,19 +1714,24 @@ function guardCampaignPack(pack: CampaignPack, prompt: string, contract = defaul
 function unsupportedContentReasons(values: Array<string | undefined>, prompt: string) {
   const content = values.filter(Boolean).join(' ');
   const allowed = prompt.toLowerCase();
+  const healthcareBrief = isHealthcareBrief(prompt);
   const rules = [
-    { label: 'adjacent emergency service promotion', content: /\b(emergency|urgent care|immediate assistance|24\s*x\s*7)\b/i, prompt: /\b(emergency|urgent care|24\s*x\s*7)\b/i },
-    { label: 'unrequested facility or specialty promotion', content: /\b(multispecial(?:ity|ty)|super[- ]?special(?:ity|ty)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, prompt: /\b(multispecial(?:ity|ty)|special(?:ity|ties)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i },
-    { label: 'unrequested appointment promotion', content: /\b(appointment|book now|schedule now)\b/i, prompt: /\b(appointment|booking|book|schedule|consultation)\b/i },
-    { label: 'unrequested named clinician', content: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, prompt: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i },
-    { label: 'unrequested patient story or testimonial', content: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, prompt: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i },
+    { label: 'adjacent emergency service promotion', content: /\b(emergency|urgent care|immediate assistance|24\s*x\s*7)\b/i, prompt: /\b(emergency|urgent care|24\s*x\s*7)\b/i, healthcareOnly: true },
+    { label: 'unrequested facility or specialty promotion', content: /\b(multispecial(?:ity|ty)|super[- ]?special(?:ity|ty)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, prompt: /\b(multispecial(?:ity|ty)|special(?:ity|ties)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, healthcareOnly: true },
+    { label: 'unrequested appointment promotion', content: /\b(appointment|book now|schedule now)\b/i, prompt: /\b(appointment|booking|book|schedule|consultation)\b/i, healthcareOnly: true },
+    { label: 'unrequested named clinician', content: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, prompt: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, healthcareOnly: true },
+    { label: 'unrequested patient story or testimonial', content: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, prompt: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, healthcareOnly: true },
     { label: 'unrequested event promotion', content: /\b(community event|health event|seminar|workshop|health camp|upcoming event|include date,?\s*time,?\s*and location)\b/i, prompt: /\b(event|seminar|workshop|camp)\b/i },
-    { label: 'unsupported outcome claim', content: /\b(increases? treatment success rates?|saves lives?)\b/i, prompt: /\b(increases? treatment success rates?|saves lives?)\b/i },
+    { label: 'unsupported outcome claim', content: /\b(increases? treatment success rates?|saves lives?)\b/i, prompt: /\b(increases? treatment success rates?|saves lives?)\b/i, healthcareOnly: true },
     { label: 'unrequested phone number', content: /\b(?:\+?\d[\d\s()-]{7,}\d)\b/i, prompt: /\b(call|phone|contact|whatsapp|helpline|number)\b/i },
   ];
   return rules
-    .filter((rule) => rule.content.test(content) && !rule.prompt.test(allowed))
+    .filter((rule) => (!rule.healthcareOnly || healthcareBrief) && rule.content.test(content) && !rule.prompt.test(allowed))
     .map((rule) => rule.label);
+}
+
+function isHealthcareBrief(prompt: string) {
+  return /\b(?:hospital|clinic|healthcare|health care|medical|doctor|patient|treatment|diagnosis|clinical|dental|therapy|therapeutic|pharma|wellness|care team|nursing|surgery|screening|preventive care)\b/i.test(prompt);
 }
 
 function campaignTopic(prompt: string) {
@@ -1911,7 +1916,7 @@ function fallbackPlaceholderFindings(pack: CampaignPack) {
     },
   ];
 
-  const placeholderPattern = /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement touchpoint)\b/i;
+  const placeholderPattern = /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement post|awareness engagement touchpoint)\b/i;
   return checks
     .filter((check) => check.values.filter(Boolean).some((value) => placeholderPattern.test(String(value))))
     .map((check) => check.label);
