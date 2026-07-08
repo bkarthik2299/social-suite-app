@@ -1214,7 +1214,8 @@ async function buildCampaignPackInParts({
   }
 
   const sectionTimeoutMs = Math.max(8_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
-  const results = await Promise.all(sectionSpecs.map(async (section) => {
+  const batchTimeoutMs = Math.max(12_000, Math.min(58_000, remainingForSectionsMs));
+  const results = await withTimeout(Promise.all(sectionSpecs.map(async (section) => {
     try {
       const value = await generateCampaignSection({
         model,
@@ -1229,7 +1230,7 @@ async function buildCampaignPackInParts({
         error: error instanceof Error ? error.message : 'Unknown model error',
       };
     }
-  }));
+  })), batchTimeoutMs, `Draft section generation timed out after ${Math.round(batchTimeoutMs / 1000)}s`);
 
   const failures = results
     .filter((result) => result.error)
@@ -1309,6 +1310,18 @@ async function generateCampaignSection({
   }
 
   throw new Error(lastError || 'Section generation failed');
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 async function applyWorkspaceAgentToPack({

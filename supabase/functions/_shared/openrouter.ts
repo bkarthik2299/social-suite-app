@@ -104,6 +104,7 @@ export async function openRouterText({
 
 async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
+  const nativeTimeoutSignal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : null;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -115,10 +116,15 @@ async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
   try {
     const request = fetch('https://openrouter.ai/api/v1/chat/completions', {
       ...init,
-      signal: controller.signal,
+      signal: nativeTimeoutSignal || controller.signal,
     });
 
     return await Promise.race([request, timeout]);
+  } catch (error) {
+    if ((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') {
+      throw new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
