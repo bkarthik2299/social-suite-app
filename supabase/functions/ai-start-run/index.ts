@@ -583,11 +583,13 @@ async function processMission({
 
     activeStep = 'Copywriter Agent';
     const model = selectedModel.id;
+    const generationModelIds = generationFallbackModelIds(selectedModel, workMode);
     await updateStep(activeStep, 'working', 'Generating strategy and channel-ready copy.');
     await addEvent(activeStep, 'model_call', 'Draft generation started using the selected AI model.', {
       model,
       modelName: selectedModel.name,
       provider: selectedModel.provider,
+      fallbackModels: generationModelIds.filter((item) => item !== model),
       workMode,
       researchSources: researchSources.length,
     });
@@ -600,7 +602,7 @@ async function processMission({
         throw new Error(`Copywriter skipped because only ${Math.round(remainingMissionMs() / 1000)}s remained in the Edge Function budget.`);
       }
       const generated = await buildCampaignPackInParts({
-        model,
+        models: generationModelIds,
         prompt: body.prompt,
         destination,
         plannerOutput,
@@ -1109,7 +1111,7 @@ async function buildResearchDigest(search: TavilySearchResponse, campaignGuidanc
 }
 
 async function buildCampaignPackInParts({
-  model,
+  models,
   prompt,
   destination,
   plannerOutput,
@@ -1120,7 +1122,7 @@ async function buildCampaignPackInParts({
   today,
   deadlineAt,
 }: {
-  model: string;
+  models: string[];
   prompt: string;
   destination: { projectName: string; folderName: string; campaignName: string };
   plannerOutput: PlannerOutput;
@@ -1230,7 +1232,7 @@ async function buildCampaignPackInParts({
   const results = await withTimeout(Promise.all(sectionSpecs.map(async (section) => {
     try {
       const value = await generateCampaignSection({
-        model,
+        models,
         section,
         timeoutMs: sectionTimeoutMs,
       });
@@ -1273,11 +1275,11 @@ async function buildCampaignPackInParts({
 }
 
 async function generateCampaignSection({
-  model,
+  models,
   section,
   timeoutMs,
 }: {
-  model: string;
+  models: string[];
   section: {
     key: string;
     label: string;
@@ -1303,25 +1305,43 @@ async function generateCampaignSection({
     },
   ];
 
+  const modelPlan = models.length ? models : [deepWorkModels[0].id];
+  const attemptTimeoutMs = Math.max(12_000, Math.floor(timeoutMs / Math.min(3, modelPlan.length + 1)));
   let lastError = '';
-  for (const attempt of attempts) {
-    try {
-      return await openRouterJson<unknown>({
-        model,
-        temperature: attempt.temperature,
-        maxTokens: section.maxTokens || 2200,
-        timeoutMs,
-        messages: [
-          { role: 'system', content: campaignSafetyInstructions(section.system) },
-          { role: 'user', content: attempt.user },
-        ],
-      });
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : 'Unknown model error';
+  for (const [modelIndex, model] of modelPlan.entries()) {
+    const modelAttempts = modelIndex === 0 ? attempts : attempts.slice(1);
+    for (const attempt of modelAttempts) {
+      try {
+        return await openRouterJson<unknown>({
+          model,
+          temperature: attempt.temperature,
+          maxTokens: section.maxTokens || 2200,
+          timeoutMs: attemptTimeoutMs,
+          messages: [
+            { role: 'system', content: campaignSafetyInstructions(section.system) },
+            { role: 'user', content: attempt.user },
+          ],
+        });
+      } catch (error) {
+        lastError = `${model}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
+      }
     }
   }
 
   throw new Error(lastError || 'Section generation failed');
+}
+
+function generationFallbackModelIds(selectedModel: AiModelOption, workMode: WorkMode) {
+  const modeModels = workMode === 'deep' ? deepWorkModels : instantModels;
+  const openAiModeModels = modeModels.filter((model) => model.provider === 'OpenAI');
+  const nonOpenAiModeModels = modeModels.filter((model) => model.provider !== 'OpenAI');
+  const crossModeOpenAi = [...deepWorkModels, ...instantModels].filter((model) => model.provider === 'OpenAI');
+  return uniqueStrings([
+    selectedModel.id,
+    ...openAiModeModels.map((model) => model.id),
+    ...nonOpenAiModeModels.map((model) => model.id),
+    ...crossModeOpenAi.map((model) => model.id),
+  ]);
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
