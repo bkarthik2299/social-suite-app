@@ -1817,9 +1817,9 @@ function guardCampaignPack(pack: CampaignPack, prompt: string, contract = defaul
   });
   const calendar = pack.calendar.slice(0, contract.calendarItems).map((item, index) => {
     const reasons = unsupportedContentReasons([item.title], prompt);
-    if (!reasons.length) return item;
-    notes.push(`Calendar item ${index + 1}: ${reasons.join(', ')}`);
-    return { ...item, title: `Awareness engagement touchpoint ${index + 1}` };
+    if (!reasons.length && !hasFallbackPlaceholderText(item.title)) return item;
+    notes.push(`Calendar item ${index + 1}: ${reasons.join(', ') || 'replaced placeholder calendar title'}`);
+    return safeCalendarItem(index);
   });
 
   while (socialPosts.length < contract.socialPosts) socialPosts.push(safeSocialPost(socialPosts.length, topic));
@@ -1918,7 +1918,7 @@ function safeSocialPost(index: number, topic: string, platforms = ['linkedin', '
     `Small conversations can create meaningful awareness. Share this ${topic} message with your community.`,
   ];
   return {
-    name: `Awareness Engagement Post ${index + 1}`,
+    name: `Community Guidance Post ${index + 1}`,
     topic: `${topic} engagement`,
     caption: captions[index % captions.length],
     platforms,
@@ -2009,9 +2009,9 @@ function safeBlogOutline(index: number, topic: string, publishDate?: string): Ca
 
 function safeCalendarItem(index: number): CampaignPack['calendar'][number] {
   const date = new Date();
-  date.setDate(date.getDate() + index);
+  date.setDate(date.getDate() + index + 1);
   return {
-    title: `Awareness engagement touchpoint ${index + 1}`,
+    title: `Community guidance content ${index + 1}`,
     type: index % 7 === 0 ? 'blogs' : index % 4 === 0 ? 'meta-ad' : index % 5 === 0 ? 'google-ad' : 'socials',
     date: date.toISOString().slice(0, 10),
   };
@@ -2057,8 +2057,11 @@ function fallbackPlaceholderFindings(pack: CampaignPack) {
     },
   ];
 
-  const placeholderPattern = /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement post|awareness engagement touchpoint)\b/i;
   return checks
-    .filter((check) => check.values.filter(Boolean).some((value) => placeholderPattern.test(String(value))))
+    .filter((check) => check.values.filter(Boolean).some((value) => hasFallbackPlaceholderText(value)))
     .map((check) => check.label);
+}
+
+function hasFallbackPlaceholderText(value: unknown) {
+  return /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement post|awareness engagement touchpoint)\b/i.test(String(value || ''));
 }
