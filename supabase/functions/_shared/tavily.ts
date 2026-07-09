@@ -22,39 +22,53 @@ type TavilyResultRecord = {
   score?: unknown;
 };
 
-export async function tavilySearch(query: string): Promise<TavilySearchResponse> {
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${getRequiredSecret('TAVILY_API_KEY')}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      query,
-      search_depth: 'advanced',
-      include_answer: false,
-      include_raw_content: false,
-      max_results: 5,
-    }),
-  });
+export async function tavilySearch(query: string, timeoutMs = 45_000): Promise<TavilySearchResponse> {
+  const controller = new AbortController();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Tavily search failed: ${response.status} ${text.slice(0, 300)}`);
+  try {
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    const response = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${getRequiredSecret('TAVILY_API_KEY')}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        search_depth: 'advanced',
+        include_answer: false,
+        include_raw_content: false,
+        max_results: 5,
+      }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Tavily search failed: ${response.status} ${text.slice(0, 300)}`);
+    }
+
+    const payload = await response.json();
+    const results = Array.isArray(payload.results)
+      ? payload.results.map(normalizeResult).filter((item): item is TavilyResult => !!item)
+      : [];
+
+    return {
+      query: String(payload.query || query),
+      answer: String(payload.answer || ''),
+      results,
+      responseTime: payload.response_time ? String(payload.response_time) : undefined,
+      credits: typeof payload.usage?.credits === 'number' ? payload.usage.credits : undefined,
+    };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Tavily search timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-
-  const payload = await response.json();
-  const results = Array.isArray(payload.results)
-    ? payload.results.map(normalizeResult).filter((item): item is TavilyResult => !!item)
-    : [];
-
-  return {
-    query: String(payload.query || query),
-    answer: String(payload.answer || ''),
-    results,
-    responseTime: payload.response_time ? String(payload.response_time) : undefined,
-    credits: typeof payload.usage?.credits === 'number' ? payload.usage.credits : undefined,
-  };
 }
 
 export function tavilyContext(search: TavilySearchResponse) {

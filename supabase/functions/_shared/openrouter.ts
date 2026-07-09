@@ -1,4 +1,5 @@
 import { getRequiredSecret } from './http.ts';
+import { parseJsonContent } from './json.ts';
 
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
@@ -11,20 +12,23 @@ export async function openRouterJson<T>({
   temperature = 0.4,
   maxTokens,
   timeoutMs = 150_000,
+  jsonMode = true,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
+  jsonMode?: boolean;
 }): Promise<T> {
   const body = {
     model,
     messages,
     temperature,
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
   };
-  const response = await fetchOpenRouter({
+  let response = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -34,6 +38,24 @@ export async function openRouterJson<T>({
     },
     body: JSON.stringify(body),
   }, timeoutMs);
+
+  if (!response.ok && jsonMode && [400, 422].includes(response.status)) {
+    response = await fetchOpenRouter({
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://socialsuite.app',
+        'X-Title': 'Social Suite',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        ...(maxTokens ? { max_tokens: maxTokens } : {}),
+      }),
+    }, timeoutMs);
+  }
 
   if (!response.ok) {
     const text = await response.text();
@@ -82,6 +104,7 @@ export async function openRouterText({
 
 async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
+  const nativeTimeoutSignal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : null;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = setTimeout(() => {
@@ -93,43 +116,16 @@ async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
   try {
     const request = fetch('https://openrouter.ai/api/v1/chat/completions', {
       ...init,
-      signal: controller.signal,
+      signal: nativeTimeoutSignal || controller.signal,
     });
 
     return await Promise.race([request, timeout]);
+  } catch (error) {
+    if ((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') {
+      throw new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`);
+    }
+    throw error;
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
-}
-
-function parseJsonContent<T>(content: string): T {
-  const trimmed = content.trim();
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i)?.[1]?.trim();
-  const candidate = fenced || trimmed;
-
-  try {
-    return JSON.parse(candidate) as T;
-  } catch {
-    const objectStart = candidate.indexOf('{');
-    const objectEnd = candidate.lastIndexOf('}');
-    const arrayStart = candidate.indexOf('[');
-    const arrayEnd = candidate.lastIndexOf(']');
-    const objectCandidate = objectStart >= 0 && objectEnd > objectStart
-      ? candidate.slice(objectStart, objectEnd + 1)
-      : '';
-    const arrayCandidate = arrayStart >= 0 && arrayEnd > arrayStart
-      ? candidate.slice(arrayStart, arrayEnd + 1)
-      : '';
-
-    for (const value of [objectCandidate, arrayCandidate]) {
-      if (!value) continue;
-      try {
-        return JSON.parse(value) as T;
-      } catch {
-        // Continue trying other JSON-looking sections before failing.
-      }
-    }
-  }
-
-  throw new Error('OpenRouter returned invalid JSON');
 }

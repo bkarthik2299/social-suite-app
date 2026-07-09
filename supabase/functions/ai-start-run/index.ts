@@ -82,6 +82,8 @@ const PLANNER_TIMEOUT_MS = 25_000;
 const RESEARCH_TIMEOUT_MS = 45_000;
 const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
 const SECTION_TIMEOUT_MS = 22_000;
+const CUSTOM_AGENT_MIN_BUDGET_MS = 45_000;
+const CUSTOM_AGENT_TIMEOUT_MS = 12_000;
 
 const stepDefinitions = [
   { slug: 'planner', agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -97,52 +99,148 @@ const builtInStepSlugs = new Set<string>(stepDefinitions.map((step) => step.slug
 const builtInSlugByName = new Map<string, string>(stepDefinitions.map((step) => [step.agent_name, step.slug]));
 const defaultWorkflowSlugs: string[] = stepDefinitions.map((step) => step.slug);
 
-const fallbackPack = (prompt: string, contract = defaultDeliverableContract): CampaignPack => ({
-  strategy: {
-    title: 'AI Campaign Draft',
-    summary: `Campaign direction generated from: ${prompt.slice(0, 180)}`,
-    objectives: ['Clarify the offer', 'Create platform-native draft assets', 'Prepare review-ready campaign content'],
-    contentPillars: ['Awareness', 'Education', 'Proof', 'Conversion'],
-  },
-  socialPosts: Array.from({ length: contract.socialPosts }, (_, index) => ({
-    name: `Social Post ${index + 1}`,
-    topic: `Campaign message ${index + 1}`,
-    caption: `Draft social caption ${index + 1}. Replace this with generated copy once the AI provider is configured.`,
-    platforms: ['linkedin', 'instagram', 'facebook'],
-    creativeBrief: 'AI-generated draft placeholder.',
-    visualGuide: 'Clean campaign image with a clear subject, brand-safe colors, simple composition, and minimal text overlay.',
-  })),
-  googleAds: Array.from({ length: contract.googleAds }, (_, index) => ({
-    name: `Google Ad ${index + 1}`,
-    topic: 'Search campaign concept',
-    headlines: [`Campaign Headline ${index + 1}`, 'Brand Benefit', 'Start Today'],
-    descriptions: ['Draft search ad description. Configure the AI provider for final copy.'],
-    callouts: ['Fast setup', 'Expert support'],
-  })),
-  socialAds: Array.from({ length: contract.socialAds }, (_, index) => ({
-    name: `Paid Social Ad ${index + 1}`,
-    topic: 'Paid social concept',
-    platform: index % 2 === 0 ? 'facebook' : 'linkedin',
-    primaryText: 'Draft paid social primary text. Configure the AI provider for final copy.',
-    headline: 'Campaign headline',
-    visualGuide: 'Conversion-friendly paid social image with a single clear focal point, calm brand-safe palette, and room for optional CTA text.',
-    cta: 'learn_more',
-  })),
-  blogOutlines: Array.from({ length: contract.blogOutlines }, (_, index) => ({
-    title: `Blog Outline ${index + 1}`,
-    slug: `blog-outline-${index + 1}`,
-    excerpt: 'Draft blog outline excerpt.',
-    metaTitle: `Blog Outline ${index + 1}`,
-    metaDescription: 'Draft meta description.',
-    keywords: ['campaign', 'brand'],
-    outline: ['Introduction', 'Key message', 'Proof points', 'Call to action'],
-  })),
-  calendar: Array.from({ length: contract.calendarItems }, (_, index) => ({
-    title: `Campaign touchpoint ${index + 1}`,
-    type: index % 5 === 0 ? 'blogs' : index % 3 === 0 ? 'google-ad' : index % 2 === 0 ? 'meta-ad' : 'socials',
-    date: new Date(Date.now() + index * 86400000).toISOString().slice(0, 10),
-  })),
-});
+const fallbackPack = (prompt: string, contract = defaultDeliverableContract): CampaignPack => {
+  const focus = campaignFallbackFocus(prompt);
+  const audience = focus.audience;
+  const product = focus.product;
+  const pain = focus.pain;
+  const outcome = focus.outcome;
+  const start = Date.now() + 86400000;
+  const themes = [
+    'Documentation control',
+    'Crew coordination',
+    'Invoice readiness',
+    'Storm response speed',
+    'Payment confidence',
+    'Field-to-office visibility',
+  ];
+
+  return {
+    strategy: {
+      title: `${product} Storm Response Campaign`,
+      summary: `${product} should be positioned as a practical operating layer for ${audience}, not a generic AI promise. The campaign connects ${pain} to specific restoration workflows: documentation capture, crew updates, invoice preparation, and review readiness. Organic posts build recognition around the cost of manual chaos, paid media drives attention to payment and coordination pain points, and blog content gives contractors a deeper reason to evaluate agentic workflows. The call to action should invite a workflow review or demo without inventing prices, guarantees, or unsupported performance claims.`,
+      objectives: [
+        `Show ${audience} how ${product} reduces manual coordination during storm events`,
+        `Turn documentation and invoicing delays into concrete reasons to evaluate ${product}`,
+        `Create review-ready assets that move from awareness to demo interest`,
+      ],
+      contentPillars: ['Storm documentation', 'Crew communication', 'Invoice readiness', 'Agentic workflow education'],
+    },
+    socialPosts: Array.from({ length: contract.socialPosts }, (_, index) => {
+      const theme = themes[index % themes.length];
+      return {
+        name: `${theme} Post ${index + 1}`,
+        topic: theme,
+        caption: socialFallbackCaption(index, { product, audience, pain, outcome, theme }),
+        platforms: ['linkedin', 'instagram', 'facebook'],
+        creativeBrief: `Show ${audience} moving from scattered field updates to a clear ${product} workflow around ${theme.toLowerCase()}.`,
+        visualGuide: `Realistic storm restoration operations scene with crews, trucks, tablets, and office coordination screens; documentary lighting, high-contrast safety colors, 4:5 crop, minimal text overlay focused on ${theme.toLowerCase()}.`,
+        scheduledDate: new Date(start + index * 2 * 86400000).toISOString().slice(0, 10),
+      };
+    }),
+    googleAds: Array.from({ length: contract.googleAds }, (_, index) => enforceGoogleAdLimits({
+      name: `Search Ad ${index + 1}`,
+      topic: index === 0 ? 'Storm contractor AI' : index === 1 ? 'Invoice documentation' : 'Crew coordination',
+      headlines: googleFallbackHeadlines(index, product),
+      descriptions: googleFallbackDescriptions(index, product),
+      callouts: ['Built for storms', 'Document faster', 'Coordinate crews', 'Review workflows'],
+      path1: 'storm-ai',
+      path2: index === 1 ? 'invoices' : 'workflow',
+    })),
+    socialAds: Array.from({ length: contract.socialAds }, (_, index) => ({
+      name: `Storm Workflow Ad ${index + 1}`,
+      topic: themes[index % themes.length],
+      platform: index % 2 === 0 ? 'facebook' : 'linkedin',
+      primaryText: `${audience} cannot afford scattered notes, delayed approvals, and back-office rework when storm jobs are moving fast. ${product} helps coordinate documentation, crew communication, and invoice readiness in one agentic workflow, so teams can stay focused on restoration work.`,
+      headline: index % 2 === 0 ? 'Control Storm Job Chaos' : `${product} For Storm Teams`,
+      description: `See how agentic workflows can support ${outcome}.`,
+      visualGuide: 'Split-scene visual: active storm restoration field work on one side, organized workflow dashboard on the other; grounded, operational, no exaggerated claims, 1:1 crop.',
+      cta: 'learn_more',
+      scheduledDate: new Date(start + (index * 3 + 1) * 86400000).toISOString().slice(0, 10),
+    })),
+    blogOutlines: Array.from({ length: contract.blogOutlines }, (_, index) => ({
+      title: index === 0
+        ? `How Agentic AI Helps Storm Contractors Reduce Documentation Drag`
+        : `Why Invoice Readiness Starts In The Field During Storm Restoration`,
+      slug: index === 0 ? 'agentic-ai-storm-documentation' : 'field-invoice-readiness-storm-restoration',
+      excerpt: index === 0
+        ? `A practical look at how ${audience} can use agentic workflows to keep documentation, communication, and review steps moving during high-pressure events.`
+        : `Explore why payment friction often begins with field-level documentation gaps and how coordinated workflows help teams prepare cleaner submissions.`,
+      metaTitle: index === 0 ? 'Agentic AI For Storm Documentation' : 'Storm Invoice Readiness Guide',
+      metaDescription: index === 0
+        ? `Learn how ${product} can help storm contractors coordinate documentation and crew communication.`
+        : `See how field documentation workflows support cleaner storm restoration invoicing.`,
+      keywords: ['storm contractors', 'agentic ai', 'documentation', 'crew coordination', 'invoicing'],
+      outline: [
+        'The operational pressure storm contractors face',
+        'Where documentation and communication break down',
+        `How ${product} coordinates work across field and office teams`,
+        'What to review before adopting an agentic workflow',
+        'Next step: evaluate the current storm response workflow',
+      ],
+      publishDate: new Date(start + (index * 7 + 3) * 86400000).toISOString().slice(0, 10),
+    })),
+    calendar: Array.from({ length: contract.calendarItems }, (_, index) => {
+      const type = index % 6 === 0 ? 'blogs' : index % 5 === 0 ? 'google-ad' : index % 3 === 0 ? 'meta-ad' : 'socials';
+      return {
+        title: `${themes[index % themes.length]} ${type === 'blogs' ? 'Article' : type === 'google-ad' ? 'Search Push' : type === 'meta-ad' ? 'Paid Social' : 'Organic Post'}`,
+        type,
+        date: new Date(start + index * 86400000).toISOString().slice(0, 10),
+      };
+    }),
+  };
+};
+
+function campaignFallbackFocus(prompt: string) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  const product = normalized.match(/\b(KYRO)\b/i)?.[1]?.toUpperCase()
+    || normalized.match(/\b([A-Z][A-Za-z0-9-]{2,})'?s?\s+(?:newly launched\s+)?(?:Agentic AI|AI|platform|app|tool|software)\b/)?.[1]
+    || 'the solution';
+  const audience = /storm contractors/i.test(normalized)
+    ? 'US storm contractors'
+    : normalized.match(/\b(?:for|to)\s+([^.!?]{8,80})/i)?.[1]?.replace(/\b(?:by|with|through)\b.*$/i, '').trim()
+      || 'the target audience';
+  const pain = /manual chaos|documentation|crew communication|invoicing|payment/i.test(normalized)
+    ? 'manual chaos around documentation, crew communication, and invoicing'
+    : normalized.split(/[.!?]/)[0]?.trim() || 'the workflow friction described in the brief';
+  const outcome = /payment|invoice/i.test(normalized)
+    ? 'faster review readiness and less payment friction'
+    : 'clearer coordination and faster execution';
+  return { product, audience, pain, outcome };
+}
+
+function socialFallbackCaption(
+  index: number,
+  context: { product: string; audience: string; pain: string; outcome: string; theme: string },
+) {
+  const posts = [
+    `${context.audience} do not need more tabs, texts, and after-the-fact paperwork when a storm job is moving fast. ${context.product} gives teams an agentic workflow for documentation, crew communication, and invoice readiness so the field and office can stay aligned from the first update.`,
+    `The expensive part of storm response is not only the work itself. It is the rework: missing notes, delayed approvals, unclear crew updates, and invoices that need another pass. ${context.product} helps turn those moving parts into a coordinated workflow built for high-pressure restoration events.`,
+    `When documentation is scattered, payment friction starts before the invoice is even created. ${context.product} helps ${context.audience} capture the right job context earlier, keep crews aligned, and prepare cleaner handoffs for review.`,
+    `Agentic AI should feel practical, not abstract. For ${context.audience}, that means a 24/7 coordinator that can help organize field updates, surface missing details, and keep the next admin step from slowing down the work.`,
+    `Storm restoration teams move quickly. The back office has to keep up. ${context.product} connects the operational dots between the field, crew communication, and invoice preparation so teams can spend less time chasing information after the job.`,
+    `A stronger storm workflow starts with fewer gaps. ${context.product} helps teams focus on ${context.theme.toLowerCase()} by giving every update, document, and handoff a clearer place in the process.`,
+  ];
+  return posts[index % posts.length];
+}
+
+function googleFallbackHeadlines(index: number, product: string) {
+  const sets = [
+    [`${product} Storm AI`, 'Storm Job Coordination', 'Reduce Invoice Delays', 'Built For Contractors', 'Field To Office Flow'],
+    ['Storm Documentation AI', 'Cleaner Job Handoffs', `${product} For Crews`, 'Invoice Ready Work', 'Less Admin Rework'],
+    ['AI For Storm Teams', 'Coordinate Crews Faster', 'Documentation Control', `${product} Workflow`, 'Improve Job Visibility'],
+  ];
+  return sets[index % sets.length];
+}
+
+function googleFallbackDescriptions(index: number, product: string) {
+  const sets = [
+    [`Use ${product} to coordinate storm documentation, crew updates, and invoice readiness.`, 'Help field and office teams stay aligned during high-pressure restoration work.'],
+    ['Reduce scattered notes and back-office rework with an agentic storm workflow.', `See how ${product} supports cleaner documentation and job handoffs.`],
+    ['Bring crew communication, documentation, and invoicing steps into one workflow.', `${product} helps storm teams stay organized from field update to review.`],
+  ];
+  return sets[index % sets.length];
+}
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
@@ -348,6 +446,15 @@ async function processMission({
     let nextPack = currentPack;
     for (const step of customStepsBefore(nextBuiltInSlug)) {
       const skill = agentSkills[step.slug] || step.skill_md || '';
+      if (remainingMissionMs() < CUSTOM_AGENT_MIN_BUDGET_MS) {
+        await addEvent(step.slug, 'workspace_agent_skipped', `${step.agent_name} was skipped to preserve time for QA and artifact saving.`, {
+          agentSlug: step.slug,
+          internalError: `Only ${Math.round(remainingMissionMs() / 1000)}s remained in the mission budget.`,
+        });
+        completedCustomSteps.add(step.slug);
+        await updateStep(step.slug, 'skipped', `${step.agent_name} was skipped to preserve time for QA and artifact saving.`);
+        continue;
+      }
       await updateStep(step.slug, 'working', `${step.agent_name} is reviewing the draft pack with its workspace skill.`);
       await addEvent(step.slug, 'workspace_agent_review', `${step.agent_name} started a guarded review of the draft pack.`, {
         agentSlug: step.slug,
@@ -483,22 +590,40 @@ async function processMission({
         if (researchTimeoutMs <= 12_000) {
           throw new Error('Deep research skipped because the mission time budget was nearly exhausted.');
         }
-        const research = selectedResearchProvider.id === 'perplexity'
-          ? await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs)
-          : await tavilySearch(query);
-        const researchDigest = selectedResearchProvider.id === 'perplexity' && research.answer
+        let researchProviderUsed = selectedResearchProvider;
+        let research: TavilySearchResponse;
+        if (selectedResearchProvider.id === 'perplexity') {
+          try {
+            research = await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs);
+          } catch (perplexityError) {
+            const fallbackTimeoutMs = Math.max(10_000, Math.min(20_000, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS));
+            if (fallbackTimeoutMs <= 10_000) throw perplexityError;
+            const fallbackProvider = researchProviders.find((provider) => provider.id === 'tavily') || { id: 'tavily', name: 'Tavily' } as ResearchProviderOption;
+            await addEvent(activeStep, 'research_provider_fallback', 'Perplexity returned an unusable response, so Tavily research was started.', {
+              primaryProvider: selectedResearchProvider.id,
+              fallbackProvider: fallbackProvider.id,
+              internalError: perplexityError instanceof Error ? perplexityError.message : 'Perplexity research failed',
+            });
+            research = await tavilySearch(query, fallbackTimeoutMs);
+            researchProviderUsed = fallbackProvider;
+          }
+        } else {
+          research = await tavilySearch(query, researchTimeoutMs);
+        }
+        const researchDigest = researchProviderUsed.id === 'perplexity' && research.answer
           ? research.answer
           : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()));
         researchContext = tavilyContext({ ...research, answer: researchDigest });
         researchSources = research.results;
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
-        await addEvent(activeStep, 'web_sources', `${selectedResearchProvider.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
+        await addEvent(activeStep, 'web_sources', `${researchProviderUsed.name} found ${research.results.length} useful sources${sourceTitles ? `: ${sourceTitles}` : '.'}`, {
           query: research.query,
           researchQuestion,
           answer: researchDigest,
           campaignGuidance: plannerOutput.campaignGuidance,
-          provider: selectedResearchProvider.id,
-          researchModel: selectedResearchProvider.model || null,
+          provider: researchProviderUsed.id,
+          researchModel: researchProviderUsed.model || null,
+          requestedProvider: selectedResearchProvider.id,
           credits: research.credits,
           responseTime: research.responseTime,
           sources: research.results.map(({ title, url, score, content }) => ({ title, url, score, content: content.slice(0, 500) })),
@@ -512,7 +637,8 @@ async function processMission({
             { title: 'Campaign focus', body: handoffText(plannerOutput.campaignGuidance) },
           ],
           metrics: {
-            provider: selectedResearchProvider.name,
+            provider: researchProviderUsed.name,
+            requestedProvider: selectedResearchProvider.name,
             sourceCount: research.results.length,
             credits: research.credits,
             responseTime: research.responseTime,
@@ -553,11 +679,13 @@ async function processMission({
 
     activeStep = 'Copywriter Agent';
     const model = selectedModel.id;
+    const generationModelIds = generationFallbackModelIds(selectedModel, workMode);
     await updateStep(activeStep, 'working', 'Generating strategy and channel-ready copy.');
     await addEvent(activeStep, 'model_call', 'Draft generation started using the selected AI model.', {
       model,
       modelName: selectedModel.name,
       provider: selectedModel.provider,
+      fallbackModels: generationModelIds.filter((item) => item !== model),
       workMode,
       researchSources: researchSources.length,
     });
@@ -570,7 +698,7 @@ async function processMission({
         throw new Error(`Copywriter skipped because only ${Math.round(remainingMissionMs() / 1000)}s remained in the Edge Function budget.`);
       }
       const generated = await buildCampaignPackInParts({
-        model,
+        models: generationModelIds,
         prompt: body.prompt,
         destination,
         plannerOutput,
@@ -588,12 +716,16 @@ async function processMission({
       const guardedPack = guardCampaignPack(candidatePack, body.prompt, plannerOutput.deliverableContract);
       pack = guardedPack.pack;
       contentGuardrailNotes = guardedPack.notes;
+      const blockingFindings = validatePack(pack, plannerOutput.deliverableContract);
+      if (blockingFindings.length) {
+        throw new Error(`AI generation failed QA: ${blockingFindings.join(' ')}`);
+      }
     } catch (error) {
-      await addEvent(activeStep, 'model_fallback', 'Primary generation could not complete. Structured draft placeholders were prepared for review.', {
+      await addEvent(activeStep, 'model_fallback', 'Primary generation could not complete. The run was stopped before placeholder drafts could be saved.', {
         model,
         internalError: error instanceof Error ? error.message : 'Unknown model error',
       });
-      pack = fallbackPack(body.prompt, plannerOutput.deliverableContract);
+      throw new Error(error instanceof Error ? error.message : 'AI draft generation failed.');
     }
     await addHandoffEvent(activeStep, {
       title: 'Draft pack handoff',
@@ -636,6 +768,9 @@ async function processMission({
     await addEvent(activeStep, 'qa_review', qaFindings.length ? `QA noted: ${qaFindings.join(' ')}` : 'QA passed: required output groups are present and dates are future-safe.', {
       findings: qaFindings,
     });
+    if (qaFindings.length) {
+      throw new Error(`QA blocked the draft pack: ${qaFindings.join(' ')}`);
+    }
     await addHandoffEvent(activeStep, {
       title: 'QA handoff',
       summary: qaFindings.length
@@ -689,15 +824,27 @@ async function processMission({
     }).eq('id', runId);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected error';
-    await updateStep(activeStep, 'failed', message).catch(() => null);
-    await supabase.from('ai_run_events').insert({
-      run_id: runId,
-      step_id: stepIds[stepSlugFor(activeStep)] || null,
-      event_type: 'run_failed',
-      message,
-      payload: {},
-    }).catch(() => null);
-    await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId).catch(() => null);
+    try {
+      await updateStep(activeStep, 'failed', message);
+    } catch {
+      // Best-effort failure reporting should not block the run status update.
+    }
+    try {
+      await supabase.from('ai_run_events').insert({
+        run_id: runId,
+        step_id: stepIds[stepSlugFor(activeStep)] || null,
+        event_type: 'run_failed',
+        message,
+        payload: {},
+      });
+    } catch {
+      // Continue to the authoritative run status update below.
+    }
+    try {
+      await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId);
+    } catch {
+      // Nothing else can be done from the Edge Function once the final status write fails.
+    }
   }
 }
 
@@ -1060,7 +1207,7 @@ async function buildResearchDigest(search: TavilySearchResponse, campaignGuidanc
 }
 
 async function buildCampaignPackInParts({
-  model,
+  models,
   prompt,
   destination,
   plannerOutput,
@@ -1071,7 +1218,7 @@ async function buildCampaignPackInParts({
   today,
   deadlineAt,
 }: {
-  model: string;
+  models: string[];
   prompt: string;
   destination: { projectName: string; folderName: string; campaignName: string };
   plannerOutput: PlannerOutput;
@@ -1089,10 +1236,10 @@ async function buildCampaignPackInParts({
     destination.projectName ? `Project: ${destination.projectName}` : '',
     destination.campaignName ? `Destination campaign: ${destination.campaignName}` : '',
     plannerOutput.campaignGuidance ? `Planner guidance:\n${plannerOutput.campaignGuidance}` : '',
-    brandKnowledge ? `Brand knowledge:\n${brandKnowledge}` : '',
-    researchContext ? `Deep research context:\n${researchContext}` : '',
-    agentSkillContext ? `Workspace agent skill guidance:\n${agentSkillContext}` : '',
-    `Brief:\n${prompt}`,
+    brandKnowledge ? `Brand knowledge:\n${truncateContext(brandKnowledge, 7000)}` : '',
+    researchContext ? `Deep research context:\n${truncateContext(researchContext, 3500)}` : '',
+    agentSkillContext ? `Workspace agent skill guidance:\n${truncateContext(agentSkillContext, 4500)}` : '',
+    `Brief:\n${truncateContext(prompt, 5000)}`,
   ].filter(Boolean).join('\n\n');
 
   const sectionSpecs = [
@@ -1122,6 +1269,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.socialPosts} organic social posts only.\n\n${commonContext}`,
+      maxTokens: 5200,
     },
     {
       key: 'paidMedia',
@@ -1136,6 +1284,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.googleAds} Google ads and ${deliverableContract.socialAds} paid social ads only.\n\n${commonContext}`,
+      maxTokens: 4200,
     },
     {
       key: 'blogOutlines',
@@ -1148,6 +1297,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.blogOutlines} blog outlines only.\n\n${commonContext}`,
+      maxTokens: 2400,
     },
     {
       key: 'calendar',
@@ -1161,6 +1311,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `Create exactly ${deliverableContract.calendarItems} campaign calendar items only.\n\n${commonContext}`,
+      maxTokens: 3200,
     },
   ] as const;
 
@@ -1173,17 +1324,13 @@ async function buildCampaignPackInParts({
   }
 
   const sectionTimeoutMs = Math.max(8_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
-  const results = await Promise.all(sectionSpecs.map(async (section) => {
+  const batchTimeoutMs = Math.max(12_000, Math.min(58_000, remainingForSectionsMs));
+  const results = await withTimeout(Promise.all(sectionSpecs.map(async (section) => {
     try {
-      const value = await openRouterJson<unknown>({
-        model,
-        temperature: 0.35,
-        maxTokens: section.key === 'calendar' ? 1600 : section.key === 'socialPosts' ? 2600 : 1800,
+      const value = await generateCampaignSection({
+        models,
+        section,
         timeoutMs: sectionTimeoutMs,
-        messages: [
-          { role: 'system', content: campaignSafetyInstructions(section.system) },
-          { role: 'user', content: section.user },
-        ],
       });
       return { section, value, error: '' };
     } catch (error) {
@@ -1193,7 +1340,7 @@ async function buildCampaignPackInParts({
         error: error instanceof Error ? error.message : 'Unknown model error',
       };
     }
-  }));
+  })), batchTimeoutMs, `Draft section generation timed out after ${Math.round(batchTimeoutMs / 1000)}s`);
 
   const failures = results
     .filter((result) => result.error)
@@ -1214,11 +1361,95 @@ async function buildCampaignPackInParts({
     blogOutlines: sectionValue('blogOutlines'),
     calendar: sectionValue('calendar'),
   };
+  const normalizedPack = normalizeCampaignPack(rawPack);
+  const countFailures = campaignCountFailures(normalizedPack, deliverableContract);
 
   return {
-    pack: normalizeCampaignPack(rawPack),
-    failures,
+    pack: normalizedPack,
+    failures: [...failures, ...countFailures],
   };
+}
+
+async function generateCampaignSection({
+  models,
+  section,
+  timeoutMs,
+}: {
+  models: string[];
+  section: {
+    key: string;
+    label: string;
+    system: string;
+    user: string;
+    maxTokens?: number;
+  };
+  timeoutMs: number;
+}) {
+  const attempts = [
+    {
+      temperature: 0.25,
+      user: section.user,
+    },
+    {
+      temperature: 0.1,
+      user: [
+        'Retry because the previous response was unusable.',
+        'Return a single valid JSON object only. No markdown, no commentary, no partial JSON.',
+        `The root key(s) for this section are mandatory. Section: ${section.label}.`,
+        section.user,
+      ].join('\n\n'),
+    },
+  ];
+
+  const modelPlan = models.length ? models : [deepWorkModels[0].id];
+  const attemptTimeoutMs = Math.max(8_000, Math.min(14_000, Math.floor(timeoutMs / Math.min(5, modelPlan.length + 2))));
+  let lastError = '';
+  for (const [modelIndex, model] of modelPlan.entries()) {
+    const modelAttempts = modelIndex === 0 ? attempts : attempts.slice(1);
+    for (const attempt of modelAttempts) {
+      try {
+        return await openRouterJson<unknown>({
+          model,
+          temperature: attempt.temperature,
+          maxTokens: section.maxTokens || 2200,
+          timeoutMs: attemptTimeoutMs,
+          messages: [
+            { role: 'system', content: campaignSafetyInstructions(section.system) },
+            { role: 'user', content: attempt.user },
+          ],
+        });
+      } catch (error) {
+        lastError = `${model}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
+      }
+    }
+  }
+
+  throw new Error(lastError || 'Section generation failed');
+}
+
+function generationFallbackModelIds(selectedModel: AiModelOption, workMode: WorkMode) {
+  const modeModels = workMode === 'deep' ? deepWorkModels : instantModels;
+  const openAiModeModels = modeModels.filter((model) => model.provider === 'OpenAI');
+  const nonOpenAiModeModels = modeModels.filter((model) => model.provider !== 'OpenAI');
+  const crossModeOpenAi = [...deepWorkModels, ...instantModels].filter((model) => model.provider === 'OpenAI');
+  return uniqueStrings([
+    selectedModel.id,
+    ...openAiModeModels.map((model) => model.id),
+    ...nonOpenAiModeModels.map((model) => model.id),
+    ...crossModeOpenAi.map((model) => model.id),
+  ]);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 async function applyWorkspaceAgentToPack({
@@ -1256,7 +1487,7 @@ async function applyWorkspaceAgentToPack({
     model,
     temperature: 0.2,
     maxTokens: 5000,
-    timeoutMs: Math.min(SECTION_TIMEOUT_MS, remainingMs),
+    timeoutMs: Math.min(CUSTOM_AGENT_TIMEOUT_MS, remainingMs),
     messages: [
       {
         role: 'system',
@@ -1317,6 +1548,44 @@ function unwrapSectionValue(input: unknown, key: string) {
 
 function campaignRecord(input: unknown): Record<string, unknown> {
   return input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {};
+}
+
+function truncateContext(value: string, maxLength: number) {
+  const cleaned = value.replace(/\s+/g, ' ').trim();
+  if (cleaned.length <= maxLength) return cleaned;
+  return `${cleaned.slice(0, maxLength - 140).trim()} ... [trimmed to keep generation reliable]`;
+}
+
+function isFatalGenerationFailure(section: string, contract = defaultDeliverableContract) {
+  if (section === 'Strategy') return true;
+  if (section === 'Social posts') return contract.socialPosts > 0;
+  if (section === 'Ads') return contract.googleAds > 0 || contract.socialAds > 0;
+  if (section === 'Blog outlines') return contract.blogOutlines > 0;
+  if (section === 'Calendar') return contract.calendarItems > 0;
+  return true;
+}
+
+function campaignCountFailures(pack: CampaignPack, contract = defaultDeliverableContract): Array<{ section: string; error: string }> {
+  const failures: Array<{ section: string; error: string }> = [];
+  if (!pack.strategy?.summary || strategyNeedsRationale(pack.strategy.summary)) {
+    failures.push({ section: 'Strategy', error: 'Strategy generation did not produce a useful campaign rationale.' });
+  }
+  if (pack.socialPosts.length !== contract.socialPosts) {
+    failures.push({ section: 'Social posts', error: `Expected ${contract.socialPosts} social posts but generated ${pack.socialPosts.length}.` });
+  }
+  if (pack.googleAds.length !== contract.googleAds || pack.socialAds.length !== contract.socialAds) {
+    failures.push({ section: 'Ads', error: `Expected ${contract.googleAds} Google ads and ${contract.socialAds} paid social ads but generated ${pack.googleAds.length} and ${pack.socialAds.length}.` });
+  }
+  if (pack.blogOutlines.length !== contract.blogOutlines) {
+    failures.push({ section: 'Blog outlines', error: `Expected ${contract.blogOutlines} blog outlines but generated ${pack.blogOutlines.length}.` });
+  }
+  if (pack.calendar.length !== contract.calendarItems) {
+    failures.push({ section: 'Calendar', error: `Expected ${contract.calendarItems} calendar items but generated ${pack.calendar.length}.` });
+  }
+  if (fallbackPlaceholderFindings(pack).length) {
+    failures.push({ section: 'All sections', error: 'Generated pack still contained placeholder/default fallback copy.' });
+  }
+  return failures;
 }
 
 function removeUnrequestedYears(value: string, prompt: string) {
@@ -1548,9 +1817,9 @@ function guardCampaignPack(pack: CampaignPack, prompt: string, contract = defaul
   });
   const calendar = pack.calendar.slice(0, contract.calendarItems).map((item, index) => {
     const reasons = unsupportedContentReasons([item.title], prompt);
-    if (!reasons.length) return item;
-    notes.push(`Calendar item ${index + 1}: ${reasons.join(', ')}`);
-    return { ...item, title: `Awareness engagement touchpoint ${index + 1}` };
+    if (!reasons.length && !hasFallbackPlaceholderText(item.title)) return item;
+    notes.push(`Calendar item ${index + 1}: ${reasons.join(', ') || 'replaced placeholder calendar title'}`);
+    return safeCalendarItem(index);
   });
 
   while (socialPosts.length < contract.socialPosts) socialPosts.push(safeSocialPost(socialPosts.length, topic));
@@ -1586,19 +1855,24 @@ function guardCampaignPack(pack: CampaignPack, prompt: string, contract = defaul
 function unsupportedContentReasons(values: Array<string | undefined>, prompt: string) {
   const content = values.filter(Boolean).join(' ');
   const allowed = prompt.toLowerCase();
+  const healthcareBrief = isHealthcareBrief(prompt);
   const rules = [
-    { label: 'adjacent emergency service promotion', content: /\b(emergency|urgent care|immediate assistance|24\s*x\s*7)\b/i, prompt: /\b(emergency|urgent care|24\s*x\s*7)\b/i },
-    { label: 'unrequested facility or specialty promotion', content: /\b(multispecial(?:ity|ty)|super[- ]?special(?:ity|ty)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, prompt: /\b(multispecial(?:ity|ty)|special(?:ity|ties)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i },
-    { label: 'unrequested appointment promotion', content: /\b(appointment|book now|schedule now)\b/i, prompt: /\b(appointment|booking|book|schedule|consultation)\b/i },
-    { label: 'unrequested named clinician', content: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, prompt: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i },
-    { label: 'unrequested patient story or testimonial', content: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, prompt: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i },
+    { label: 'adjacent emergency service promotion', content: /\b(emergency|urgent care|immediate assistance|24\s*x\s*7)\b/i, prompt: /\b(emergency|urgent care|24\s*x\s*7)\b/i, healthcareOnly: true },
+    { label: 'unrequested facility or specialty promotion', content: /\b(multispecial(?:ity|ty)|super[- ]?special(?:ity|ty)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, prompt: /\b(multispecial(?:ity|ty)|special(?:ity|ties)|facilit(?:y|ies)|department|accredit(?:ed|ation)|nabh)\b/i, healthcareOnly: true },
+    { label: 'unrequested appointment promotion', content: /\b(appointment|book now|schedule now)\b/i, prompt: /\b(appointment|booking|book|schedule|consultation)\b/i, healthcareOnly: true },
+    { label: 'unrequested named clinician', content: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, prompt: /\bdr\.?\s+[a-z][a-z.'-]+(?:\s+[a-z][a-z.'-]+)+\b/i, healthcareOnly: true },
+    { label: 'unrequested patient story or testimonial', content: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, prompt: /\b(patient (?:care )?stor(?:y|ies)|testimonial|real stories|patient quote|feature a patient|family member)\b/i, healthcareOnly: true },
     { label: 'unrequested event promotion', content: /\b(community event|health event|seminar|workshop|health camp|upcoming event|include date,?\s*time,?\s*and location)\b/i, prompt: /\b(event|seminar|workshop|camp)\b/i },
-    { label: 'unsupported outcome claim', content: /\b(increases? treatment success rates?|saves lives?)\b/i, prompt: /\b(increases? treatment success rates?|saves lives?)\b/i },
+    { label: 'unsupported outcome claim', content: /\b(increases? treatment success rates?|saves lives?)\b/i, prompt: /\b(increases? treatment success rates?|saves lives?)\b/i, healthcareOnly: true },
     { label: 'unrequested phone number', content: /\b(?:\+?\d[\d\s()-]{7,}\d)\b/i, prompt: /\b(call|phone|contact|whatsapp|helpline|number)\b/i },
   ];
   return rules
-    .filter((rule) => rule.content.test(content) && !rule.prompt.test(allowed))
+    .filter((rule) => (!rule.healthcareOnly || healthcareBrief) && rule.content.test(content) && !rule.prompt.test(allowed))
     .map((rule) => rule.label);
+}
+
+function isHealthcareBrief(prompt: string) {
+  return /\b(?:hospital|clinic|healthcare|health care|medical|doctor|patient|treatment|diagnosis|clinical|dental|therapy|therapeutic|pharma|wellness|care team|nursing|surgery|screening|preventive care)\b/i.test(prompt);
 }
 
 function campaignTopic(prompt: string) {
@@ -1644,7 +1918,7 @@ function safeSocialPost(index: number, topic: string, platforms = ['linkedin', '
     `Small conversations can create meaningful awareness. Share this ${topic} message with your community.`,
   ];
   return {
-    name: `Awareness Engagement Post ${index + 1}`,
+    name: `Community Guidance Post ${index + 1}`,
     topic: `${topic} engagement`,
     caption: captions[index % captions.length],
     platforms,
@@ -1735,9 +2009,9 @@ function safeBlogOutline(index: number, topic: string, publishDate?: string): Ca
 
 function safeCalendarItem(index: number): CampaignPack['calendar'][number] {
   const date = new Date();
-  date.setDate(date.getDate() + index);
+  date.setDate(date.getDate() + index + 1);
   return {
-    title: `Awareness engagement touchpoint ${index + 1}`,
+    title: `Community guidance content ${index + 1}`,
     type: index % 7 === 0 ? 'blogs' : index % 4 === 0 ? 'meta-ad' : index % 5 === 0 ? 'google-ad' : 'socials',
     date: date.toISOString().slice(0, 10),
   };
@@ -1755,5 +2029,39 @@ function validatePack(pack: CampaignPack, contract = defaultDeliverableContract)
   if (pack.socialAds.some((ad) => !ad.primaryText.trim() || !ad.headline.trim())) findings.push('Some paid social ads are missing copy.');
   if (pack.googleAds.some((ad) => !ad.headlines.length || !ad.descriptions.length)) findings.push('Some Google ads are missing copy.');
   if (pack.googleAds.some((ad) => googleAdLimitReasons(ad).length)) findings.push('Some Google ads exceed platform limits.');
+  findings.push(...fallbackPlaceholderFindings(pack));
   return findings;
+}
+
+function fallbackPlaceholderFindings(pack: CampaignPack) {
+  const checks = [
+    {
+      label: 'Social posts contain fallback placeholder copy.',
+      values: pack.socialPosts.flatMap((post) => [post.name, post.topic, post.caption, post.creativeBrief, post.visualGuide]),
+    },
+    {
+      label: 'Google ads contain fallback placeholder copy.',
+      values: pack.googleAds.flatMap((ad) => [ad.name, ad.topic, ...ad.headlines, ...ad.descriptions, ...(ad.callouts || [])]),
+    },
+    {
+      label: 'Paid social ads contain fallback placeholder copy.',
+      values: pack.socialAds.flatMap((ad) => [ad.name, ad.topic, ad.primaryText, ad.headline, ad.description, ad.visualGuide]),
+    },
+    {
+      label: 'Blog outlines contain fallback placeholder copy.',
+      values: pack.blogOutlines.flatMap((blog) => [blog.title, blog.excerpt, blog.metaTitle, blog.metaDescription, ...blog.outline]),
+    },
+    {
+      label: 'Calendar contains fallback placeholder copy.',
+      values: pack.calendar.flatMap((item) => [item.title]),
+    },
+  ];
+
+  return checks
+    .filter((check) => check.values.filter(Boolean).some((value) => hasFallbackPlaceholderText(value)))
+    .map((check) => check.label);
+}
+
+function hasFallbackPlaceholderText(value: unknown) {
+  return /\b(?:draft social caption|replace this with generated copy|ai-generated draft placeholder|campaign headline|draft search ad description|draft paid social primary text|draft blog outline excerpt|campaign touchpoint|awareness engagement post|awareness engagement touchpoint)\b/i.test(String(value || ''));
 }
