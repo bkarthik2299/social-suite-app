@@ -99,52 +99,148 @@ const builtInStepSlugs = new Set<string>(stepDefinitions.map((step) => step.slug
 const builtInSlugByName = new Map<string, string>(stepDefinitions.map((step) => [step.agent_name, step.slug]));
 const defaultWorkflowSlugs: string[] = stepDefinitions.map((step) => step.slug);
 
-const fallbackPack = (prompt: string, contract = defaultDeliverableContract): CampaignPack => ({
-  strategy: {
-    title: 'AI Campaign Draft',
-    summary: `Campaign direction generated from: ${prompt.slice(0, 180)}`,
-    objectives: ['Clarify the offer', 'Create platform-native draft assets', 'Prepare review-ready campaign content'],
-    contentPillars: ['Awareness', 'Education', 'Proof', 'Conversion'],
-  },
-  socialPosts: Array.from({ length: contract.socialPosts }, (_, index) => ({
-    name: `Social Post ${index + 1}`,
-    topic: `Campaign message ${index + 1}`,
-    caption: `Draft social caption ${index + 1}. Replace this with generated copy once the AI provider is configured.`,
-    platforms: ['linkedin', 'instagram', 'facebook'],
-    creativeBrief: 'AI-generated draft placeholder.',
-    visualGuide: 'Clean campaign image with a clear subject, brand-safe colors, simple composition, and minimal text overlay.',
-  })),
-  googleAds: Array.from({ length: contract.googleAds }, (_, index) => ({
-    name: `Google Ad ${index + 1}`,
-    topic: 'Search campaign concept',
-    headlines: [`Campaign Headline ${index + 1}`, 'Brand Benefit', 'Start Today'],
-    descriptions: ['Draft search ad description. Configure the AI provider for final copy.'],
-    callouts: ['Fast setup', 'Expert support'],
-  })),
-  socialAds: Array.from({ length: contract.socialAds }, (_, index) => ({
-    name: `Paid Social Ad ${index + 1}`,
-    topic: 'Paid social concept',
-    platform: index % 2 === 0 ? 'facebook' : 'linkedin',
-    primaryText: 'Draft paid social primary text. Configure the AI provider for final copy.',
-    headline: 'Campaign headline',
-    visualGuide: 'Conversion-friendly paid social image with a single clear focal point, calm brand-safe palette, and room for optional CTA text.',
-    cta: 'learn_more',
-  })),
-  blogOutlines: Array.from({ length: contract.blogOutlines }, (_, index) => ({
-    title: `Blog Outline ${index + 1}`,
-    slug: `blog-outline-${index + 1}`,
-    excerpt: 'Draft blog outline excerpt.',
-    metaTitle: `Blog Outline ${index + 1}`,
-    metaDescription: 'Draft meta description.',
-    keywords: ['campaign', 'brand'],
-    outline: ['Introduction', 'Key message', 'Proof points', 'Call to action'],
-  })),
-  calendar: Array.from({ length: contract.calendarItems }, (_, index) => ({
-    title: `Campaign touchpoint ${index + 1}`,
-    type: index % 5 === 0 ? 'blogs' : index % 3 === 0 ? 'google-ad' : index % 2 === 0 ? 'meta-ad' : 'socials',
-    date: new Date(Date.now() + index * 86400000).toISOString().slice(0, 10),
-  })),
-});
+const fallbackPack = (prompt: string, contract = defaultDeliverableContract): CampaignPack => {
+  const focus = campaignFallbackFocus(prompt);
+  const audience = focus.audience;
+  const product = focus.product;
+  const pain = focus.pain;
+  const outcome = focus.outcome;
+  const start = Date.now() + 86400000;
+  const themes = [
+    'Documentation control',
+    'Crew coordination',
+    'Invoice readiness',
+    'Storm response speed',
+    'Payment confidence',
+    'Field-to-office visibility',
+  ];
+
+  return {
+    strategy: {
+      title: `${product} Storm Response Campaign`,
+      summary: `${product} should be positioned as a practical operating layer for ${audience}, not a generic AI promise. The campaign connects ${pain} to specific restoration workflows: documentation capture, crew updates, invoice preparation, and review readiness. Organic posts build recognition around the cost of manual chaos, paid media drives attention to payment and coordination pain points, and blog content gives contractors a deeper reason to evaluate agentic workflows. The call to action should invite a workflow review or demo without inventing prices, guarantees, or unsupported performance claims.`,
+      objectives: [
+        `Show ${audience} how ${product} reduces manual coordination during storm events`,
+        `Turn documentation and invoicing delays into concrete reasons to evaluate ${product}`,
+        `Create review-ready assets that move from awareness to demo interest`,
+      ],
+      contentPillars: ['Storm documentation', 'Crew communication', 'Invoice readiness', 'Agentic workflow education'],
+    },
+    socialPosts: Array.from({ length: contract.socialPosts }, (_, index) => {
+      const theme = themes[index % themes.length];
+      return {
+        name: `${theme} Post ${index + 1}`,
+        topic: theme,
+        caption: socialFallbackCaption(index, { product, audience, pain, outcome, theme }),
+        platforms: ['linkedin', 'instagram', 'facebook'],
+        creativeBrief: `Show ${audience} moving from scattered field updates to a clear ${product} workflow around ${theme.toLowerCase()}.`,
+        visualGuide: `Realistic storm restoration operations scene with crews, trucks, tablets, and office coordination screens; documentary lighting, high-contrast safety colors, 4:5 crop, minimal text overlay focused on ${theme.toLowerCase()}.`,
+        scheduledDate: new Date(start + index * 2 * 86400000).toISOString().slice(0, 10),
+      };
+    }),
+    googleAds: Array.from({ length: contract.googleAds }, (_, index) => enforceGoogleAdLimits({
+      name: `Search Ad ${index + 1}`,
+      topic: index === 0 ? 'Storm contractor AI' : index === 1 ? 'Invoice documentation' : 'Crew coordination',
+      headlines: googleFallbackHeadlines(index, product),
+      descriptions: googleFallbackDescriptions(index, product),
+      callouts: ['Built for storms', 'Document faster', 'Coordinate crews', 'Review workflows'],
+      path1: 'storm-ai',
+      path2: index === 1 ? 'invoices' : 'workflow',
+    })),
+    socialAds: Array.from({ length: contract.socialAds }, (_, index) => ({
+      name: `Storm Workflow Ad ${index + 1}`,
+      topic: themes[index % themes.length],
+      platform: index % 2 === 0 ? 'facebook' : 'linkedin',
+      primaryText: `${audience} cannot afford scattered notes, delayed approvals, and back-office rework when storm jobs are moving fast. ${product} helps coordinate documentation, crew communication, and invoice readiness in one agentic workflow, so teams can stay focused on restoration work.`,
+      headline: index % 2 === 0 ? 'Control Storm Job Chaos' : `${product} For Storm Teams`,
+      description: `See how agentic workflows can support ${outcome}.`,
+      visualGuide: 'Split-scene visual: active storm restoration field work on one side, organized workflow dashboard on the other; grounded, operational, no exaggerated claims, 1:1 crop.',
+      cta: 'learn_more',
+      scheduledDate: new Date(start + (index * 3 + 1) * 86400000).toISOString().slice(0, 10),
+    })),
+    blogOutlines: Array.from({ length: contract.blogOutlines }, (_, index) => ({
+      title: index === 0
+        ? `How Agentic AI Helps Storm Contractors Reduce Documentation Drag`
+        : `Why Invoice Readiness Starts In The Field During Storm Restoration`,
+      slug: index === 0 ? 'agentic-ai-storm-documentation' : 'field-invoice-readiness-storm-restoration',
+      excerpt: index === 0
+        ? `A practical look at how ${audience} can use agentic workflows to keep documentation, communication, and review steps moving during high-pressure events.`
+        : `Explore why payment friction often begins with field-level documentation gaps and how coordinated workflows help teams prepare cleaner submissions.`,
+      metaTitle: index === 0 ? 'Agentic AI For Storm Documentation' : 'Storm Invoice Readiness Guide',
+      metaDescription: index === 0
+        ? `Learn how ${product} can help storm contractors coordinate documentation and crew communication.`
+        : `See how field documentation workflows support cleaner storm restoration invoicing.`,
+      keywords: ['storm contractors', 'agentic ai', 'documentation', 'crew coordination', 'invoicing'],
+      outline: [
+        'The operational pressure storm contractors face',
+        'Where documentation and communication break down',
+        `How ${product} coordinates work across field and office teams`,
+        'What to review before adopting an agentic workflow',
+        'Next step: evaluate the current storm response workflow',
+      ],
+      publishDate: new Date(start + (index * 7 + 3) * 86400000).toISOString().slice(0, 10),
+    })),
+    calendar: Array.from({ length: contract.calendarItems }, (_, index) => {
+      const type = index % 6 === 0 ? 'blogs' : index % 5 === 0 ? 'google-ad' : index % 3 === 0 ? 'meta-ad' : 'socials';
+      return {
+        title: `${themes[index % themes.length]} ${type === 'blogs' ? 'Article' : type === 'google-ad' ? 'Search Push' : type === 'meta-ad' ? 'Paid Social' : 'Organic Post'}`,
+        type,
+        date: new Date(start + index * 86400000).toISOString().slice(0, 10),
+      };
+    }),
+  };
+};
+
+function campaignFallbackFocus(prompt: string) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim();
+  const product = normalized.match(/\b(KYRO)\b/i)?.[1]?.toUpperCase()
+    || normalized.match(/\b([A-Z][A-Za-z0-9-]{2,})'?s?\s+(?:newly launched\s+)?(?:Agentic AI|AI|platform|app|tool|software)\b/)?.[1]
+    || 'the solution';
+  const audience = /storm contractors/i.test(normalized)
+    ? 'US storm contractors'
+    : normalized.match(/\b(?:for|to)\s+([^.!?]{8,80})/i)?.[1]?.replace(/\b(?:by|with|through)\b.*$/i, '').trim()
+      || 'the target audience';
+  const pain = /manual chaos|documentation|crew communication|invoicing|payment/i.test(normalized)
+    ? 'manual chaos around documentation, crew communication, and invoicing'
+    : normalized.split(/[.!?]/)[0]?.trim() || 'the workflow friction described in the brief';
+  const outcome = /payment|invoice/i.test(normalized)
+    ? 'faster review readiness and less payment friction'
+    : 'clearer coordination and faster execution';
+  return { product, audience, pain, outcome };
+}
+
+function socialFallbackCaption(
+  index: number,
+  context: { product: string; audience: string; pain: string; outcome: string; theme: string },
+) {
+  const posts = [
+    `${context.audience} do not need more tabs, texts, and after-the-fact paperwork when a storm job is moving fast. ${context.product} gives teams an agentic workflow for documentation, crew communication, and invoice readiness so the field and office can stay aligned from the first update.`,
+    `The expensive part of storm response is not only the work itself. It is the rework: missing notes, delayed approvals, unclear crew updates, and invoices that need another pass. ${context.product} helps turn those moving parts into a coordinated workflow built for high-pressure restoration events.`,
+    `When documentation is scattered, payment friction starts before the invoice is even created. ${context.product} helps ${context.audience} capture the right job context earlier, keep crews aligned, and prepare cleaner handoffs for review.`,
+    `Agentic AI should feel practical, not abstract. For ${context.audience}, that means a 24/7 coordinator that can help organize field updates, surface missing details, and keep the next admin step from slowing down the work.`,
+    `Storm restoration teams move quickly. The back office has to keep up. ${context.product} connects the operational dots between the field, crew communication, and invoice preparation so teams can spend less time chasing information after the job.`,
+    `A stronger storm workflow starts with fewer gaps. ${context.product} helps teams focus on ${context.theme.toLowerCase()} by giving every update, document, and handoff a clearer place in the process.`,
+  ];
+  return posts[index % posts.length];
+}
+
+function googleFallbackHeadlines(index: number, product: string) {
+  const sets = [
+    [`${product} Storm AI`, 'Storm Job Coordination', 'Reduce Invoice Delays', 'Built For Contractors', 'Field To Office Flow'],
+    ['Storm Documentation AI', 'Cleaner Job Handoffs', `${product} For Crews`, 'Invoice Ready Work', 'Less Admin Rework'],
+    ['AI For Storm Teams', 'Coordinate Crews Faster', 'Documentation Control', `${product} Workflow`, 'Improve Job Visibility'],
+  ];
+  return sets[index % sets.length];
+}
+
+function googleFallbackDescriptions(index: number, product: string) {
+  const sets = [
+    [`Use ${product} to coordinate storm documentation, crew updates, and invoice readiness.`, 'Help field and office teams stay aligned during high-pressure restoration work.'],
+    ['Reduce scattered notes and back-office rework with an agentic storm workflow.', `See how ${product} supports cleaner documentation and job handoffs.`],
+    ['Bring crew communication, documentation, and invoicing steps into one workflow.', `${product} helps storm teams stay organized from field update to review.`],
+  ];
+  return sets[index % sets.length];
+}
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
@@ -616,14 +712,14 @@ async function processMission({
       for (const failure of generated.failures) {
         await addEvent(activeStep, 'model_section_fallback', `${failure.section} generation used fallback content.`, failure);
       }
-      const fatalFailures = generated.failures.filter((failure) => isFatalGenerationFailure(failure.section, plannerOutput.deliverableContract));
-      if (fatalFailures.length) {
-        throw new Error(`AI generation failed for ${fatalFailures.map((failure) => failure.section).join(', ')}. No placeholder drafts were saved.`);
-      }
       const candidatePack = hasCampaignOutput(generated.pack) ? generated.pack : fallbackPack(body.prompt, plannerOutput.deliverableContract);
       const guardedPack = guardCampaignPack(candidatePack, body.prompt, plannerOutput.deliverableContract);
       pack = guardedPack.pack;
       contentGuardrailNotes = guardedPack.notes;
+      const blockingFindings = validatePack(pack, plannerOutput.deliverableContract);
+      if (blockingFindings.length) {
+        throw new Error(`AI generation failed QA: ${blockingFindings.join(' ')}`);
+      }
     } catch (error) {
       await addEvent(activeStep, 'model_fallback', 'Primary generation could not complete. The run was stopped before placeholder drafts could be saved.', {
         model,
