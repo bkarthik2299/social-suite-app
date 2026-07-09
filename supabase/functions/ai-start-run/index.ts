@@ -1306,7 +1306,7 @@ async function generateCampaignSection({
   ];
 
   const modelPlan = models.length ? models : [deepWorkModels[0].id];
-  const attemptTimeoutMs = Math.max(12_000, Math.floor(timeoutMs / Math.min(3, modelPlan.length + 1)));
+  const attemptTimeoutMs = Math.max(8_000, Math.min(14_000, Math.floor(timeoutMs / Math.min(5, modelPlan.length + 2))));
   let lastError = '';
   for (const [modelIndex, model] of modelPlan.entries()) {
     const modelAttempts = modelIndex === 0 ? attempts : attempts.slice(1);
