@@ -1,10 +1,10 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { DndContext, DragOverlay, closestCenter, pointerWithin, rectIntersection, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, DragEndEvent, DragStartEvent, type CollisionDetection } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useAuth } from '@/context/AuthContext';
-import { useTasks, useProjects, useAllCampaigns } from '@/hooks/useDatabase';
+import { useTasks, useTaskStages, useProjects, useAllCampaigns } from '@/hooks/useDatabase';
 import { Button } from '@/components/ui/button';
 import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -53,7 +53,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
-import { Task } from '@/types';
+import { Task, TaskStage } from '@/types';
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -75,17 +75,13 @@ const taskCollisionDetection: CollisionDetection = (args) => {
 };
 
 // Type for column configuration
-interface TaskColumn {
-  id: string;
-  title: string;
-  color: string;
-}
+type TaskColumn = TaskStage;
 
 // Default columns
 const DEFAULT_COLUMNS: TaskColumn[] = [
-  { id: 'todo', title: 'To-do', color: 'bg-blue-500' },
-  { id: 'in-progress', title: 'In Progress', color: 'bg-amber-500' },
-  { id: 'done', title: 'Completed', color: 'bg-green-500' },
+  { id: 'todo', title: 'To-do', color: 'bg-blue-500', sortOrder: 0 },
+  { id: 'in-progress', title: 'In Progress', color: 'bg-amber-500', sortOrder: 1 },
+  { id: 'done', title: 'Completed', color: 'bg-green-500', sortOrder: 2 },
 ];
 
 // Available colors for columns
@@ -349,6 +345,7 @@ function TaskCard({
 
 export default function Tasks() {
   const { data: dbTasks, addTask, updateTask, deleteTask, moveTask } = useTasks();
+  const { data: dbTaskStages, saveTaskStages } = useTaskStages();
   const { data: projects = [] } = useProjects();
   const { data: campaigns = [] } = useAllCampaigns();
   const { membership, user } = useAuth();
@@ -404,8 +401,17 @@ export default function Tasks() {
   });
 
   const resetTaskForm = useCallback(() => {
-    setTaskForm({ title: '', status: 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
-  }, []);
+    setTaskForm({ title: '', status: columns[0]?.id || 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+  }, [columns]);
+
+  useEffect(() => {
+    if (!dbTaskStages?.length) return;
+
+    setColumns(dbTaskStages);
+    setTaskForm((previous) => dbTaskStages.some((stage) => stage.id === previous.status)
+      ? previous
+      : { ...previous, status: dbTaskStages[0].id });
+  }, [dbTaskStages]);
 
   // Filter tasks with multi-select support
   const filteredTasks = useMemo(() => {
@@ -572,8 +578,8 @@ export default function Tasks() {
   };
 
   const addColumn = () => {
-    const newId = `column-${Date.now()}`;
-    setEditingColumns([...editingColumns, { id: newId, title: 'New Column', color: 'bg-slate-500' }]);
+    const newId = crypto.randomUUID();
+    setEditingColumns([...editingColumns, { id: newId, title: 'New Column', color: 'bg-slate-500', sortOrder: editingColumns.length }]);
   };
 
   const updateColumnTitle = (id: string, title: string) => {
@@ -601,9 +607,20 @@ export default function Tasks() {
     setColumnToDelete(null);
   };
 
-  const saveColumns = () => {
-    setColumns(editingColumns);
-    setColumnsDialogOpen(false);
+  const saveColumns = async () => {
+    const normalizedColumns = editingColumns.map((column, index) => ({
+      ...column,
+      title: column.title.trim(),
+      sortOrder: index,
+    }));
+
+    try {
+      const savedColumns = await saveTaskStages.mutateAsync(normalizedColumns);
+      setColumns(savedColumns);
+      setColumnsDialogOpen(false);
+    } catch (error) {
+      toast({ title: 'Could not save task stages', description: getErrorMessage(error), variant: 'destructive' });
+    }
   };
 
   // Sensors for column drag and drop
@@ -1193,7 +1210,12 @@ export default function Tasks() {
           </div>
           <DialogFooter>
             <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setColumnsDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveColumns}>Save Changes</Button>
+            <Button
+              onClick={saveColumns}
+              disabled={saveTaskStages.isPending || editingColumns.some((column) => !column.title.trim())}
+            >
+              {saveTaskStages.isPending ? 'Saving...' : 'Save Changes'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1250,7 +1272,7 @@ export default function Tasks() {
           <AlertDialogHeader>
             <AlertDialogTitle>Remove column?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will remove "{columnToDelete?.title || 'this column'}" from your task board layout.
+              This will remove "{columnToDelete?.title || 'this column'}". Tasks in it will move to the first remaining stage when you save.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
