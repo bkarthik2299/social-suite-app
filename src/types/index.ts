@@ -33,6 +33,13 @@ export interface Task {
   assigneeId?: string;
 }
 
+export interface TaskStage {
+  id: string;
+  title: string;
+  color: string;
+  sortOrder: number;
+}
+
 export interface TeamMember {
   id: string;
   name: string;

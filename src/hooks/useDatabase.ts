@@ -12,7 +12,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import type { Database, Json } from '@/types/supabase';
-import type { Campaign, CampaignType, Folder, Note, Project, Task } from '@/types';
+import type { Campaign, CampaignType, Folder, Note, Project, Task, TaskStage } from '@/types';
 
 type ProjectRow = Database['public']['Tables']['projects']['Row'];
 type FolderRow = Database['public']['Tables']['folders']['Row'];
@@ -20,6 +20,7 @@ type CampaignRow = Database['public']['Tables']['campaigns']['Row'];
 type ContentItemRow = Database['public']['Tables']['content_items']['Row'];
 type NoteRow = Database['public']['Tables']['notes']['Row'];
 type TaskRow = Database['public']['Tables']['tasks']['Row'];
+type TaskStageRow = Database['public']['Tables']['task_stages']['Row'];
 type PortalClientUpdate = Database['public']['Tables']['portal_clients']['Update'];
 type PortalReviewPostRow = Database['public']['Tables']['portal_review_posts']['Row'];
 type PortalReviewPostInsert = Database['public']['Tables']['portal_review_posts']['Insert'];
@@ -345,6 +346,13 @@ const mapTask = (task: TaskRow): Task => ({
     assigneeId: task.assignee_id || undefined,
 });
 
+const mapTaskStage = (stage: TaskStageRow): TaskStage => ({
+    id: stage.id,
+    title: stage.title,
+    color: stage.color,
+    sortOrder: stage.sort_order,
+});
+
 // ── Key Factories ──────────────────────────────────────────────────────
 
 const keys = {
@@ -353,6 +361,7 @@ const keys = {
     campaigns: (folderId: string) => ['campaigns', folderId] as const,
     contentItems: (campaignId: string) => ['content_items', campaignId] as const,
     tasks: (orgId: string) => ['tasks', orgId] as const,
+    taskStages: (orgId: string) => ['task_stages', orgId] as const,
     calendarEvents: (campaignId?: string) => ['calendar_events', campaignId] as const,
     // Micro tools
     vaultCredentials: (orgId: string) => ['vault_credentials', orgId] as const,
@@ -656,6 +665,85 @@ export function useContentItems(campaignId: string) {
 }
 
 // ── TASKS ──────────────────────────────────────────────────────────────
+
+export function useTaskStages() {
+    const { organization } = useAuth();
+    const qc = useQueryClient();
+    const orgId = organization?.id ?? '';
+
+    const query = useQuery({
+        queryKey: keys.taskStages(orgId),
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('task_stages')
+                .select('*')
+                .eq('org_id', orgId)
+                .order('sort_order', { ascending: true });
+            if (error) throw error;
+            return data.map(mapTaskStage);
+        },
+        enabled: !!orgId,
+    });
+
+    const saveTaskStages = useMutation({
+        mutationFn: async (stages: TaskStage[]) => {
+            if (!orgId) throw new Error('No organization is selected.');
+            if (stages.length === 0) throw new Error('At least one task stage is required.');
+
+            const normalizedStages = stages.map((stage, index) => ({
+                id: stage.id,
+                org_id: orgId,
+                title: stage.title.trim(),
+                color: stage.color,
+                sort_order: index,
+            }));
+
+            if (normalizedStages.some((stage) => !stage.title)) {
+                throw new Error('Every task stage needs a name.');
+            }
+
+            const { error: upsertError } = await supabase
+                .from('task_stages')
+                .upsert(normalizedStages, { onConflict: 'org_id,id' });
+            if (upsertError) throw upsertError;
+
+            const nextIds = new Set(normalizedStages.map((stage) => stage.id));
+            const removedIds = (query.data || [])
+                .filter((stage) => !nextIds.has(stage.id))
+                .map((stage) => stage.id);
+
+            if (removedIds.length > 0) {
+                const fallbackStageId = normalizedStages[0].id;
+                const { error: moveError } = await supabase
+                    .from('tasks')
+                    .update({ status: fallbackStageId })
+                    .eq('org_id', orgId)
+                    .in('status', removedIds);
+                if (moveError) throw moveError;
+
+                const { error: deleteError } = await supabase
+                    .from('task_stages')
+                    .delete()
+                    .eq('org_id', orgId)
+                    .in('id', removedIds);
+                if (deleteError) throw deleteError;
+            }
+
+            return normalizedStages.map((stage) => ({
+                id: stage.id,
+                title: stage.title,
+                color: stage.color,
+                sortOrder: stage.sort_order,
+            }));
+        },
+        onSuccess: (stages) => {
+            qc.setQueryData(keys.taskStages(orgId), stages);
+            qc.invalidateQueries({ queryKey: keys.tasks(orgId) });
+        },
+    });
+
+    return { ...query, saveTaskStages };
+}
 
 export function useTasks() {
     const { organization } = useAuth();
