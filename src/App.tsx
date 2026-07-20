@@ -24,6 +24,7 @@ import Notes from './pages/tools/Notes';
 import AuthPage from "./pages/Auth";
 import Settings from "./pages/Settings";
 import InviteAccept from "./pages/InviteAccept";
+import PostHogIdentity from "@/components/PostHogIdentity";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -77,6 +78,8 @@ const App = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
+
+          <PostHogIdentity />
 
           <TooltipProvider>
             <Toaster />
