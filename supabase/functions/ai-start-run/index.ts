@@ -1,5 +1,7 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
-import { openRouterJson } from '../_shared/openrouter.ts';
+import { openRouterJson, openRouterTextWithCitations } from '../_shared/openrouter.ts';
+import { structuredMissionModelPlan, structuredOutputModelId } from '../_shared/openrouter_policy.ts';
+import { captureAiTrace, type AiObservabilityContext } from '../_shared/posthog_ai.ts';
 import { hasCampaignOutput, normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pack.ts';
 import { campaignTopic, safeBlogOutline, safeCalendarItem, safeGoogleAd, safeSocialAd, safeSocialPost, safeStrategy } from '../_shared/campaign_recovery.ts';
 import { defaultDeliverableContract, extractDeliverableContract, formatDeliverableContract, resolveDeliverableContract, type DeliverableContract } from '../_shared/deliverable_contract.ts';
@@ -172,6 +174,7 @@ Deno.serve(async (req) => {
       selectedModel,
       selectedResearchProvider,
       orgId,
+      userId,
       agentWorkflow,
       runStepDefinitions,
     }));
@@ -191,6 +194,7 @@ async function processMission({
   selectedModel,
   selectedResearchProvider,
   orgId,
+  userId,
   agentWorkflow,
   runStepDefinitions,
 }: {
@@ -202,9 +206,11 @@ async function processMission({
   selectedModel: AiModelOption;
   selectedResearchProvider: ResearchProviderOption;
   orgId: string;
+  userId: string;
   agentWorkflow: string[];
   runStepDefinitions: RunStepDefinition[];
 }) {
+  const missionStartedAt = performance.now();
   let activeStep: StepName = 'Planner Agent';
   const missionDeadlineAt = Date.now() + MISSION_SOFT_LIMIT_MS;
   const remainingMissionMs = () => Math.max(0, missionDeadlineAt - Date.now());
@@ -212,6 +218,17 @@ async function processMission({
   let plannerOutput: PlannerOutput = fallbackPlannerOutput(body.prompt, { projectName: '', campaignName: '' });
   let brandKnowledge = { title: '', markdown: '' };
   let researchContext = '';
+  const runObservability: AiObservabilityContext = {
+    distinctId: userId,
+    traceId: runId,
+    sessionId: runId,
+    properties: {
+      socialsuite_run_id: runId,
+      socialsuite_org_id: orgId,
+      socialsuite_work_mode: workMode,
+    },
+  };
+  const structuredModelId = structuredOutputModelId(selectedModel.id);
   const completedCustomSteps = new Set<string>();
   const stepSlugFor = (nameOrSlug: StepName) => builtInSlugByName.get(nameOrSlug) || nameOrSlug;
   const stepDefinitionFor = (nameOrSlug: StepName) => {
@@ -319,7 +336,7 @@ async function processMission({
       });
       try {
         const reviewedPack = await applyWorkspaceAgentToPack({
-          model: selectedModel.id,
+          model: structuredModelId,
           prompt: body.prompt,
           agent: step,
           skill,
@@ -329,6 +346,7 @@ async function processMission({
           researchContext,
           deliverableContract: plannerOutput.deliverableContract,
           deadlineAt: missionDeadlineAt,
+          observability: withRunObservation(runObservability, step.slug, 'mission-custom-agent'),
         });
         const guarded = guardCampaignPack(reviewedPack, body.prompt, plannerOutput.deliverableContract);
         nextPack = guarded.pack;
@@ -369,7 +387,13 @@ async function processMission({
     agentSkills = await loadAgentSkills(supabase, orgId);
     const agentSkillContext = formatAgentSkillContext(agentSkills, agentWorkflow);
     await updateStep(activeStep, 'working', `Understanding the brief and preparing ${workMode === 'deep' ? 'a focused research question' : 'campaign guidance'}.`);
-    plannerOutput = await buildPlannerOutput(body.prompt, destination, agentSkills.planner, selectedModel.id);
+    plannerOutput = await buildPlannerOutput(
+      body.prompt,
+      destination,
+      agentSkills.planner,
+      selectedModel.id,
+      withRunObservation(runObservability, 'planner', 'mission-planner'),
+    );
     await addEvent(activeStep, 'planning', `Destination resolved: ${destination.projectName || 'selected project'} -> ${destination.folderName || 'auto folder'}.`, {
       projectName: destination.projectName,
       folderName: destination.folderName,
@@ -452,7 +476,13 @@ async function processMission({
         let research: TavilySearchResponse;
         if (selectedResearchProvider.id === 'perplexity') {
           try {
-            research = await perplexityResearch(query, plannerOutput.campaignGuidance, agentSkills.research, researchTimeoutMs);
+            research = await perplexityResearch(
+              query,
+              plannerOutput.campaignGuidance,
+              agentSkills.research,
+              researchTimeoutMs,
+              withRunObservation(runObservability, 'research-perplexity', 'mission-research'),
+            );
           } catch (perplexityError) {
             const fallbackTimeoutMs = Math.max(10_000, Math.min(20_000, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS));
             if (fallbackTimeoutMs <= 10_000) throw perplexityError;
@@ -470,7 +500,14 @@ async function processMission({
         }
         const researchDigest = researchProviderUsed.id === 'perplexity' && research.answer
           ? research.answer
-          : await buildResearchDigest(research, plannerOutput.campaignGuidance, agentSkills.research, selectedModel.id, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()));
+          : await buildResearchDigest(
+              research,
+              plannerOutput.campaignGuidance,
+              agentSkills.research,
+              structuredModelId,
+              Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()),
+              withRunObservation(runObservability, 'research-digest', 'mission-research-digest'),
+            );
         researchContext = tavilyContext({ ...research, answer: researchDigest });
         researchSources = research.results;
         const sourceTitles = research.results.slice(0, 3).map((item) => item.title).join(', ');
@@ -538,12 +575,16 @@ async function processMission({
     activeStep = 'Copywriter Agent';
     const model = selectedModel.id;
     const generationModelIds = generationFallbackModelIds(selectedModel, workMode);
+    const generationPrimaryModel = generationModelIds[0] || model;
+    const generationPrimaryOption = [...instantModels, ...deepWorkModels]
+      .find((option) => option.id === generationPrimaryModel);
     await updateStep(activeStep, 'working', 'Generating strategy and channel-ready copy.');
-    await addEvent(activeStep, 'model_call', 'Draft generation started using the selected AI model.', {
-      model,
-      modelName: selectedModel.name,
-      provider: selectedModel.provider,
-      fallbackModels: generationModelIds.filter((item) => item !== model),
+    await addEvent(activeStep, 'model_call', 'Draft generation started using a structured-output-optimized model plan.', {
+      model: generationPrimaryModel,
+      modelName: generationPrimaryOption?.name || generationPrimaryModel,
+      provider: generationPrimaryOption?.provider || 'OpenRouter',
+      selectedModel: model,
+      fallbackModels: generationModelIds.slice(1),
       workMode,
       researchSources: researchSources.length,
     });
@@ -566,6 +607,7 @@ async function processMission({
         deliverableContract: plannerOutput.deliverableContract,
         today,
         deadlineAt: missionDeadlineAt,
+        observability: runObservability,
       });
       for (const failure of generated.failures) {
         await addEvent(activeStep, 'model_section_failed', `${failure.section} generation did not pass validation.`, failure);
@@ -687,6 +729,18 @@ async function processMission({
       status: 'needs_approval',
       output_summary: pack.strategy?.summary || 'Campaign draft pack is ready for approval.',
     }).eq('id', runId);
+    captureAiTrace({
+      distinctId: userId,
+      traceId: runId,
+      sessionId: runId,
+      traceName: 'socialsuite-mission-run',
+      latencyMs: performance.now() - missionStartedAt,
+      properties: {
+        ...runObservability.properties,
+        socialsuite_trace_type: 'mission-run',
+        socialsuite_run_outcome: 'needs_approval',
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected error';
     try {
@@ -710,6 +764,21 @@ async function processMission({
     } catch {
       // Nothing else can be done from the Edge Function once the final status write fails.
     }
+    captureAiTrace({
+      distinctId: userId,
+      traceId: runId,
+      sessionId: runId,
+      traceName: 'socialsuite-mission-run',
+      latencyMs: performance.now() - missionStartedAt,
+      isError: true,
+      error: message,
+      properties: {
+        ...runObservability.properties,
+        socialsuite_trace_type: 'mission-run',
+        socialsuite_run_outcome: 'failed',
+        socialsuite_failed_step: activeStep,
+      },
+    });
   }
 }
 
@@ -970,14 +1039,21 @@ function buildResearchQuery(researchQuestion: string, destination: { projectName
   return truncateAtWord(`${brandHints} ${researchQuestion}`.replace(/\s+/g, ' ').trim(), 260);
 }
 
-async function buildPlannerOutput(prompt: string, destination: { projectName: string; campaignName: string }, plannerSkill = '', model = instantModels[0].id): Promise<PlannerOutput> {
+async function buildPlannerOutput(
+  prompt: string,
+  destination: { projectName: string; campaignName: string },
+  plannerSkill = '',
+  model = instantModels[0].id,
+  observability?: AiObservabilityContext,
+): Promise<PlannerOutput> {
   const fallback = fallbackPlannerOutput(prompt, destination);
   try {
     const planned = await openRouterJson<unknown>({
       model,
       temperature: 0.2,
-      maxTokens: 700,
+      maxTokens: 1800,
       timeoutMs: PLANNER_TIMEOUT_MS,
+      observability,
       messages: [
         {
           role: 'system',
@@ -1023,7 +1099,14 @@ function normalizePlannerOutput(input: unknown, fallback: PlannerOutput, prompt:
   };
 }
 
-async function buildResearchDigest(search: TavilySearchResponse, campaignGuidance: string, researchSkill = '', model = instantModels[0].id, timeoutMs = RESEARCH_DIGEST_TIMEOUT_MS) {
+async function buildResearchDigest(
+  search: TavilySearchResponse,
+  campaignGuidance: string,
+  researchSkill = '',
+  model = instantModels[0].id,
+  timeoutMs = RESEARCH_DIGEST_TIMEOUT_MS,
+  observability?: AiObservabilityContext,
+) {
   const fallback = search.results
     .map((source) => source.content)
     .filter(Boolean)
@@ -1039,6 +1122,7 @@ async function buildResearchDigest(search: TavilySearchResponse, campaignGuidanc
       temperature: 0.1,
       maxTokens: 900,
       timeoutMs,
+      observability,
       messages: [
         {
           role: 'system',
@@ -1082,6 +1166,7 @@ async function buildCampaignPackInParts({
   deliverableContract,
   today,
   deadlineAt,
+  observability,
 }: {
   models: string[];
   prompt: string;
@@ -1093,6 +1178,7 @@ async function buildCampaignPackInParts({
   deliverableContract: DeliverableContract;
   today: string;
   deadlineAt: number;
+  observability: AiObservabilityContext;
 }): Promise<CampaignGenerationResult> {
   const commonContext = [
     `Calendar dates must start on or after ${today}; never use past dates.`,
@@ -1190,6 +1276,9 @@ async function buildCampaignPackInParts({
         models,
         section,
         timeoutMs: sectionTimeoutMs,
+        observability: withRunObservation(observability, `copywriter-${section.key}`, 'mission-copywriter', {
+          socialsuite_section: section.label,
+        }),
       });
       return { section, value, error: '' };
     } catch (error) {
@@ -1233,6 +1322,7 @@ async function generateCampaignSection({
   models,
   section,
   timeoutMs,
+  observability,
 }: {
   models: string[];
   section: {
@@ -1243,6 +1333,7 @@ async function generateCampaignSection({
     maxTokens?: number;
   };
   timeoutMs: number;
+  observability?: AiObservabilityContext;
 }) {
   const modelPlan = (models.length ? models : [deepWorkModels[0].id]).slice(0, 2);
   const attemptTimeoutMs = Math.max(16_000, Math.min(25_000, Math.floor(timeoutMs / modelPlan.length)));
@@ -1261,6 +1352,11 @@ async function generateCampaignSection({
         temperature: modelIndex === 0 ? 0.25 : 0.1,
         maxTokens: section.maxTokens || 2200,
         timeoutMs: attemptTimeoutMs,
+        observability: withRunObservation(observability, `copywriter-${section.key}`, 'mission-copywriter', {
+          socialsuite_section: section.label,
+          socialsuite_model_attempt: modelIndex + 1,
+          socialsuite_is_fallback: modelIndex > 0,
+        }),
         messages: [
           { role: 'system', content: campaignSafetyInstructions(section.system) },
           { role: 'user', content: [retryPrefix, section.user].filter(Boolean).join('\n\n') },
@@ -1278,10 +1374,10 @@ function generationFallbackModelIds(selectedModel: AiModelOption, workMode: Work
   const fastRecoveryModels = workMode === 'deep'
     ? [instantModels[1], instantModels[2], instantModels[0]]
     : [instantModels[2], instantModels[1], instantModels[0]];
-  return uniqueStrings([
+  return structuredMissionModelPlan(
     selectedModel.id,
-    ...fastRecoveryModels.map((model) => model.id),
-  ]);
+    fastRecoveryModels.map((model) => model.id),
+  );
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
@@ -1307,6 +1403,7 @@ async function applyWorkspaceAgentToPack({
   researchContext,
   deliverableContract,
   deadlineAt,
+  observability,
 }: {
   model: string;
   prompt: string;
@@ -1318,6 +1415,7 @@ async function applyWorkspaceAgentToPack({
   researchContext: string;
   deliverableContract: DeliverableContract;
   deadlineAt: number;
+  observability?: AiObservabilityContext;
 }): Promise<CampaignPack> {
   const cleanSkill = sanitizeWorkspaceSkill(skill);
   if (!cleanSkill) return pack;
@@ -1332,6 +1430,7 @@ async function applyWorkspaceAgentToPack({
     temperature: 0.2,
     maxTokens: 5000,
     timeoutMs: Math.min(CUSTOM_AGENT_TIMEOUT_MS, remainingMs),
+    observability,
     messages: [
       {
         role: 'system',
@@ -1521,21 +1620,43 @@ function stringFromContext(context: Record<string, unknown> | undefined, key: st
   return typeof value === 'string' ? value.trim() : '';
 }
 
-async function perplexityResearch(query: string, campaignGuidance: string, researchSkill = '', timeoutMs = RESEARCH_TIMEOUT_MS): Promise<TavilySearchResponse> {
-  const payload = await openRouterJson<unknown>({
+function withRunObservation(
+  base: AiObservabilityContext | undefined,
+  spanName: string,
+  feature: string,
+  properties: Record<string, unknown> = {},
+): AiObservabilityContext {
+  return {
+    ...(base || {}),
+    spanName,
+    feature,
+    properties: {
+      ...(base?.properties || {}),
+      ...properties,
+    },
+  };
+}
+
+async function perplexityResearch(
+  query: string,
+  campaignGuidance: string,
+  researchSkill = '',
+  timeoutMs = RESEARCH_TIMEOUT_MS,
+  observability?: AiObservabilityContext,
+): Promise<TavilySearchResponse> {
+  const result = await openRouterTextWithCitations({
     model: 'perplexity/sonar-pro',
     temperature: 0.1,
     maxTokens: 1200,
     timeoutMs,
+    observability,
     messages: [
       {
         role: 'system',
         content: [
           'You research current web context for a marketing workflow through Perplexity Sonar Pro.',
-          'Return only valid JSON with exactly two keys: answer and sources.',
-          'answer must be 3 to 6 concise, source-grounded findings for campaign planning.',
-          'sources must be an array of up to 5 objects with title, url, and content string keys.',
-          'Use real source URLs only. Do not write campaign copy or invent unsupported claims.',
+          'Return 3 to 6 concise, source-grounded findings for campaign planning.',
+          'Cite real sources in the answer. Do not write campaign copy or invent unsupported claims.',
         ].join(' '),
       },
       {
@@ -1549,20 +1670,14 @@ async function perplexityResearch(query: string, campaignGuidance: string, resea
     ],
   });
 
-  const record = payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload as Record<string, unknown>
-    : {};
-  const sources = Array.isArray(record.sources)
-    ? record.sources
-      .map(normalizeResearchSource)
-      .filter((item): item is TavilySearchResponse['results'][number] => !!item)
-      .slice(0, 5)
-    : [];
-
   return {
     query,
-    answer: stringValue(record.answer),
-    results: sources,
+    answer: result.content,
+    results: result.citations.map((citation) => ({
+      title: citation.title,
+      url: citation.url,
+      content: citation.content,
+    })),
   };
 }
 
