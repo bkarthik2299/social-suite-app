@@ -75,11 +75,20 @@ Do not set AI/provider/server secrets with a `VITE_` prefix. The vault key is br
 Set these in the Supabase dashboard or with `supabase secrets set`:
 
 - `OPENROUTER_API_KEY`
+- `POSTHOG_PROJECT_TOKEN` (enables server-side `$ai_generation` events for OpenRouter calls)
+- `POSTHOG_HOST` (normally `https://us.i.posthog.com`)
+- `POSTHOG_AI_CAPTURE_CONTENT` (defaults to `false`; set to `true` only after approving prompt/output storage for PostHog evaluations)
 - `TAVILY_API_KEY`
 - `SUPADATA_API_KEY`
 - `FIRECRAWL_API_KEY`
 - `TRIGGER_SECRET_KEY` (reserved for the durable workflow phase)
 
 Mission Mode now uses explicit user-selected models. Defaults are `deepseek/deepseek-v4-flash` for Instant, `deepseek/deepseek-v4-pro` for Deep Work, and Tavily for research. Perplexity research uses `perplexity/sonar-pro` through OpenRouter.
+
+### AI observability
+
+Every OpenRouter request made by the Edge Functions emits a failure-isolated PostHog `$ai_generation` event when `POSTHOG_PROJECT_TOKEN` is configured. Mission Mode also emits one terminal `$ai_trace` event per run for run counts and workflow success rates. Events include the actual OpenRouter model, token usage, billed cost, cache/reasoning tokens, latency, HTTP/error state, JSON parse success, feature, workflow section, fallback attempt, user, organization, and trace/run identifiers. Telemetry is dispatched in the background and never changes the AI response path.
+
+Prompt and completion bodies are not captured by default. Set `POSTHOG_AI_CAPTURE_CONTENT=true` only when the workspace's data policy permits storing client briefs and generated content in PostHog; content capture is required for PostHog LLM-as-a-judge evaluations.
 
 Supabase provides `SUPABASE_URL` and project API keys to Edge Functions. This code supports both the legacy `SUPABASE_ANON_KEY` secret and the newer `SUPABASE_PUBLISHABLE_KEYS` secret shape.

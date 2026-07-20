@@ -1954,7 +1954,7 @@ Deno.serve(async (req) => {
     getRequiredSecret('FIRECRAWL_API_KEY');
     getRequiredSecret('OPENROUTER_API_KEY');
     const supabase = getUserClient(req);
-    await currentUserId(supabase);
+    const userId = await currentUserId(supabase);
 
     const { guideId, brandName = '', websiteUrl = '' } = await readJson<RequestBody>(req);
     if (!guideId) return jsonResponse({ error: 'guideId is required' }, 400);
@@ -1978,6 +1978,18 @@ Deno.serve(async (req) => {
       extraction = await withTimeout(openRouterJson<ResearchExtraction>({
         model: instantModel(),
         temperature: 0.2,
+        observability: {
+          distinctId: userId,
+          traceId: `brand-research:${guideId}`,
+          sessionId: guideId,
+          spanName: 'brand-website-extraction',
+          feature: 'brand-research',
+          properties: {
+            socialsuite_org_id: guide.org_id,
+            socialsuite_brand_guide_id: guideId,
+            socialsuite_source_count: pages.length,
+          },
+        },
         messages: [
           {
             role: 'system',

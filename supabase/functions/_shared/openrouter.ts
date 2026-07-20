@@ -1,8 +1,37 @@
 import { getRequiredSecret } from './http.ts';
 import { parseJsonContent } from './json.ts';
+import { supportsTemperatureParameter } from './openrouter_policy.ts';
+import { captureOpenRouterGeneration, type AiObservabilityContext } from './posthog_ai.ts';
 
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
+  content: string;
+};
+
+type OpenRouterResponse = Record<string, unknown> & {
+  id?: string;
+  model?: string;
+  usage?: unknown;
+  error?: string | { message?: string };
+  choices?: Array<{
+    message?: {
+      content?: string;
+      annotations?: Array<{
+        type?: string;
+        url_citation?: {
+          url?: string;
+          title?: string;
+          content?: string;
+        };
+      }>;
+    };
+    finish_reason?: string;
+  }>;
+};
+
+export type OpenRouterUrlCitation = {
+  url: string;
+  title: string;
   content: string;
 };
 
@@ -13,6 +42,7 @@ export async function openRouterJson<T>({
   maxTokens,
   timeoutMs = 150_000,
   jsonMode = true,
+  observability,
 }: {
   messages: ChatMessage[];
   model?: string;
@@ -20,15 +50,21 @@ export async function openRouterJson<T>({
   maxTokens?: number;
   timeoutMs?: number;
   jsonMode?: boolean;
+  observability?: AiObservabilityContext;
 }): Promise<T> {
+  const effectiveTemperature = supportsTemperatureParameter(model) ? temperature : undefined;
   const body = {
     model,
     messages,
-    temperature,
+    ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
-    ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    ...(jsonMode ? {
+      response_format: { type: 'json_object' },
+      plugins: [{ id: 'response-healing' }],
+      provider: { require_parameters: true },
+    } : {}),
   };
-  let response = await fetchOpenRouter({
+  let attempt = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -38,9 +74,22 @@ export async function openRouterJson<T>({
     },
     body: JSON.stringify(body),
   }, timeoutMs);
+  assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode, observability });
 
-  if (!response.ok && jsonMode && [400, 422].includes(response.status)) {
-    response = await fetchOpenRouter({
+  if (!attempt.response.ok && jsonMode && [400, 422].includes(attempt.response.status)) {
+    captureAttempt({
+      attempt,
+      body,
+      messages,
+      model,
+      temperature: effectiveTemperature,
+      maxTokens,
+      jsonMode,
+      observability: withAttempt(observability, 'json-mode-rejected'),
+      error: openRouterError(attempt),
+      parseSucceeded: false,
+    });
+    attempt = await fetchOpenRouter({
       method: 'POST',
       headers: {
         Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -51,24 +100,58 @@ export async function openRouterJson<T>({
       body: JSON.stringify({
         model,
         messages,
-        temperature,
+        ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
         ...(maxTokens ? { max_tokens: maxTokens } : {}),
       }),
     }, timeoutMs);
+    assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode: false, observability });
   }
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OpenRouter request failed: ${response.status} ${text.slice(0, 500)}`);
+  if (!attempt.response.ok) {
+    const error = openRouterError(attempt);
+    captureAttempt({
+      attempt,
+      body,
+      messages,
+      model,
+      temperature: effectiveTemperature,
+      maxTokens,
+      jsonMode,
+      observability,
+      error,
+      parseSucceeded: false,
+    });
+    throw new Error(error);
   }
 
-  const data = await response.json();
+  const data = attempt.data;
   const content = data?.choices?.[0]?.message?.content;
   if (!content || typeof content !== 'string') {
-    throw new Error('OpenRouter returned an empty response');
+    const error = 'OpenRouter returned an empty response';
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode, observability, error, parseSucceeded: false });
+    throw new Error(error);
   }
 
-  return parseJsonContent<T>(content);
+  try {
+    const parsed = parseJsonContent<T>(content);
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode, observability, output: content, parseSucceeded: true });
+    return parsed;
+  } catch (error) {
+    captureAttempt({
+      attempt,
+      body,
+      messages,
+      model,
+      temperature: effectiveTemperature,
+      maxTokens,
+      jsonMode,
+      observability,
+      output: content,
+      error: error instanceof Error ? error.message : 'OpenRouter returned invalid JSON',
+      parseSucceeded: false,
+    });
+    throw error;
+  }
 }
 
 export async function openRouterText({
@@ -76,13 +159,16 @@ export async function openRouterText({
   model = 'deepseek/deepseek-v4-flash',
   temperature = 0.3,
   timeoutMs = 120_000,
+  observability,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
   timeoutMs?: number;
+  observability?: AiObservabilityContext;
 }) {
-  const response = await fetchOpenRouter({
+  const body = { model, messages, temperature };
+  const attempt = await fetchOpenRouter({
     method: 'POST',
     headers: {
       Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
@@ -90,19 +176,100 @@ export async function openRouterText({
       'HTTP-Referer': 'https://socialsuite.app',
       'X-Title': 'Social Suite',
     },
-    body: JSON.stringify({ model, messages, temperature }),
+    body: JSON.stringify(body),
   }, timeoutMs);
+  assertNetworkAttempt(attempt, { body, messages, model, temperature, observability });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`OpenRouter request failed: ${response.status} ${text.slice(0, 500)}`);
+  if (!attempt.response.ok) {
+    const error = openRouterError(attempt);
+    captureAttempt({ attempt, body, messages, model, temperature, observability, error });
+    throw new Error(error);
   }
 
-  const data = await response.json();
-  return String(data?.choices?.[0]?.message?.content || '').trim();
+  const content = String(attempt.data?.choices?.[0]?.message?.content || '').trim();
+  if (!content) {
+    const error = 'OpenRouter returned an empty response';
+    captureAttempt({ attempt, body, messages, model, temperature, observability, error });
+    throw new Error(error);
+  }
+  captureAttempt({ attempt, body, messages, model, temperature, observability, output: content, parseSucceeded: true });
+  return content;
+}
+
+export async function openRouterTextWithCitations({
+  messages,
+  model,
+  temperature = 0.3,
+  maxTokens,
+  timeoutMs = 120_000,
+  observability,
+}: {
+  messages: ChatMessage[];
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+  timeoutMs?: number;
+  observability?: AiObservabilityContext;
+}): Promise<{ content: string; citations: OpenRouterUrlCitation[] }> {
+  const effectiveTemperature = supportsTemperatureParameter(model) ? temperature : undefined;
+  const body = {
+    model,
+    messages,
+    ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+  };
+  const attempt = await fetchOpenRouter({
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${getRequiredSecret('OPENROUTER_API_KEY')}`,
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://socialsuite.app',
+      'X-Title': 'Social Suite',
+    },
+    body: JSON.stringify(body),
+  }, timeoutMs);
+  assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode: false, observability });
+
+  if (!attempt.response.ok) {
+    const error = openRouterError(attempt);
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode: false, observability, error });
+    throw new Error(error);
+  }
+
+  const content = String(attempt.data?.choices?.[0]?.message?.content || '').trim();
+  if (!content) {
+    const error = 'OpenRouter returned an empty response';
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode: false, observability, error });
+    throw new Error(error);
+  }
+
+  const citations = (attempt.data?.choices?.[0]?.message?.annotations || [])
+    .filter((annotation) => annotation?.type === 'url_citation' && annotation.url_citation?.url)
+    .map((annotation) => ({
+      url: String(annotation.url_citation?.url || '').trim(),
+      title: String(annotation.url_citation?.title || annotation.url_citation?.url || '').trim(),
+      content: String(annotation.url_citation?.content || '').trim(),
+    }))
+    .filter((citation, index, all) => citation.url && all.findIndex((item) => item.url === citation.url) === index)
+    .slice(0, 5);
+
+  captureAttempt({
+    attempt,
+    body,
+    messages,
+    model,
+    temperature: effectiveTemperature,
+    maxTokens,
+    jsonMode: false,
+    observability,
+    output: content,
+    parseSucceeded: true,
+  });
+  return { content, citations };
 }
 
 async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
+  const startedAt = performance.now();
   const controller = new AbortController();
   const nativeTimeoutSignal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : null;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -119,13 +286,116 @@ async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
       signal: nativeTimeoutSignal || controller.signal,
     });
 
-    return await Promise.race([request, timeout]);
+    const response = await Promise.race([request, timeout]);
+    const data = await response.json().catch(() => ({})) as OpenRouterResponse;
+    return { response, data, latencyMs: performance.now() - startedAt };
   } catch (error) {
     if ((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') {
-      throw new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`);
+      return {
+        response: new Response(null, { status: 599 }),
+        data: {},
+        latencyMs: performance.now() - startedAt,
+        networkError: `OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`,
+      };
     }
-    throw error;
+    return {
+      response: new Response(null, { status: 599 }),
+      data: {},
+      latencyMs: performance.now() - startedAt,
+      networkError: error instanceof Error ? error.message : 'OpenRouter network request failed',
+    };
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
   }
+}
+
+type OpenRouterAttempt = {
+  response: Response;
+  data: OpenRouterResponse;
+  latencyMs: number;
+  networkError?: string;
+};
+
+function assertNetworkAttempt(
+  attempt: OpenRouterAttempt,
+  details: {
+    body: Record<string, unknown>;
+    messages: ChatMessage[];
+    model: string;
+    temperature?: number;
+    maxTokens?: number;
+    jsonMode?: boolean;
+    observability?: AiObservabilityContext;
+  },
+) {
+  if (!attempt.networkError) return;
+  captureAttempt({
+    attempt,
+    ...details,
+    error: attempt.networkError,
+    parseSucceeded: false,
+  });
+  throw new Error(attempt.networkError);
+}
+
+function captureAttempt({
+  attempt,
+  messages,
+  model,
+  temperature,
+  maxTokens,
+  jsonMode,
+  observability,
+  output,
+  error,
+  parseSucceeded,
+}: {
+  attempt: OpenRouterAttempt;
+  body: Record<string, unknown>;
+  messages: ChatMessage[];
+  model: string;
+  temperature?: number;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  observability?: AiObservabilityContext;
+  output?: string;
+  error?: string;
+  parseSucceeded?: boolean;
+}) {
+  captureOpenRouterGeneration({
+    messages,
+    requestedModel: model,
+    responseModel: typeof attempt.data?.model === 'string' ? attempt.data.model : undefined,
+    temperature,
+    maxTokens,
+    response: attempt.data,
+    output,
+    latencyMs: attempt.latencyMs,
+    httpStatus: attempt.response.status,
+    error,
+    stopReason: attempt.data?.choices?.[0]?.finish_reason,
+    jsonMode,
+    parseSucceeded,
+    observability,
+  });
+}
+
+function openRouterError(attempt: OpenRouterAttempt) {
+  const payloadError = attempt.data?.error;
+  const detail = typeof payloadError === 'string'
+    ? payloadError
+    : typeof payloadError?.message === 'string'
+      ? payloadError.message
+      : JSON.stringify(attempt.data || {}).slice(0, 500);
+  return `OpenRouter request failed: ${attempt.response.status} ${detail}`.trim();
+}
+
+function withAttempt(observability: AiObservabilityContext | undefined, attempt: string): AiObservabilityContext {
+  return {
+    ...(observability || {}),
+    properties: {
+      ...(observability?.properties || {}),
+      socialsuite_attempt: attempt,
+    },
+  };
 }

@@ -105,6 +105,17 @@ Deno.serve(async (req) => {
 
     const markdown = await openRouterText({
       model,
+      observability: {
+        distinctId: userId,
+        traceId: `brand-knowledge:${guideId}`,
+        sessionId: guideId,
+        spanName: 'brand-knowledge-compile',
+        feature: 'brand-knowledge',
+        properties: {
+          socialsuite_org_id: guide.org_id,
+          socialsuite_brand_guide_id: guideId,
+        },
+      },
       messages: [
         {
           role: 'system',
