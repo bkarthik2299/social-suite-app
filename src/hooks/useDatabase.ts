@@ -26,8 +26,10 @@ type PortalClientUpdate = Database['public']['Tables']['portal_clients']['Update
 type PortalReviewPostRow = Database['public']['Tables']['portal_review_posts']['Row'];
 type PortalReviewPostInsert = Database['public']['Tables']['portal_review_posts']['Insert'];
 type PortalCommentRow = Database['public']['Tables']['portal_comments']['Row'];
+type PortalReviewEventRow = Database['public']['Tables']['portal_review_events']['Row'];
 type PortalReviewPostWithComments = PortalReviewPostRow & {
     portal_comments?: PortalCommentRow[] | null;
+    portal_review_events?: PortalReviewEventRow[] | null;
 };
 type JsonRecord = Record<string, unknown>;
 type AddPortalReviewPostInput = {
@@ -51,6 +53,9 @@ const sortPortalReviewPosts = (posts: PortalReviewPostWithComments[]) =>
 const sortPortalComments = (comments: PortalCommentRow[]) =>
     [...comments].sort((a, b) => getTime(a.created_at) - getTime(b.created_at));
 
+const sortPortalReviewEvents = (events: PortalReviewEventRow[]) =>
+    [...events].sort((a, b) => getTime(b.created_at) - getTime(a.created_at));
+
 const normalizePortalReviewPost = (
     post: PortalReviewPostRow | PortalReviewPostWithComments,
     existing?: PortalReviewPostWithComments,
@@ -59,6 +64,9 @@ const normalizePortalReviewPost = (
     ...post,
     portal_comments: sortPortalComments([
         ...((post as PortalReviewPostWithComments).portal_comments || existing?.portal_comments || []),
+    ]),
+    portal_review_events: sortPortalReviewEvents([
+        ...((post as PortalReviewPostWithComments).portal_review_events || existing?.portal_review_events || []),
     ]),
 });
 
@@ -1209,7 +1217,7 @@ export function usePortalReviewPosts(feedId: string) {
         queryFn: async () => {
             const { data, error } = await supabase
                 .from('portal_review_posts')
-                .select('*, portal_comments(*)')
+                .select('*, portal_comments(*), portal_review_events(*)')
                 .eq('feed_id', feedId)
                 .order('created_at', { ascending: false })
                 .order('id', { ascending: true });
@@ -1325,7 +1333,7 @@ export function usePortalReviewPosts(feedId: string) {
             const { data, error } = await supabase
                 .from('portal_review_posts')
                 .insert(toPortalReviewPostInsert(feedId, post))
-                .select('*, portal_comments(*)')
+                .select('*, portal_comments(*), portal_review_events(*)')
                 .single();
             if (error) throw error;
             return data as PortalReviewPostWithComments;
@@ -1346,6 +1354,7 @@ export function usePortalReviewPosts(feedId: string) {
                     created_at: now,
                     updated_at: now,
                     portal_comments: [],
+                    portal_review_events: [],
                 })
             );
 
@@ -1368,7 +1377,7 @@ export function usePortalReviewPosts(feedId: string) {
             const { data, error } = await supabase
                 .from('portal_review_posts')
                 .insert(posts.map(post => toPortalReviewPostInsert(feedId, post)))
-                .select('*, portal_comments(*)');
+                .select('*, portal_comments(*), portal_review_events(*)');
             if (error) throw error;
             return data as PortalReviewPostWithComments[];
         },
@@ -1389,6 +1398,7 @@ export function usePortalReviewPosts(feedId: string) {
                         created_at: now,
                         updated_at: now,
                         portal_comments: [],
+                        portal_review_events: [],
                     }),
                     current || [],
                 )
@@ -1410,25 +1420,51 @@ export function usePortalReviewPosts(feedId: string) {
     });
 
     const updateReviewStatus = useMutation({
-        mutationFn: async ({ id, status }: { id: string; status: string }) => {
-            const { data, error } = await supabase
+        mutationFn: async ({ id, status, reviewerName }: { id: string; status: string; reviewerName: string }) => {
+            const { error: actionError } = await supabase.rpc('record_portal_review_action', {
+                p_post_id: id,
+                p_status: status,
+                p_reviewer_name: reviewerName,
+                p_is_client: false,
+            });
+            if (actionError) throw actionError;
+
+            const { data, error: postError } = await supabase
                 .from('portal_review_posts')
-                .update({ status })
+                .select('*, portal_comments(*), portal_review_events(*)')
                 .eq('id', id)
-                .select('*, portal_comments(*)')
                 .single();
-            if (error) throw error;
+            if (postError) throw postError;
             return data as PortalReviewPostWithComments;
         },
-        onMutate: ({ id, status }) => {
+        onMutate: ({ id, status, reviewerName }) => {
             const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
             const now = new Date().toISOString();
+            const optimisticEvent: PortalReviewEventRow = {
+                id: crypto.randomUUID(),
+                post_id: id,
+                status,
+                reviewer_name: reviewerName,
+                reviewer_is_client: false,
+                actor_user_id: null,
+                created_at: now,
+            };
 
             void qc.cancelQueries({ queryKey });
 
             qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
                 (current || []).map(post =>
-                    post.id === id ? { ...post, status, updated_at: now } : post
+                    post.id === id
+                        ? {
+                            ...post,
+                            status,
+                            updated_at: now,
+                            portal_review_events: sortPortalReviewEvents([
+                                ...(post.portal_review_events || []),
+                                optimisticEvent,
+                            ]),
+                        }
+                        : post
                 )
             );
 

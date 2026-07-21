@@ -61,6 +61,15 @@ type Comment = {
     avatar?: string;
 };
 
+type ReviewActivityEvent = {
+    id: string;
+    status: ReviewPost['status'];
+    reviewerName: string;
+    isClient: boolean;
+    date: string;
+    createdAt: string;
+};
+
 type ReviewPost = {
     id: string;
     platform: 'instagram' | 'facebook' | 'twitter' | 'linkedin' | 'google' | 'website' | 'pinterest' | 'tiktok';
@@ -70,6 +79,7 @@ type ReviewPost = {
     date: string;
     feedId: string;
     comments: Comment[];
+    reviewActivity: ReviewActivityEvent[];
     // Content type for proper display
     contentType: 'social-post' | 'google-ad' | 'social-ad' | 'blog' | 'campaign';
     // Google Ads fields
@@ -307,6 +317,35 @@ const formatReviewDate = (value: unknown): string => {
     if (Number.isNaN(date.getTime())) return rawDate;
     return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 };
+const formatReviewActivityDate = (value: unknown): string => {
+    const rawDate = getString(value);
+    if (!rawDate) return 'Just now';
+    const date = new Date(rawDate);
+    if (Number.isNaN(date.getTime())) return rawDate;
+    return date.toLocaleString('en-GB', {
+        day: 'numeric',
+        month: 'short',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+    });
+};
+const mapPortalReviewActivity = (value: unknown): ReviewActivityEvent[] =>
+    getArray(value)
+        .map((event, index) => {
+            const record = getRecord(event);
+            const createdAt = getString(record.created_at);
+            return {
+                id: getString(record.id) || `${index}`,
+                status: toReviewStatus(record.status),
+                reviewerName: getString(record.reviewer_name) || 'Unknown reviewer',
+                isClient: record.reviewer_is_client === true,
+                date: formatReviewActivityDate(createdAt),
+                createdAt,
+            };
+        })
+        .filter(event => event.status !== 'pending')
+        .sort((a, b) => (new Date(b.createdAt).getTime() || 0) - (new Date(a.createdAt).getTime() || 0));
 const mapPortalComments = (value: unknown, internalAuthorFallback = 'Social Suite Team'): Comment[] =>
     getArray(value).map((comment, index) => {
         const record = getRecord(comment);
@@ -409,6 +448,7 @@ const mapReviewPostRecord = (value: unknown, internalAuthorFallback?: string): R
         feedId: getString(record.feed_id),
         _contentItemId: getString(record.content_item_id) || undefined,
         comments: mapPortalComments(record.portal_comments, internalAuthorFallback),
+        reviewActivity: mapPortalReviewActivity(record.portal_review_events),
         contentType,
     };
 };
@@ -697,12 +737,26 @@ export function ClientPortalPublicReview() {
     };
 
     const updatePublicPostStatus = (postId: string, status: string) => {
+        const createdAt = new Date().toISOString();
         setPayload(previous => previous ? {
             ...previous,
             posts: previous.posts.map(post => {
                 const record = getRecord(post);
                 return getString(record.id) === postId
-                    ? { ...record, status }
+                    ? {
+                        ...record,
+                        status,
+                        portal_review_events: [
+                            {
+                                id: crypto.randomUUID(),
+                                status,
+                                reviewer_name: reviewerName,
+                                reviewer_is_client: true,
+                                created_at: createdAt,
+                            },
+                            ...getArray(record.portal_review_events),
+                        ],
+                    }
                     : post;
             }),
         } : previous);
@@ -1308,7 +1362,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
 
     const handleStatusChange = (postId: string, status: ReviewPost['status']) => {
         updateReviewStatus.mutate(
-            { id: postId, status },
+            { id: postId, status, reviewerName: signedInUserName },
             { onSuccess: () => notifySelectedFeedChanged('status-updated') }
         );
     };
@@ -1701,7 +1755,8 @@ function PostPicker({ onImport, targetFeedId, buttonLabel, treeData }: { onImpor
                 status: 'pending' as const,
                 date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
                 feedId: targetFeedId,
-                comments: []
+                comments: [],
+                reviewActivity: [],
             };
 
             // Handle different content types
@@ -2066,6 +2121,11 @@ function PostCard({
     const [commentText, setCommentText] = useState('');
     const [isCommentsOpen, setIsCommentsOpen] = useState(false);
     const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+    const [isMediaOpen, setIsMediaOpen] = useState(false);
+    const [isReviewActivityOpen, setIsReviewActivityOpen] = useState(false);
+    const latestReviewActivity = post.reviewActivity[0];
+    const mediaUrl = post.image || post.featuredImage;
+    const openClientMedia = !onOpenSource && mediaUrl ? () => setIsMediaOpen(true) : undefined;
     const commentAuthorToneByKey = useMemo(() => {
         const authorKeys = Array.from(new Set(post.comments.map(comment => getCommentAuthorKey(comment.author))));
         return authorKeys.reduce<Record<string, string>>((tones, key, index) => {
@@ -2151,10 +2211,10 @@ function PostCard({
                 {/* Content Preview Area */}
                 <div className="flex-1 border-r border-slate-100 p-6 bg-slate-50/30 flex justify-center">
                     <div className="w-full max-w-xl">
-                        {post.contentType === 'social-post' && <SocialPostViewer post={post} />}
+                        {post.contentType === 'social-post' && <SocialPostViewer post={post} onMediaClick={openClientMedia} />}
                         {post.contentType === 'google-ad' && <GoogleAdViewer post={post} />}
-                        {post.contentType === 'social-ad' && <SocialAdViewer post={post} />}
-                        {post.contentType === 'blog' && <BlogViewer post={post} />}
+                        {post.contentType === 'social-ad' && <SocialAdViewer post={post} onMediaClick={openClientMedia} />}
+                        {post.contentType === 'blog' && <BlogViewer post={post} onMediaClick={openClientMedia} />}
                         {post.contentType === 'campaign' && <CampaignViewer post={post} />}
                         {!post.contentType && (
                             <div className="text-center p-8 text-slate-400">
@@ -2213,6 +2273,55 @@ function PostCard({
                                 Reject
                             </Button>
                         </div>
+
+                        {latestReviewActivity ? (
+                            <div className="mt-4 border-t border-slate-100 pt-3">
+                                <button
+                                    type="button"
+                                    className="flex w-full items-start justify-between gap-3 rounded-lg px-1 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                                    onClick={() => setIsReviewActivityOpen(open => !open)}
+                                    aria-expanded={isReviewActivityOpen}
+                                    aria-label="Toggle review activity"
+                                >
+                                    <span className="min-w-0">
+                                        <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Review activity</span>
+                                        <span className="mt-1 flex min-w-0 items-center gap-2 text-xs text-slate-600">
+                                            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", getReviewActivityDot(latestReviewActivity.status))} />
+                                            <span className="truncate">
+                                                <span className="font-semibold text-slate-700">{getReviewActivityLabel(latestReviewActivity.status)}</span>
+                                                {' by '}{latestReviewActivity.reviewerName}
+                                            </span>
+                                        </span>
+                                    </span>
+                                    {isReviewActivityOpen
+                                        ? <ChevronDown className="mt-3 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                        : <ChevronRight className="mt-3 h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                                </button>
+
+                                {isReviewActivityOpen && (
+                                    <div className="mt-2 space-y-2 rounded-lg bg-slate-50 px-3 py-2.5">
+                                        {post.reviewActivity.map(event => (
+                                            <div key={event.id} className="flex items-start gap-2 text-xs">
+                                                <span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", getReviewActivityDot(event.status))} />
+                                                <span className="min-w-0 flex-1">
+                                                    <span className="block text-slate-700">
+                                                        <span className="font-semibold">{getReviewActivityLabel(event.status)}</span>
+                                                        {' by '}{event.reviewerName}
+                                                        {event.isClient && <span className="ml-1 text-[10px] text-slate-400">Client</span>}
+                                                    </span>
+                                                    <span className="mt-0.5 block text-[10px] text-slate-400">{event.date}</span>
+                                                </span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        ) : post.status !== 'pending' ? (
+                            <div className="mt-4 border-t border-slate-100 pt-3">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Review activity</p>
+                                <p className="mt-1 text-xs leading-5 text-slate-400">Reviewer attribution will appear after the next decision.</p>
+                            </div>
+                        ) : null}
                     </div>
 
                     {/* Comments */}
@@ -2277,7 +2386,34 @@ function PostCard({
             </div>
 
             <PostDetailsDialog open={isDetailsOpen} onOpenChange={setIsDetailsOpen} post={post} />
+            <PostMediaDialog open={isMediaOpen} onOpenChange={setIsMediaOpen} post={post} />
         </Card >
+    );
+}
+
+function PostMediaDialog({ open, onOpenChange, post }: { open: boolean, onOpenChange: (open: boolean) => void, post: ReviewPost }) {
+    const image = post.image || post.featuredImage;
+    if (!image) return null;
+
+    const title = post.name || post.title || post.headline || post.topic || 'Post image';
+
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent
+                className="flex max-h-[calc(100vh-2rem)] w-auto max-w-[calc(100vw-2rem)] items-center justify-center overflow-visible border-0 bg-transparent p-0 shadow-none sm:max-w-[calc(100vw-2rem)]"
+                closeClassName="right-4 top-4 rounded-full bg-black/60 text-white opacity-100 ring-1 ring-white/20 hover:bg-black/80 hover:text-white focus:ring-white/40 focus:ring-offset-0"
+            >
+                <DialogHeader className="sr-only">
+                    <DialogTitle>{title}</DialogTitle>
+                    <DialogDescription>Full-size post image preview.</DialogDescription>
+                </DialogHeader>
+                <img
+                    src={image}
+                    alt={title}
+                    className="max-h-[calc(100vh-3rem)] max-w-full rounded-lg object-contain shadow-2xl"
+                />
+            </DialogContent>
+        </Dialog>
     );
 }
 
@@ -2774,7 +2910,39 @@ function PreviewBrief({ items }: { items: Array<{ label: string; value?: string 
     );
 }
 
-function SocialPostViewer({ post }: { post: ReviewPost }) {
+function getReviewActivityLabel(status: ReviewPost['status']) {
+    if (status === 'approved') return 'Approved';
+    if (status === 'rejected') return 'Rejected';
+    if (status === 'changes_requested') return 'Requested changes';
+    return 'Updated';
+}
+
+function getReviewActivityDot(status: ReviewPost['status']) {
+    if (status === 'approved') return 'bg-emerald-500';
+    if (status === 'rejected') return 'bg-rose-500';
+    if (status === 'changes_requested') return 'bg-amber-500';
+    return 'bg-slate-400';
+}
+
+function ReviewMedia({ src, alt, className, onOpen }: { src: string, alt: string, className: string, onOpen?: () => void }) {
+    if (!onOpen) return <img src={src} alt={alt} className={className} />;
+
+    return (
+        <button
+            type="button"
+            className="group/media relative block h-full w-full cursor-zoom-in overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
+            onClick={onOpen}
+            aria-label="View full-size image"
+        >
+            <img src={src} alt={alt} className={className} />
+            <span className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/55 text-white opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover/media:opacity-100 group-focus-visible/media:opacity-100">
+                <Maximize2 className="h-4 w-4" />
+            </span>
+        </button>
+    );
+}
+
+function SocialPostViewer({ post, onMediaClick }: { post: ReviewPost, onMediaClick?: () => void }) {
     const platforms = post.platforms?.length ? post.platforms : [post.platform];
     const caption = summarizeText(post.content || post.caption, 'Caption copy has not been added yet.', 360);
     const hashtags = getStringArray(post.hashtags).slice(0, 5);
@@ -2809,7 +2977,7 @@ function SocialPostViewer({ post }: { post: ReviewPost }) {
 
             <div className="bg-slate-50">
                 {post.image ? (
-                    <img src={post.image} alt="Post content" className="h-72 w-full object-cover" />
+                    <ReviewMedia src={post.image} alt="Post content" className="h-72 w-full object-cover" onOpen={onMediaClick} />
                 ) : (
                     <div className="min-h-56 p-8 flex flex-col items-center justify-center text-center">
                         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -2887,7 +3055,7 @@ function GoogleAdViewer({ post }: { post: ReviewPost }) {
     );
 }
 
-function SocialAdViewer({ post }: { post: ReviewPost }) {
+function SocialAdViewer({ post, onMediaClick }: { post: ReviewPost, onMediaClick?: () => void }) {
     const platform = post.platform || 'facebook';
     const platformLabel = getPlatformLabel(platform);
     const destination = post.destinationUrl || post.finalUrl || 'company-website.com';
@@ -2925,7 +3093,7 @@ function SocialAdViewer({ post }: { post: ReviewPost }) {
 
             <div className="bg-slate-100 relative">
                 {post.image ? (
-                    <img src={post.image} alt="Ad Content" className="w-full h-72 object-cover" />
+                    <ReviewMedia src={post.image} alt="Ad Content" className="h-72 w-full object-cover" onOpen={onMediaClick} />
                 ) : (
                     <div className="h-64 flex flex-col items-center justify-center bg-slate-50 p-8 text-center">
                         <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary">
@@ -2969,7 +3137,7 @@ function SocialAdViewer({ post }: { post: ReviewPost }) {
     );
 }
 
-function BlogViewer({ post }: { post: ReviewPost }) {
+function BlogViewer({ post, onMediaClick }: { post: ReviewPost, onMediaClick?: () => void }) {
     const [expanded, setExpanded] = useState(false);
     const image = post.image || post.featuredImage;
     const title = post.title || post.name || 'Untitled article';
@@ -2984,9 +3152,9 @@ function BlogViewer({ post }: { post: ReviewPost }) {
         <div className="tool-surface tool-surface-interactive w-full overflow-hidden rounded-xl group/blog">
             {image ? (
                 <div className="h-48 sm:h-64 overflow-hidden relative">
-                    <img src={image} alt="Article cover" className="w-full h-full object-cover group-hover/blog:scale-105 transition-transform duration-700" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-60" />
-                    <Badge className="absolute bottom-4 left-4 bg-white/90 text-slate-900 hover:bg-white border-0 backdrop-blur-sm">Article</Badge>
+                    <ReviewMedia src={image} alt="Article cover" className="h-full w-full object-cover transition-transform duration-700 group-hover/blog:scale-105" onOpen={onMediaClick} />
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-60" />
+                    <Badge className="pointer-events-none absolute bottom-4 left-4 border-0 bg-white/90 text-slate-900 backdrop-blur-sm hover:bg-white">Article</Badge>
                 </div>
             ) : (
                 <div className="h-44 bg-primary/5 border-b border-primary/10 flex flex-col items-center justify-center text-center px-8">

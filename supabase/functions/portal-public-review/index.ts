@@ -45,7 +45,15 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'status') {
-      return await updateStatus(service, supabaseUrl, serviceRoleKey, token, cleanText(body.postId), cleanText(body.status));
+      return await updateStatus(
+        service,
+        supabaseUrl,
+        serviceRoleKey,
+        token,
+        cleanText(body.postId),
+        cleanText(body.status),
+        cleanText(body.reviewerName).slice(0, 80),
+      );
     }
 
     if (action === 'comment') {
@@ -132,17 +140,22 @@ async function updateStatus(
   token: string,
   postId: string,
   status: string,
+  reviewerName: string,
 ) {
-  if (!['pending', 'approved', 'rejected', 'changes_requested'].includes(status)) {
+  if (!['approved', 'rejected', 'changes_requested'].includes(status)) {
     return jsonResponse({ error: 'Unsupported review status.' }, 400);
   }
+  if (!reviewerName) return jsonResponse({ error: 'Reviewer name is required.' }, 400);
 
   const post = await findPostForToken(service, token, postId);
 
   const { error } = await service
-    .from('portal_review_posts')
-    .update({ status, updated_at: new Date().toISOString() })
-    .eq('id', post.id);
+    .rpc('record_portal_review_action', {
+      p_post_id: post.id,
+      p_status: status,
+      p_reviewer_name: reviewerName,
+      p_is_client: true,
+    });
   if (error) throw error;
 
   await broadcastPortalChange(supabaseUrl, serviceRoleKey, token, post.feed_id, 'status-updated');
@@ -219,7 +232,7 @@ async function findPostForToken(service: ReturnType<typeof createClient>, token:
 async function listPosts(service: ReturnType<typeof createClient>, feedId: string) {
   const { data, error } = await service
     .from('portal_review_posts')
-    .select('id, feed_id, content_type, snapshot, status, created_at, portal_comments(id, author, text, created_at, avatar, is_client)')
+    .select('id, feed_id, content_type, snapshot, status, created_at, portal_comments(id, author, text, created_at, avatar, is_client), portal_review_events(id, status, reviewer_name, reviewer_is_client, created_at)')
     .eq('feed_id', feedId)
     .order('created_at', { ascending: false })
     .order('id', { ascending: true });
