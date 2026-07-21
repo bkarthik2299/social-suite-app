@@ -248,6 +248,26 @@ CREATE TABLE portal_comments (
 
 CREATE INDEX idx_portal_comments_post ON portal_comments(post_id);
 
+CREATE TABLE portal_review_events (
+    id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id            uuid NOT NULL REFERENCES portal_review_posts(id) ON DELETE CASCADE,
+    status             text NOT NULL CHECK (status IN ('approved', 'rejected', 'changes_requested')),
+    reviewer_name      text NOT NULL CHECK (char_length(reviewer_name) BETWEEN 1 AND 80),
+    reviewer_is_client boolean NOT NULL DEFAULT false,
+    actor_user_id      uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+    created_at         timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_portal_review_events_post_created
+    ON portal_review_events(post_id, created_at DESC);
+
+CREATE INDEX idx_portal_review_events_actor_user
+    ON portal_review_events(actor_user_id);
+
+REVOKE ALL ON portal_review_events FROM anon;
+GRANT SELECT, INSERT ON portal_review_events TO authenticated;
+GRANT ALL ON portal_review_events TO service_role;
+
 -- ==========================================================================
 -- LAYER 3d: MICRO TOOL — Notes
 -- ==========================================================================
@@ -449,6 +469,52 @@ RETURNS boolean AS $$
           AND role IN ('admin', 'editor')
     );
 $$ LANGUAGE sql SECURITY DEFINER STABLE;
+
+CREATE OR REPLACE FUNCTION record_portal_review_action(
+    p_post_id uuid,
+    p_status text,
+    p_reviewer_name text,
+    p_is_client boolean DEFAULT false
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = public
+AS $$
+DECLARE
+    clean_reviewer_name text := left(btrim(regexp_replace(coalesce(p_reviewer_name, ''), '\s+', ' ', 'g')), 80);
+BEGIN
+    IF p_status NOT IN ('approved', 'rejected', 'changes_requested') THEN
+        RAISE EXCEPTION 'Unsupported review status.' USING ERRCODE = '22023';
+    END IF;
+
+    IF clean_reviewer_name = '' THEN
+        RAISE EXCEPTION 'Reviewer name is required.' USING ERRCODE = '22023';
+    END IF;
+
+    UPDATE portal_review_posts
+    SET status = p_status,
+        updated_at = now()
+    WHERE id = p_post_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Review post was not found.' USING ERRCODE = 'P0002';
+    END IF;
+
+    INSERT INTO portal_review_events (post_id, status, reviewer_name, reviewer_is_client, actor_user_id)
+    VALUES (
+        p_post_id,
+        p_status,
+        clean_reviewer_name,
+        p_is_client,
+        CASE WHEN p_is_client THEN NULL ELSE (SELECT auth.uid()) END
+    );
+END;
+$$;
+
+REVOKE ALL ON FUNCTION record_portal_review_action(uuid, text, text, boolean) FROM PUBLIC;
+REVOKE ALL ON FUNCTION record_portal_review_action(uuid, text, text, boolean) FROM anon;
+GRANT EXECUTE ON FUNCTION record_portal_review_action(uuid, text, text, boolean) TO authenticated, service_role;
 
 -- ---- ORGANIZATIONS ----
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
@@ -853,6 +919,31 @@ CREATE POLICY "Editors can manage comments"
         JOIN portal_clients pc ON pc.id = pf.client_id
         WHERE prp.id = portal_comments.post_id AND can_edit_org(pc.org_id)
     ));
+
+-- ---- PORTAL_REVIEW_EVENTS ----
+ALTER TABLE portal_review_events ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Members can view review activity"
+    ON portal_review_events FOR SELECT TO authenticated
+    USING (EXISTS (
+        SELECT 1 FROM portal_review_posts prp
+        JOIN portal_feeds pf ON pf.id = prp.feed_id
+        JOIN portal_clients pc ON pc.id = pf.client_id
+        WHERE prp.id = portal_review_events.post_id AND is_org_member(pc.org_id)
+    ));
+
+CREATE POLICY "Editors can record review activity"
+    ON portal_review_events FOR INSERT TO authenticated
+    WITH CHECK (
+        reviewer_is_client = false
+        AND actor_user_id = (SELECT auth.uid())
+        AND EXISTS (
+            SELECT 1 FROM portal_review_posts prp
+            JOIN portal_feeds pf ON pf.id = prp.feed_id
+            JOIN portal_clients pc ON pc.id = pf.client_id
+            WHERE prp.id = portal_review_events.post_id AND can_edit_org(pc.org_id)
+        )
+    );
 
 -- ---- TOOL_REGISTRY (public read) ----
 ALTER TABLE tool_registry ENABLE ROW LEVEL SECURITY;

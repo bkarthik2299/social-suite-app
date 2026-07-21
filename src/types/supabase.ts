@@ -435,6 +435,44 @@ export type Database = {
           },
         ]
       }
+      portal_review_events: {
+        Row: {
+          actor_user_id: string | null
+          created_at: string
+          id: string
+          post_id: string
+          reviewer_is_client: boolean
+          reviewer_name: string
+          status: string
+        }
+        Insert: {
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          post_id: string
+          reviewer_is_client?: boolean
+          reviewer_name: string
+          status: string
+        }
+        Update: {
+          actor_user_id?: string | null
+          created_at?: string
+          id?: string
+          post_id?: string
+          reviewer_is_client?: boolean
+          reviewer_name?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "portal_review_events_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "portal_review_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portal_feeds: {
         Row: {
           client_id: string
@@ -754,6 +792,15 @@ export type Database = {
         Returns: boolean
       }
       is_org_member: { Args: { check_org_id: string }; Returns: boolean }
+      record_portal_review_action: {
+        Args: {
+          p_is_client?: boolean
+          p_post_id: string
+          p_reviewer_name: string
+          p_status: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
