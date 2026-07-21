@@ -63,6 +63,10 @@ export function OnboardingGuide() {
   const { data: tasks = [], isLoading: tasksLoading } = useTasks();
   const { guides = [], isLoading: guidesLoading } = useBrandGuide('');
   const { data: aiRuns = [], isLoading: aiRunsLoading } = useAiRuns();
+  const { data: notes = [], isLoading: notesLoading } = useNotes();
+  const { data: feedFolders = [], isLoading: feedFoldersLoading } = useFeedFolders();
+  const { data: portalClients = [], isLoading: portalClientsLoading } = usePortalClients();
+  const { data: credentials = [], isLoading: credentialsLoading } = useVault();
 
   const userId = user?.id || '';
   const organizationId = organization?.id || '';
@@ -73,7 +77,11 @@ export function OnboardingGuide() {
     || contentLoading
     || tasksLoading
     || guidesLoading
-    || aiRunsLoading;
+    || aiRunsLoading
+    || notesLoading
+    || feedFoldersLoading
+    || portalClientsLoading
+    || credentialsLoading;
 
   useEffect(() => {
     if (!userId || !organizationId || progressLoading) return;
@@ -244,8 +252,49 @@ export function OnboardingGuide() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [aiRuns, campaigns, canCreate, contentItems, folders, guides, projects, tasks]);
 
-  const completedCount = coreSteps.filter((step) => step.complete).length;
-  const progress = Math.round((completedCount / coreSteps.length) * 100);
+  const exploreSteps: ChecklistStep[] = [
+    {
+      id: 'notes', title: 'Notes',
+      summary: 'Capture ideas and working context.',
+      complete: notes.length > 0 || visited.has('notes'),
+      action: () => { markVisited('notes'); go('/tools/notes'); },
+    },
+    {
+      id: 'reference-feed', title: 'Reference Feed',
+      summary: 'Collect inspiration in one place.',
+      complete: feedFolders.length > 0 || visited.has('reference-feed'),
+      action: () => { markVisited('reference-feed'); go('/tools/feed'); },
+    },
+    {
+      id: 'client-portal', title: 'Client Portal',
+      summary: 'Share work for client review.',
+      complete: portalClients.length > 0 || visited.has('client-portal'),
+      action: () => { markVisited('client-portal'); go('/tools/client-portal'); },
+    },
+    {
+      id: 'social-preview', title: 'Social Preview',
+      summary: 'Check creative fit before publishing.',
+      complete: visited.has('social-preview'),
+      action: () => { markVisited('social-preview'); go('/tools/sm-preview'); },
+    },
+    {
+      id: 'password-vault', title: 'Password Vault',
+      summary: 'Keep shared credentials organized.',
+      complete: credentials.length > 0 || visited.has('password-vault'),
+      action: () => { markVisited('password-vault'); go('/tools/vault'); },
+    },
+    {
+      id: 'teams', title: 'Teams',
+      summary: 'See members and invite collaborators.',
+      complete: visited.has('teams'),
+      action: () => { markVisited('teams'); go('/teams'); },
+    },
+  ];
+
+  const allSteps = [...coreSteps, ...exploreSteps];
+  const completedCount = allSteps.filter((step) => step.complete).length;
+  const pendingCount = allSteps.length - completedCount;
+  const progress = Math.round((completedCount / allSteps.length) * 100);
   const nextStep = coreSteps.find((step) => !step.complete)?.id;
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -255,17 +304,25 @@ export function OnboardingGuide() {
             <Button
               variant="ghost"
               size="icon"
-              className="soft-card h-9 w-9 rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
-              aria-label={`Getting started, ${completedCount} of ${coreSteps.length} complete`}
+              className="soft-card relative h-9 w-9 overflow-visible rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
+              aria-label={`Getting started, ${pendingCount} item${pendingCount === 1 ? '' : 's'} remaining`}
             >
-              <span className="onboarding-rocket-nudge relative flex h-5 w-5 items-center justify-center">
+              <span className="flex h-5 w-5 items-center justify-center">
                 <Rocket className="h-5 w-5" />
               </span>
+              {!progressLoading && pendingCount > 0 && (
+                <span
+                  aria-hidden="true"
+                  className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[9px] font-bold leading-none text-white shadow-sm ring-2 ring-white"
+                >
+                  {pendingCount}
+                </span>
+              )}
             </Button>
           </PopoverTrigger>
         </TooltipTrigger>
         <TooltipContent side="bottom">
-          Getting started · {completedCount} of {coreSteps.length}
+          Getting started · {pendingCount} remaining
         </TooltipContent>
       </Tooltip>
 
@@ -292,7 +349,7 @@ export function OnboardingGuide() {
           </div>
           <div className="mt-4 flex items-center gap-3">
             <Progress value={progress} className="h-1.5 flex-1 bg-blue-100" />
-            <span className="whitespace-nowrap text-[11px] font-semibold text-primary">{completedCount} of {coreSteps.length}</span>
+            <span className="whitespace-nowrap text-[11px] font-semibold text-primary">{completedCount} of {allSteps.length}</span>
           </div>
         </div>
 
@@ -313,13 +370,7 @@ export function OnboardingGuide() {
               <p className="text-[10px] font-semibold uppercase tracking-[0.09em] text-slate-400">Explore more tools</p>
               <p className="mt-1 text-[11px] leading-4 text-slate-500">Optional features for planning, review, and inspiration.</p>
             </div>
-            <ExploreChecklist
-              visited={visited}
-              navigateTo={(id, path) => {
-                markVisited(id);
-                go(path);
-              }}
-            />
+            <ExploreChecklist steps={exploreSteps} />
           </div>
         </div>
 
@@ -331,51 +382,7 @@ export function OnboardingGuide() {
   );
 }
 
-function ExploreChecklist({
-  visited,
-  navigateTo,
-}: {
-  visited: Set<OnboardingVisitId>;
-  navigateTo: (id: OnboardingVisitId, path: string) => void;
-}) {
-  const { data: notes = [] } = useNotes();
-  const { data: feedFolders = [] } = useFeedFolders();
-  const { data: portalClients = [] } = usePortalClients();
-  const { data: credentials = [] } = useVault();
-
-  const steps: ChecklistStep[] = [
-    {
-      id: 'notes', title: 'Notes',
-      summary: 'Capture ideas and working context.',
-      complete: notes.length > 0 || visited.has('notes'), action: () => navigateTo('notes', '/tools/notes'),
-    },
-    {
-      id: 'reference-feed', title: 'Reference Feed',
-      summary: 'Collect inspiration in one place.',
-      complete: feedFolders.length > 0 || visited.has('reference-feed'), action: () => navigateTo('reference-feed', '/tools/feed'),
-    },
-    {
-      id: 'client-portal', title: 'Client Portal',
-      summary: 'Share work for client review.',
-      complete: portalClients.length > 0 || visited.has('client-portal'), action: () => navigateTo('client-portal', '/tools/client-portal'),
-    },
-    {
-      id: 'social-preview', title: 'Social Preview',
-      summary: 'Check creative fit before publishing.',
-      complete: visited.has('social-preview'), action: () => navigateTo('social-preview', '/tools/sm-preview'),
-    },
-    {
-      id: 'password-vault', title: 'Password Vault',
-      summary: 'Keep shared credentials organized.',
-      complete: credentials.length > 0 || visited.has('password-vault'), action: () => navigateTo('password-vault', '/tools/vault'),
-    },
-    {
-      id: 'teams', title: 'Teams',
-      summary: 'See members and invite collaborators.',
-      complete: visited.has('teams'), action: () => navigateTo('teams', '/teams'),
-    },
-  ];
-
+function ExploreChecklist({ steps }: { steps: ChecklistStep[] }) {
   return (
     <div className="mt-1 space-y-1">
       {steps.map((step) => (
