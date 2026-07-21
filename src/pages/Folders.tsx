@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { FolderCard } from '@/components/shared/FolderCard';
 import { useProjects, useFolders } from '@/hooks/useDatabase';
@@ -18,12 +18,20 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 export default function Folders() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { projectId } = useParams();
   const { data: projects = [], isLoading: isLoadingProjects } = useProjects();
   const project = findBySlug(projects, projectId);
   const { data: folders, isLoading, addFolder, updateFolder, deleteFolder } = useFolders(project?.id || '');
   const [open, setOpen] = useState(false);
   const [folderName, setFolderName] = useState('');
+
+  useEffect(() => {
+    if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-folder') return;
+    setOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   const projectFolders = folders || [];
 

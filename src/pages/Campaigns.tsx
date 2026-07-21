@@ -1,5 +1,5 @@
-import { useState, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { MoreHorizontal, ChevronLeft, ChevronRight, PlusCircle, FileText, Search, Calendar, Infinity as InfinityIcon, ArrowUpDown, Pencil, Trash2, Share2 } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { CampaignBadge } from '@/components/shared/CampaignBadge';
@@ -48,6 +48,7 @@ import { Campaign } from '@/types';
 export default function Campaigns() {
   const { projectId, folderId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: projects = [], isLoading: isLoadingProjects } = useProjects();
   const project = findBySlug(projects, projectId);
   const { data: folders = [], isLoading: isLoadingFolders } = useFolders(project?.id || '');
@@ -55,6 +56,12 @@ export default function Campaigns() {
   const { data: campaigns, isLoading, addCampaign, updateCampaign, deleteCampaign } = useCampaigns(folder?.id || '');
 
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-campaign') return;
+    setOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   // Sorting State
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
