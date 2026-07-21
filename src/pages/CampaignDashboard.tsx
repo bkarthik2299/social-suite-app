@@ -1122,7 +1122,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
 
 // --- Tab Content Components ---
 
-const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext, projectName?: string }) => {
+const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, targetContentItemId?: string, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({
         id: i.id,
@@ -1140,6 +1140,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
     const { toast } = useToast();
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
+    const openedTargetRef = useRef('');
     const [postToDelete, setPostToDelete] = useState<ContentDeleteTarget | null>(null);
 
     // Form State
@@ -1192,6 +1193,15 @@ const SocialPostsTab = ({ campaignId, autoCreate, brandVisualContext, projectNam
         }
         setIsDialogOpen(true);
     };
+
+    useEffect(() => {
+        if (!targetContentItemId || openedTargetRef.current === targetContentItemId) return;
+        const targetPost = posts.find(post => post.id === targetContentItemId);
+        if (!targetPost) return;
+
+        openedTargetRef.current = targetContentItemId;
+        handleOpen(targetPost as SocialPost);
+    }, [targetContentItemId, posts]);
 
     const handleSave = () => {
         const postData = {
@@ -1915,12 +1925,13 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
     );
 };
 
-const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCreate?: boolean }) => {
+const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaignId: string, autoCreate?: boolean, targetContentItemId?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const googleAds = (dbItems || []).filter(i => i.type === 'google-ad').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload, createdAt: i.createdAt }));
     // State
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingAd, setEditingAd] = useState<GoogleAd | null>(null);
+    const openedTargetRef = useRef('');
     const [adToDelete, setAdToDelete] = useState<ContentDeleteTarget | null>(null);
     const [name, setName] = useState('New Search Ad');
     const [isEditingName, setIsEditingName] = useState(false);
@@ -1963,6 +1974,15 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
         }
         setIsDialogOpen(true);
     };
+
+    useEffect(() => {
+        if (!targetContentItemId || openedTargetRef.current === targetContentItemId) return;
+        const targetAd = ads.find(ad => ad.id === targetContentItemId);
+        if (!targetAd) return;
+
+        openedTargetRef.current = targetContentItemId;
+        handleOpen(targetAd as GoogleAd);
+    }, [targetContentItemId, ads]);
 
     const handleSave = () => {
         const adData = {
@@ -2390,7 +2410,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate }: { campaignId: string, autoCrea
     );
 };
 
-const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, brandVisualContext: BrandVisualContext, projectName?: string }) => {
+const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, targetContentItemId?: string, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => ({
         id: i.id,
@@ -2413,6 +2433,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
 
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingAd, setEditingAd] = useState<SocialAd | null>(null);
+    const openedTargetRef = useRef('');
     const [adToDelete, setAdToDelete] = useState<ContentDeleteTarget | null>(null);
 
     // Form state
@@ -2472,6 +2493,15 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
         }
         setIsDialogOpen(true);
     };
+
+    useEffect(() => {
+        if (!targetContentItemId || openedTargetRef.current === targetContentItemId) return;
+        const targetAd = campaignAds.find(ad => ad.id === targetContentItemId);
+        if (!targetAd) return;
+
+        openedTargetRef.current = targetContentItemId;
+        handleOpen(targetAd as SocialAd);
+    }, [targetContentItemId, campaignAds]);
 
     const handleSave = () => {
         const adData = {
@@ -3345,11 +3375,12 @@ const SocialAdsTab = ({ campaignId, autoCreate, brandVisualContext, projectName 
     );
 };
 
-const BlogsTab = ({ campaignId }: { campaignId: string }) => {
+const BlogsTab = ({ campaignId, targetContentItemId }: { campaignId: string, targetContentItemId?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
     const blogs = (dbItems || []).filter(i => i.type === 'blog' || i.type === 'blogs').map(i => ({ id: i.id, campaignId: i.campaignId, name: i.name, status: i.status, ...i.payload }));
     const [isDialogOpen, setIsDialogOpen] = useState(false);
     const [editingBlog, setEditingBlog] = useState<typeof blogs[0] | null>(null);
+    const openedTargetRef = useRef('');
     const [blogToDelete, setBlogToDelete] = useState<ContentDeleteTarget | null>(null);
     const [isSeoPanelOpen, setIsSeoPanelOpen] = useState(false);
 
@@ -3426,6 +3457,15 @@ const BlogsTab = ({ campaignId }: { campaignId: string }) => {
         setIsSeoPanelOpen(false);
         setIsDialogOpen(true);
     };
+
+    useEffect(() => {
+        if (!targetContentItemId || openedTargetRef.current === targetContentItemId) return;
+        const targetBlog = campaignBlogs.find(blog => blog.id === targetContentItemId);
+        if (!targetBlog) return;
+
+        openedTargetRef.current = targetContentItemId;
+        handleOpen(targetBlog);
+    }, [targetContentItemId, campaignBlogs]);
 
     const handleSave = () => {
         const blogData = {
@@ -3626,6 +3666,7 @@ export default function CampaignDashboard() {
     // Auto-navigation logic
     const autoCreate = location.state?.autoCreate;
     const initialType = location.state?.type; // 'socials', 'google-ad', etc.
+    const targetContentItemId = location.state?.contentItemId as string | undefined;
 
     const getTabFromType = (type: string) => {
         if (type === 'google-ad') return 'google-ads';
@@ -3681,6 +3722,7 @@ export default function CampaignDashboard() {
                     <SocialPostsTab
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'posts'}
+                        targetContentItemId={targetContentItemId}
                         brandVisualContext={brandVisualContext}
                         projectName={project.name}
                     />
@@ -3689,18 +3731,20 @@ export default function CampaignDashboard() {
                     <GoogleAdsTab
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'google-ads'}
+                        targetContentItemId={targetContentItemId}
                     />
                 </TabsContent>
                 <TabsContent value="social-ads">
                     <SocialAdsTab
                         campaignId={resolvedCampaignId}
                         autoCreate={autoCreate && defaultTab === 'social-ads'}
+                        targetContentItemId={targetContentItemId}
                         brandVisualContext={brandVisualContext}
                         projectName={project.name}
                     />
                 </TabsContent>
                 <TabsContent value="blogs">
-                    <BlogsTab campaignId={resolvedCampaignId} />
+                    <BlogsTab campaignId={resolvedCampaignId} targetContentItemId={targetContentItemId} />
                 </TabsContent>
             </Tabs>
         </AppLayout>

@@ -10,6 +10,7 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
+import { sortPortalRowsByCreatedAt } from '@/lib/portalReview';
 import { useAuth } from '@/context/AuthContext';
 import type { Database, Json } from '@/types/supabase';
 import type { Campaign, CampaignType, Folder, Note, Project, Task, TaskStage } from '@/types';
@@ -45,7 +46,7 @@ const getFirstString = (value: unknown): string => getStringArray(value)[0] || g
 const getTime = (value?: string | null) => value ? new Date(value).getTime() || 0 : 0;
 
 const sortPortalReviewPosts = (posts: PortalReviewPostWithComments[]) =>
-    [...posts].sort((a, b) => getTime(b.created_at) - getTime(a.created_at));
+    sortPortalRowsByCreatedAt(posts);
 
 const sortPortalComments = (comments: PortalCommentRow[]) =>
     [...comments].sort((a, b) => getTime(a.created_at) - getTime(b.created_at));
@@ -1210,7 +1211,8 @@ export function usePortalReviewPosts(feedId: string) {
                 .from('portal_review_posts')
                 .select('*, portal_comments(*)')
                 .eq('feed_id', feedId)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .order('id', { ascending: true });
             if (error) throw error;
             return sortPortalReviewPosts(
                 ((data || []) as PortalReviewPostWithComments[]).map(post => normalizePortalReviewPost(post))
@@ -1418,10 +1420,11 @@ export function usePortalReviewPosts(feedId: string) {
             if (error) throw error;
             return data as PortalReviewPostWithComments;
         },
-        onMutate: async ({ id, status }) => {
-            await qc.cancelQueries({ queryKey });
+        onMutate: ({ id, status }) => {
             const previous = qc.getQueryData<PortalReviewPostWithComments[]>(queryKey);
             const now = new Date().toISOString();
+
+            void qc.cancelQueries({ queryKey });
 
             qc.setQueryData<PortalReviewPostWithComments[]>(queryKey, current =>
                 (current || []).map(post =>
