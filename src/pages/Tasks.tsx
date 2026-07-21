@@ -54,6 +54,7 @@ import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
 import { Task, TaskStage } from '@/types';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -344,6 +345,8 @@ function TaskCard({
 }
 
 export default function Tasks() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { data: dbTasks, addTask, updateTask, deleteTask, moveTask } = useTasks();
   const { data: dbTaskStages, saveTaskStages } = useTaskStages();
   const { data: projects = [] } = useProjects();
@@ -375,6 +378,12 @@ export default function Tasks() {
   const [columnToDelete, setColumnToDelete] = useState<TaskColumn | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [dragOverlayWidth, setDragOverlayWidth] = useState<number | null>(null);
+
+  useEffect(() => {
+    if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-task') return;
+    setOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   // Filter state - now with arrays for multi-select
   const [filters, setFilters] = useState({

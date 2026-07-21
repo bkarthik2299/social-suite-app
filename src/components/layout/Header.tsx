@@ -2,6 +2,7 @@ import { ChevronRight } from 'lucide-react';
 import { AIAssistant } from '@/components/ai/AIAssistant';
 import { GlobalCommand } from '@/components/shared/GlobalCommand';
 import { MicroToolsMenu } from '@/components/layout/MicroToolsMenu';
+import { OnboardingGuide } from '@/components/layout/OnboardingGuide';
 import { Link } from 'react-router-dom';
 
 interface Breadcrumb {
@@ -49,12 +50,13 @@ export function Header({ breadcrumbs = [] }: HeaderProps) {
       </div>
 
       {/* Logo (Right) */}
-      <div className="flex items-center justify-end gap-3 min-w-[200px]">
+      <div className="flex min-w-[170px] items-center justify-end gap-2 xl:min-w-[200px]">
         <AIAssistant />
+        <OnboardingGuide />
         <MicroToolsMenu />
         <div className="flex items-center gap-2">
           <img src="/favicon.jpg" alt="Logo" className="w-6 h-6 rounded-md object-cover" />
-          <span className="text-xl font-semibold text-foreground tracking-tight">
+          <span className="hidden text-xl font-semibold text-foreground tracking-tight xl:inline">
             socialsuite.
           </span>
         </div>

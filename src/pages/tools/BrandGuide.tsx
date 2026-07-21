@@ -63,6 +63,7 @@ import {
 } from '@/hooks/useDatabase';
 import { useBrandKnowledge, useBrandResearch } from '@/hooks/useAI';
 import { cn } from '@/lib/utils';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 type ToneSpectrum = {
     formality?: number;
@@ -157,6 +158,8 @@ const emptyMoodImageForm: Omit<BrandMoodImage, 'id' | 'created_at'> = {
 };
 
 export default function BrandGuidePage() {
+    const location = useLocation();
+    const navigate = useNavigate();
     const { toast } = useToast();
     const { data: projects = [], isLoading: projectsLoading } = useProjects();
     const [selectedGuideId, setSelectedGuideId] = useState('');
@@ -166,6 +169,14 @@ export default function BrandGuidePage() {
     const [openSections, setOpenSections] = useState<string[]>(['identity']);
     const [activeSection, setActiveSection] = useState(sections[0].id);
     const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm | null>(null);
+
+    useEffect(() => {
+        if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-brand-guide') return;
+        setNewGuideName('');
+        setNewGuideProjectId('none');
+        setCreateOpen(true);
+        navigate(location.pathname, { replace: true, state: null });
+    }, [location.pathname, location.state, navigate]);
 
     const {
         guides,

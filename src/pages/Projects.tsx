@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { FolderCard } from '@/components/shared/FolderCard';
@@ -19,9 +20,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 export default function Projects() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const { data: projects, isLoading, addProject, updateProject, deleteProject } = useProjects();
   const [open, setOpen] = useState(false);
   const [projectName, setProjectName] = useState('');
+
+  useEffect(() => {
+    if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-project') return;
+    setOpen(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   const handleCreate = () => {
     if (projectName.trim()) {

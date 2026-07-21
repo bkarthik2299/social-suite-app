@@ -261,6 +261,11 @@ export function AIAssistant() {
   }, [latestArtifact]);
 
   useEffect(() => {
+    const openAssistant = () => {
+      assistantDismissedRef.current = false;
+      setAssistantDismissed(false);
+      setPanelOpen(true);
+    };
     const openPreviousRun = (event: Event) => {
       const runId = (event as CustomEvent<{ runId?: string }>).detail?.runId;
       if (!runId) return;
@@ -271,8 +276,12 @@ export function AIAssistant() {
       setPanelOpen(false);
       setMissionOpen(true);
     };
+    window.addEventListener('socialsuite:open-ai', openAssistant);
     window.addEventListener('socialsuite:open-ai-run', openPreviousRun);
-    return () => window.removeEventListener('socialsuite:open-ai-run', openPreviousRun);
+    return () => {
+      window.removeEventListener('socialsuite:open-ai', openAssistant);
+      window.removeEventListener('socialsuite:open-ai-run', openPreviousRun);
+    };
   }, []);
 
   useEffect(() => {
