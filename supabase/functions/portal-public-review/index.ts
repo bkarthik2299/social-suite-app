@@ -221,7 +221,8 @@ async function listPosts(service: ReturnType<typeof createClient>, feedId: strin
     .from('portal_review_posts')
     .select('id, feed_id, content_type, snapshot, status, created_at, portal_comments(id, author, text, created_at, avatar, is_client)')
     .eq('feed_id', feedId)
-    .order('created_at', { ascending: false });
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: true });
   if (error) throw error;
 
   return data || [];

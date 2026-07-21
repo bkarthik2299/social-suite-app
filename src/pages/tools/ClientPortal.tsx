@@ -33,6 +33,8 @@ import { GoogleAd, SocialAd, BlogPost } from '@/types';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/use-toast';
 import { useAuth } from '@/context/AuthContext';
+import { campaignPath } from '@/lib/routes';
+import { sortPortalRowsByCreatedAt } from '@/lib/portalReview';
 
 // Types
 type Client = {
@@ -481,6 +483,42 @@ export default function ClientPortal() {
         return token;
     };
 
+    const handleOpenSourcePost = useCallback((post: ReviewPost) => {
+        if (!post._contentItemId) return;
+
+        const contentItem = contentItems.find(item => item.id === post._contentItemId);
+        const campaign = contentItem
+            ? campaigns.find(item => item.id === contentItem.campaignId)
+            : null;
+        const folder = campaign
+            ? folders.find(item => item.id === campaign.folderId)
+            : null;
+        const project = folder
+            ? projects.find(item => item.id === folder.projectId)
+            : null;
+        if (!contentItem || !campaign || !folder || !project) return;
+
+        const navigationType = contentItem.type === 'social-post'
+            ? 'socials'
+            : contentItem.type === 'social-ad'
+                ? 'meta-ad'
+                : contentItem.type === 'blog'
+                    ? 'blogs'
+                    : contentItem.type;
+
+        navigate(
+            campaignPath(
+                project,
+                folder,
+                campaign,
+                projects,
+                folders.filter(item => item.projectId === project.id),
+                campaigns.filter(item => item.folderId === folder.id),
+            ),
+            { state: { type: navigationType, contentItemId: contentItem.id } },
+        );
+    }, [campaigns, contentItems, folders, navigate, projects]);
+
     // Build the tree data structure including ALL content types
     const buildProjectTree = (): TreeItem[] => {
         return projects.map(project => {
@@ -559,6 +597,7 @@ export default function ClientPortal() {
                     onEnsureAccessToken={handleEnsureClientAccessToken}
                     requestedFeedId={routeFeed?.client_id === selectedClient.id ? routeFeed.id : null}
                     onFeedPathChange={handleFeedPathChange}
+                    onOpenSourcePost={handleOpenSourcePost}
                 />
             )}
         </AppLayout>
@@ -576,7 +615,6 @@ export function ClientPortalPublicReview() {
     });
     const [nameDraft, setNameDraft] = useState(reviewerName);
     const [loading, setLoading] = useState(true);
-    const [saving, setSaving] = useState(false);
     const [error, setError] = useState('');
 
     const loadPortal = async (nextFeedId = selectedFeedId, options: { silent?: boolean } = {}) => {
@@ -645,7 +683,8 @@ export function ClientPortalPublicReview() {
     }, [selectedFeedId, token]);
 
     const posts = useMemo(
-        () => (payload?.posts || []).map(post => mapReviewPostRecord(post, 'Social Suite Team')),
+        () => sortPortalRowsByCreatedAt((payload?.posts || []).map(getRecord))
+            .map(post => mapReviewPostRecord(post, 'Social Suite Team')),
         [payload?.posts]
     );
     const selectedFeed = payload?.feeds.find(feed => feed.id === selectedFeedId) || null;
@@ -707,7 +746,6 @@ export function ClientPortalPublicReview() {
             });
         }
 
-        setSaving(true);
         try {
             const { data, error: invokeError } = await supabase.functions.invoke('portal-public-review', {
                 body: {
@@ -729,8 +767,6 @@ export function ClientPortalPublicReview() {
                 description: err instanceof Error ? err.message : 'Please try again.',
                 variant: 'destructive',
             });
-        } finally {
-            setSaving(false);
         }
     };
 
@@ -1132,9 +1168,10 @@ interface ClientWorkspaceProps {
     onEnsureAccessToken: (clientId: string) => Promise<string>;
     requestedFeedId?: string | null;
     onFeedPathChange: (feed: ClientFeed, options?: { replace?: boolean }) => void;
+    onOpenSourcePost: (post: ReviewPost) => void;
 }
 
-function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken, requestedFeedId, onFeedPathChange }: ClientWorkspaceProps) {
+function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessToken, requestedFeedId, onFeedPathChange, onOpenSourcePost }: ClientWorkspaceProps) {
     const { toast } = useToast();
     const { user } = useAuth();
     const { data: dbFeeds = [], addFeed, deleteFeed } = usePortalFeeds(clientId);
@@ -1500,6 +1537,7 @@ function ClientWorkspace({ clientId, client, onBack, treeData, onEnsureAccessTok
                                             onStatusChange={handleStatusChange}
                                             onAddComment={handleAddFeedComment}
                                             onRemove={() => setPostPendingRemove(post)}
+                                            onOpenSource={onOpenSourcePost}
                                         />
                                     ))
                                 )}
@@ -2017,11 +2055,13 @@ function PostCard({
     onStatusChange,
     onAddComment,
     onRemove,
+    onOpenSource,
 }: {
     post: ReviewPost,
     onStatusChange: (postId: string, status: ReviewPost['status']) => void,
     onAddComment: (postId: string, text: string) => void,
     onRemove?: () => void,
+    onOpenSource?: (post: ReviewPost) => void,
 }) {
     const [commentText, setCommentText] = useState('');
     const [isCommentsOpen, setIsCommentsOpen] = useState(false);
@@ -2055,7 +2095,23 @@ function PostCard({
     };
 
     return (
-        <Card className="tool-surface tool-surface-interactive group overflow-hidden rounded-xl bg-white">
+        <Card
+            className={cn(
+                "tool-surface tool-surface-interactive group overflow-hidden rounded-xl bg-white",
+                onOpenSource && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
+            )}
+            role={onOpenSource ? 'link' : undefined}
+            tabIndex={onOpenSource ? 0 : undefined}
+            aria-label={onOpenSource ? `Open ${post.name || post.title || post.content || 'post'} in its campaign` : undefined}
+            onClick={onOpenSource ? (event) => {
+                const target = event.target as HTMLElement;
+                if (target.closest('button, input, textarea, a, [role="dialog"]')) return;
+                onOpenSource(post);
+            } : undefined}
+            onKeyDown={onOpenSource ? (event) => {
+                if (event.key === 'Enter') onOpenSource(post);
+            } : undefined}
+        >
             {/* Header */}
             <div className="flex flex-row items-center justify-between py-3 px-4 border-b border-slate-100 bg-slate-50/50">
                 <div className="flex items-center gap-3">
