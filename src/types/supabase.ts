@@ -627,6 +627,7 @@ export type Database = {
           created_at: string | null
           description: string | null
           due_date: string | null
+          folder_id: string | null
           id: string
           org_id: string
           project_id: string | null
@@ -641,6 +642,7 @@ export type Database = {
           created_at?: string | null
           description?: string | null
           due_date?: string | null
+          folder_id?: string | null
           id?: string
           org_id: string
           project_id?: string | null
@@ -655,6 +657,7 @@ export type Database = {
           created_at?: string | null
           description?: string | null
           due_date?: string | null
+          folder_id?: string | null
           id?: string
           org_id?: string
           project_id?: string | null
@@ -676,6 +679,13 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tasks_folder_id_fkey"
+            columns: ["folder_id"]
+            isOneToOne: false
+            referencedRelation: "folders"
             referencedColumns: ["id"]
           },
           {

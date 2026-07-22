@@ -29,6 +29,7 @@ export interface Task {
   status: string;
   dueDate?: string;
   projectId?: string;
+  folderId?: string;
   campaignId?: string;
   assigneeId?: string;
 }

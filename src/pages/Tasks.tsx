@@ -4,9 +4,9 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, v
 import { CSS } from '@dnd-kit/utilities';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useAuth } from '@/context/AuthContext';
-import { useTasks, useTaskStages, useProjects, useAllCampaigns } from '@/hooks/useDatabase';
+import { useTasks, useTaskStages, useProjects, useAllFolders, useAllCampaigns } from '@/hooks/useDatabase';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check } from 'lucide-react';
+import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check, FolderOpen, ExternalLink } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -55,6 +55,15 @@ import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
 import { Task, TaskStage } from '@/types';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { campaignPath, folderPath } from '@/lib/routes';
+
+const NO_CONTEXT = 'no-context';
+
+type TaskWorkLocation = {
+  href: string;
+  folderName: string;
+  campaignName?: string;
+};
 
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -189,12 +198,14 @@ type TaskCardVisualProps = {
   task: Task;
   project?: { name: string };
   campaign?: { name: string; type: string };
+  workLocation?: TaskWorkLocation;
+  onOpenWorkLocation: (href: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
   preview?: boolean;
 };
 
-function TaskCardVisual({ task, project, campaign, onEdit, onDelete, preview = false }: TaskCardVisualProps) {
+function TaskCardVisual({ task, project, campaign, workLocation, onOpenWorkLocation, onEdit, onDelete, preview = false }: TaskCardVisualProps) {
   return (
     <>
       <div className="mb-2 flex items-start justify-between">
@@ -248,6 +259,27 @@ function TaskCardVisual({ task, project, campaign, onEdit, onDelete, preview = f
         )}
       </div>
 
+      {workLocation && (
+        <button
+          type="button"
+          aria-label={`Open ${workLocation.campaignName || workLocation.folderName}`}
+          className="mb-3 flex max-w-full items-center gap-1.5 rounded-lg bg-blue-50 px-2.5 py-1.5 text-left text-xs font-medium text-primary transition-colors hover:bg-blue-100"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!preview) onOpenWorkLocation(workLocation.href);
+          }}
+        >
+          <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            {workLocation.campaignName
+              ? `${workLocation.folderName} / ${workLocation.campaignName}`
+              : workLocation.folderName}
+          </span>
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </button>
+      )}
+
       {task.dueDate && (
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
           <CalendarIcon className="h-3 w-3" />
@@ -262,11 +294,13 @@ function TaskDragPreview({
   task,
   project,
   campaign,
+  workLocation,
   width
 }: {
   task: Task;
   project?: { name: string };
   campaign?: { name: string; type: string };
+  workLocation?: TaskWorkLocation;
   width: number | null;
 }) {
   return (
@@ -278,6 +312,8 @@ function TaskDragPreview({
         task={task}
         project={project}
         campaign={campaign}
+        workLocation={workLocation}
+        onOpenWorkLocation={() => undefined}
         onEdit={() => undefined}
         onDelete={() => undefined}
         preview
@@ -291,6 +327,8 @@ function TaskCard({
   task,
   project,
   campaign,
+  workLocation,
+  onOpenWorkLocation,
   onEdit,
   onDelete,
   isDragging
@@ -298,6 +336,8 @@ function TaskCard({
   task: Task;
   project?: { name: string };
   campaign?: { name: string; type: string };
+  workLocation?: TaskWorkLocation;
+  onOpenWorkLocation: (href: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
   isDragging: boolean;
@@ -337,6 +377,8 @@ function TaskCard({
         task={task}
         project={project}
         campaign={campaign}
+        workLocation={workLocation}
+        onOpenWorkLocation={onOpenWorkLocation}
         onEdit={onEdit}
         onDelete={onDelete}
       />
@@ -350,6 +392,7 @@ export default function Tasks() {
   const { data: dbTasks, addTask, updateTask, deleteTask, moveTask } = useTasks();
   const { data: dbTaskStages, saveTaskStages } = useTaskStages();
   const { data: projects = [] } = useProjects();
+  const { data: folders = [] } = useAllFolders();
   const { data: campaigns = [] } = useAllCampaigns();
   const { membership, user } = useAuth();
   const { toast } = useToast();
@@ -403,6 +446,7 @@ export default function Tasks() {
     title: '',
     status: 'todo',
     projectId: '',
+    folderId: '',
     campaignId: '',
     dueDate: '',
     description: '',
@@ -410,8 +454,44 @@ export default function Tasks() {
   });
 
   const resetTaskForm = useCallback(() => {
-    setTaskForm({ title: '', status: columns[0]?.id || 'todo', projectId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
+    setTaskForm({ title: '', status: columns[0]?.id || 'todo', projectId: '', folderId: '', campaignId: '', dueDate: '', description: '', assigneeId: '' });
   }, [columns]);
+
+  const availableFolders = useMemo(
+    () => folders.filter((folder) => folder.projectId === taskForm.projectId),
+    [folders, taskForm.projectId],
+  );
+
+  const availableCampaigns = useMemo(
+    () => campaigns.filter((campaign) => campaign.folderId === taskForm.folderId),
+    [campaigns, taskForm.folderId],
+  );
+
+  const handleProjectChange = (value: string) => {
+    const projectId = value === NO_CONTEXT ? '' : value;
+    setTaskForm((previous) => ({
+      ...previous,
+      projectId,
+      folderId: previous.projectId === projectId ? previous.folderId : '',
+      campaignId: previous.projectId === projectId ? previous.campaignId : '',
+    }));
+  };
+
+  const handleFolderChange = (value: string) => {
+    const folderId = value === NO_CONTEXT ? '' : value;
+    setTaskForm((previous) => ({
+      ...previous,
+      folderId,
+      campaignId: previous.folderId === folderId ? previous.campaignId : '',
+    }));
+  };
+
+  const handleCampaignChange = (value: string) => {
+    setTaskForm((previous) => ({
+      ...previous,
+      campaignId: value === NO_CONTEXT ? '' : value,
+    }));
+  };
 
   useEffect(() => {
     if (!dbTaskStages?.length) return;
@@ -513,6 +593,7 @@ export default function Tasks() {
           status: taskForm.status,
           due_date: taskForm.dueDate || undefined,
           project_id: taskForm.projectId || undefined,
+          folder_id: taskForm.folderId || undefined,
           campaign_id: taskForm.campaignId || undefined,
           assignee_id: taskForm.assigneeId || undefined,
           sort_order: tasks.length,
@@ -537,6 +618,7 @@ export default function Tasks() {
             status: taskForm.status,
             due_date: taskForm.dueDate || null,
             project_id: taskForm.projectId || null,
+            folder_id: taskForm.folderId || null,
             campaign_id: taskForm.campaignId || null,
             assignee_id: taskForm.assigneeId || null,
           }
@@ -550,17 +632,21 @@ export default function Tasks() {
   };
 
   const openEditDialog = useCallback((task: Task) => {
+    const linkedCampaign = campaigns.find((campaign) => campaign.id === task.campaignId);
+    const folderId = task.folderId || linkedCampaign?.folderId || '';
+    const linkedFolder = folders.find((folder) => folder.id === folderId);
     setEditingTask(task);
     setTaskForm({
       title: task.title,
       status: task.status,
-      projectId: task.projectId || '',
+      projectId: task.projectId || linkedFolder?.projectId || linkedCampaign?.projectId || '',
+      folderId,
       campaignId: task.campaignId || '',
       dueDate: task.dueDate || '',
       description: task.description || '',
       assigneeId: task.assigneeId || ''
     });
-  }, []);
+  }, [campaigns, folders]);
 
   const closeEditDialog = () => {
     setEditingTask(null);
@@ -722,6 +808,29 @@ export default function Tasks() {
     setDragOverlayWidth(null);
   };
 
+  const getTaskPresentation = (task: Task) => {
+    const campaign = campaigns.find((item) => item.id === task.campaignId);
+    const folder = folders.find((item) => item.id === (task.folderId || campaign?.folderId));
+    const project = projects.find((item) => item.id === (task.projectId || folder?.projectId));
+
+    if (!project || !folder) return { project, campaign, workLocation: undefined };
+
+    const projectFolders = folders.filter((item) => item.projectId === project.id);
+    const folderCampaigns = campaigns.filter((item) => item.folderId === folder.id);
+    const workLocation: TaskWorkLocation = campaign
+      ? {
+          href: campaignPath(project, folder, campaign, projects, projectFolders, folderCampaigns),
+          folderName: folder.name,
+          campaignName: campaign.name,
+        }
+      : {
+          href: folderPath(project, folder, projects, projectFolders),
+          folderName: folder.name,
+        };
+
+    return { project, campaign, workLocation };
+  };
+
   const StatusColumn = ({ column }: { column: TaskColumn }) => {
     const columnTasks = filteredTasks.filter(t => t.status === column.id);
     const { setNodeRef, isOver } = useDroppable({
@@ -761,8 +870,7 @@ export default function Tasks() {
         <SortableContext items={columnTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
           <div className="min-h-[120px] space-y-3 rounded-xl">
             {columnTasks.map(task => {
-              const project = projects.find(p => p.id === task.projectId);
-              const campaign = campaigns.find(c => c.id === task.campaignId);
+              const { project, campaign, workLocation } = getTaskPresentation(task);
 
               return (
                 <TaskCard
@@ -770,6 +878,8 @@ export default function Tasks() {
                   task={task}
                   project={project}
                   campaign={campaign}
+                  workLocation={workLocation}
+                  onOpenWorkLocation={navigate}
                   onEdit={openEditDialog}
                   onDelete={() => setTaskToDelete(task)}
                   isDragging={draggingTaskId === task.id}
@@ -793,8 +903,15 @@ export default function Tasks() {
   };
 
   const draggingTask = draggingTaskId ? tasksById.get(draggingTaskId) : undefined;
-  const draggingProject = draggingTask ? projects.find(p => p.id === draggingTask.projectId) : undefined;
-  const draggingCampaign = draggingTask ? campaigns.find(c => c.id === draggingTask.campaignId) : undefined;
+  const draggingPresentation = draggingTask ? getTaskPresentation(draggingTask) : undefined;
+  const editingWorkLocation = editingTask
+    ? getTaskPresentation({
+        ...editingTask,
+        projectId: taskForm.projectId || undefined,
+        folderId: taskForm.folderId || undefined,
+        campaignId: taskForm.campaignId || undefined,
+      }).workLocation
+    : undefined;
 
   return (
     <AppLayout breadcrumbs={[{ label: 'Tasks', path: '/tasks' }]}>
@@ -834,12 +951,48 @@ export default function Tasks() {
                 </div>
                 <div className="space-y-2">
                   <Label>Project Name</Label>
-                  <Select value={taskForm.projectId} onValueChange={val => setTaskForm(prev => ({ ...prev, projectId: val }))}>
-                    <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
+                  <Select value={taskForm.projectId || NO_CONTEXT} onValueChange={handleProjectChange}>
+                    <SelectTrigger aria-label="Project Name" className="tool-surface h-10 rounded-xl bg-white">
                       <SelectValue placeholder="Select an item..." />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value={NO_CONTEXT}>No project</SelectItem>
                       {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Folder (Optional)</Label>
+                  <Select
+                    value={taskForm.folderId || NO_CONTEXT}
+                    onValueChange={handleFolderChange}
+                    disabled={!taskForm.projectId}
+                  >
+                    <SelectTrigger aria-label="Folder" className="tool-surface h-10 rounded-xl bg-white">
+                      <SelectValue placeholder={taskForm.projectId ? "Select a folder..." : "Select a project first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CONTEXT}>No folder</SelectItem>
+                      {availableFolders.map(folder => <SelectItem key={folder.id} value={folder.id}>{folder.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Campaign (Optional)</Label>
+                  <Select
+                    value={taskForm.folderId ? taskForm.campaignId || NO_CONTEXT : ''}
+                    onValueChange={handleCampaignChange}
+                    disabled={!taskForm.folderId}
+                  >
+                    <SelectTrigger aria-label="Campaign" className="tool-surface h-10 rounded-xl bg-white">
+                      <SelectValue placeholder={taskForm.folderId ? "Select a campaign..." : "Select a folder first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={NO_CONTEXT}>No campaign</SelectItem>
+                      {availableCampaigns.map(campaign => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1068,7 +1221,7 @@ export default function Tasks() {
         <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
           <DialogHeader>
             <DialogTitle>Edit Task</DialogTitle>
-            <DialogDescription>Update task details, assignment, status, or due date.</DialogDescription>
+            <DialogDescription>Update task details, work location, assignment, status, or due date.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
             <div className="grid grid-cols-2 gap-4">
@@ -1083,16 +1236,79 @@ export default function Tasks() {
               </div>
               <div className="space-y-2">
                 <Label>Project Name</Label>
-                <Select value={taskForm.projectId} onValueChange={val => setTaskForm(prev => ({ ...prev, projectId: val }))}>
-                  <SelectTrigger className="tool-surface h-10 rounded-xl bg-white">
+                <Select value={taskForm.projectId || NO_CONTEXT} onValueChange={handleProjectChange}>
+                  <SelectTrigger aria-label="Project Name" className="tool-surface h-10 rounded-xl bg-white">
                     <SelectValue placeholder="Select an item..." />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value={NO_CONTEXT}>No project</SelectItem>
                     {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Folder (Optional)</Label>
+                <Select
+                  value={taskForm.folderId || NO_CONTEXT}
+                  onValueChange={handleFolderChange}
+                  disabled={!taskForm.projectId}
+                >
+                  <SelectTrigger aria-label="Folder" className="tool-surface h-10 rounded-xl bg-white">
+                    <SelectValue placeholder={taskForm.projectId ? "Select a folder..." : "Select a project first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_CONTEXT}>No folder</SelectItem>
+                    {availableFolders.map(folder => <SelectItem key={folder.id} value={folder.id}>{folder.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Campaign (Optional)</Label>
+                <Select
+                  value={taskForm.folderId ? taskForm.campaignId || NO_CONTEXT : ''}
+                  onValueChange={handleCampaignChange}
+                  disabled={!taskForm.folderId}
+                >
+                  <SelectTrigger aria-label="Campaign" className="tool-surface h-10 rounded-xl bg-white">
+                    <SelectValue placeholder={taskForm.folderId ? "Select a campaign..." : "Select a folder first"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NO_CONTEXT}>No campaign</SelectItem>
+                    {availableCampaigns.map(campaign => <SelectItem key={campaign.id} value={campaign.id}>{campaign.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {editingWorkLocation && (
+              <div className="flex flex-col gap-3 rounded-xl border border-blue-100 bg-blue-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium uppercase tracking-wide text-blue-600">Work destination</p>
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {editingWorkLocation.campaignName
+                      ? `${editingWorkLocation.folderName} / ${editingWorkLocation.campaignName}`
+                      : editingWorkLocation.folderName}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5 rounded-lg border-blue-200 bg-white text-primary hover:bg-blue-50"
+                  onClick={() => {
+                    const destination = editingWorkLocation.href;
+                    closeEditDialog();
+                    navigate(destination);
+                  }}
+                >
+                  Open {editingWorkLocation.campaignName ? 'Campaign' : 'Folder'}
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -1249,8 +1465,9 @@ export default function Tasks() {
           {draggingTask ? (
             <TaskDragPreview
               task={draggingTask}
-              project={draggingProject}
-              campaign={draggingCampaign}
+              project={draggingPresentation?.project}
+              campaign={draggingPresentation?.campaign}
+              workLocation={draggingPresentation?.workLocation}
               width={dragOverlayWidth}
             />
           ) : null}

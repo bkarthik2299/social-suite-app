@@ -351,6 +351,7 @@ const mapTask = (task: TaskRow): Task => ({
     status: task.status,
     dueDate: task.due_date || undefined,
     projectId: task.project_id || undefined,
+    folderId: task.folder_id || undefined,
     campaignId: task.campaign_id || undefined,
     assigneeId: task.assignee_id || undefined,
 });
@@ -790,6 +791,7 @@ export function useTasks() {
             status?: string;
             due_date?: string;
             project_id?: string;
+            folder_id?: string;
             campaign_id?: string;
             assignee_id?: string;
             sort_order?: number;

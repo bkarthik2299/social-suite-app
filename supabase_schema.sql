@@ -109,6 +109,7 @@ CREATE TABLE tasks (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id      uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id  uuid REFERENCES projects(id) ON DELETE SET NULL,
+    folder_id   uuid REFERENCES folders(id) ON DELETE SET NULL,
     campaign_id uuid REFERENCES campaigns(id) ON DELETE SET NULL,
     assignee_id uuid REFERENCES auth.users(id) ON DELETE SET NULL,
     title       text NOT NULL,
@@ -122,6 +123,7 @@ CREATE TABLE tasks (
 
 CREATE INDEX idx_tasks_org_status ON tasks(org_id, status);
 CREATE INDEX idx_tasks_project ON tasks(project_id);
+CREATE INDEX idx_tasks_folder ON tasks(folder_id);
 CREATE INDEX idx_tasks_campaign ON tasks(campaign_id);
 CREATE INDEX idx_tasks_assignee ON tasks(assignee_id);
 
