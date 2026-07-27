@@ -57,6 +57,19 @@ export interface CalendarEvent {
   campaignId: string;
 }
 
+export type CampaignMediaKind = 'image' | 'video';
+export type CampaignMediaFormat = 'single' | 'carousel';
+
+export interface CampaignMediaAsset {
+  id: string;
+  url: string;
+  kind: CampaignMediaKind;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+  storagePath?: string;
+}
+
 export interface SocialPost {
   id: string;
   campaignId: string;
@@ -67,6 +80,8 @@ export interface SocialPost {
   caption: string;
   hashtags: string[];
   image?: string;
+  mediaAssets?: CampaignMediaAsset[];
+  mediaFormat?: CampaignMediaFormat;
   generatedImages?: string[];
   imageAspectRatio?: string;
   useBrandGuide?: boolean;
@@ -104,6 +119,8 @@ export interface SocialAd {
   description?: string;     // 30 chars (FB only)
   visualGuide?: string;
   image?: string;
+  mediaAssets?: CampaignMediaAsset[];
+  mediaFormat?: CampaignMediaFormat;
   generatedImages?: string[];
   imageAspectRatio?: string;
   useBrandGuide?: boolean;

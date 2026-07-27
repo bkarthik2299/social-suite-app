@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/table';
 import {
     Dialog,
+    DialogClose,
     DialogContent,
     DialogDescription,
     DialogHeader,
@@ -55,6 +56,23 @@ import { BlogEditor } from '@/components/editor/BlogEditor';
 import { campaignPath, findBySlug, folderPath, projectPath } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
 import { useToast } from '@/components/ui/use-toast';
+import {
+    CampaignMediaContent,
+    CampaignMediaEditor,
+    CampaignMediaPreview,
+} from '@/components/campaign/CampaignMedia';
+import {
+    createPendingCampaignMediaAsset,
+    getCarouselLimit,
+    normalizeCampaignMediaAssets,
+    normalizeCampaignMediaFormat,
+    removeCampaignMediaAssets,
+    revokePendingCampaignMediaAssets,
+    uploadCampaignMediaAssets,
+    validateCampaignMediaFile,
+    type EditableCampaignMediaAsset,
+} from '@/lib/campaignMedia';
+import type { CampaignMediaAsset, CampaignMediaFormat } from '@/types';
 
 // --- Platform Constants ---
 const PLATFORM_SPECS = {
@@ -270,6 +288,11 @@ const generatedImagesFromPayload = (payload: Record<string, unknown>) => {
     const images = payload.generatedImages ?? payload.generated_images;
     return Array.isArray(images) ? images.filter((image): image is string => typeof image === 'string' && image.trim().length > 0) : [];
 };
+
+const campaignMediaFromPayload = (payload: Record<string, unknown>) => normalizeCampaignMediaAssets(
+    payload,
+    payloadString(payload, ['image', 'image_url', 'mediaUrl', 'media_url']),
+);
 
 const uniqueImages = (images: string[]) => Array.from(new Set(images.map((item) => item.trim()).filter(Boolean)));
 
@@ -779,6 +802,10 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
     const displayAccountHandle = previewAccountHandle(accountName);
     const displayAccountInitials = previewAccountInitials(accountName);
     const mediaAspectClass = platformMediaAspectClass(platform, post.imageAspectRatio);
+    const mediaAssets = post.mediaAssets?.length
+        ? post.mediaAssets
+        : post.image ? [{ id: 'legacy-preview-media', url: post.image, kind: 'image' as const }] : [];
+    const mediaFormat = normalizeCampaignMediaFormat(post.mediaFormat, mediaAssets.length);
 
     useEffect(() => {
         setCaptionExpanded(false);
@@ -858,37 +885,14 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
     );
 
     const RenderMedia = () => (
-        post.image ? (
-            <div className={cn("w-full bg-white overflow-hidden relative group border-y border-slate-100", mediaAspectClass)}>
-                <button
-                    type="button"
-                    onClick={() => post.image && onImageClick?.(post.image)}
-                    className="h-full w-full cursor-zoom-in"
-                    aria-label="Open image preview"
-                >
-                    <img src={post.image} alt="Post content" className="h-full w-full object-contain" />
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/5 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Badge variant="secondary" className="bg-white/90 backdrop-blur pointer-events-none">Image Preview</Badge>
-                    </div>
-                </button>
-                <button
-                    type="button"
-                    onClick={(event) => {
-                        event.stopPropagation();
-                        if (post.image) downloadImageAsset(post.image);
-                    }}
-                    className="absolute right-2 top-2 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-slate-800 opacity-0 shadow-sm transition-opacity hover:bg-white group-hover:opacity-100"
-                    aria-label="Download image"
-                >
-                    <Download className="h-4 w-4" />
-                </button>
-            </div>
-        ) : (
-            <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
-                <ImageIcon className="w-8 h-8 text-slate-300" />
-                <p className="text-xs text-slate-400">No media</p>
-            </div>
-        )
+        <CampaignMediaPreview
+            assets={mediaAssets}
+            format={mediaFormat}
+            platform={platform}
+            aspectClass={mediaAspectClass}
+            className="border-y border-slate-100"
+            onImageClick={onImageClick}
+        />
     );
 
     const RenderActions = () => {
@@ -1124,19 +1128,24 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
 
 const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, targetContentItemId?: string, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
-    const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => ({
-        id: i.id,
-        campaignId: i.campaignId,
-        name: i.name,
-        status: i.status,
-        ...i.payload,
-        creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
-        caption: socialCaptionFromPayload(i.payload, i.name || 'Social post draft'),
-        visualGuide: visualGuideFromPayload(i.payload),
-        generatedImages: generatedImagesFromPayload(i.payload),
-        imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
-        useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
-    }));
+    const socialPosts = (dbItems || []).filter(i => i.type === 'social-post').map(i => {
+        const mediaAssets = campaignMediaFromPayload(i.payload);
+        return {
+            id: i.id,
+            campaignId: i.campaignId,
+            name: i.name,
+            status: i.status,
+            ...i.payload,
+            creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
+            caption: socialCaptionFromPayload(i.payload, i.name || 'Social post draft'),
+            visualGuide: visualGuideFromPayload(i.payload),
+            generatedImages: generatedImagesFromPayload(i.payload),
+            imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
+            useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
+            mediaAssets,
+            mediaFormat: normalizeCampaignMediaFormat(i.payload.mediaFormat ?? i.payload.media_format, mediaAssets.length),
+        };
+    });
     const { toast } = useToast();
     const [isDialogOpen, setIsDialogOpen] = useState(autoCreate || false);
     const [editingPost, setEditingPost] = useState<SocialPost | null>(null);
@@ -1147,19 +1156,20 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
     const [visualGuide, setVisualGuide] = useState('');
     const [caption, setCaption] = useState('');
     const [image, setImage] = useState('');
+    const [mediaAssets, setMediaAssets] = useState<EditableCampaignMediaAsset[]>([]);
+    const [mediaFormat, setMediaFormat] = useState<CampaignMediaFormat>('single');
     const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
     const [useBrandGuide, setUseBrandGuide] = useState(false);
     const [lightboxImage, setLightboxImage] = useState('');
     const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+    const [isSavingMedia, setIsSavingMedia] = useState(false);
     const [date, setDate] = useState<Date | undefined>(undefined);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['linkedin']);
     const [topic, setTopic] = useState('');
 
-    // File Input Ref
-    const fileInputRef = useRef<HTMLInputElement>(null);
-
     const posts = socialPosts.filter(p => p.campaignId === campaignId);
+    const carouselLimit = getCarouselLimit(selectedPlatforms, 'post');
 
     // Header State
     const [name, setName] = useState('New Social Post');
@@ -1172,6 +1182,8 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setVisualGuide(post.visualGuide || post.creativeBrief || '');
             setCaption(post.caption);
             setImage(post.image || '');
+            setMediaAssets(post.mediaAssets || []);
+            setMediaFormat(normalizeCampaignMediaFormat(post.mediaFormat, post.mediaAssets?.length || 0));
             setGeneratedImages(uniqueImages([...(post.generatedImages || []), post.image || '']));
             setSelectedAspectRatio(post.imageAspectRatio || '1:1');
             setUseBrandGuide(post.useBrandGuide === true);
@@ -1184,6 +1196,8 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setVisualGuide('');
             setCaption('');
             setImage('');
+            setMediaAssets([]);
+            setMediaFormat('single');
             setGeneratedImages([]);
             setSelectedAspectRatio('1:1');
             setUseBrandGuide(false);
@@ -1192,6 +1206,11 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setTopic('');
         }
         setIsDialogOpen(true);
+    };
+
+    const handlePostDialogOpenChange = (open: boolean) => {
+        if (!open) revokePendingCampaignMediaAssets(mediaAssets);
+        setIsDialogOpen(open);
     };
 
     useEffect(() => {
@@ -1203,36 +1222,105 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
         handleOpen(targetPost as SocialPost);
     }, [targetContentItemId, posts]);
 
-    const handleSave = () => {
-        const postData = {
-            campaignId,
-            name,
-            creativeBrief: topic,
-            visualGuide,
-            caption,
-            hashtags: [], // Hashtags implicity in caption now
-            image,
-            generatedImages,
-            imageAspectRatio: selectedAspectRatio,
-            useBrandGuide,
-            platforms: selectedPlatforms,
-            scheduledDate: date ? date.toISOString() : '',
-            topic,
-            status: 'draft' as const,
-        };
-
-        if (editingPost) {
-            updateContentItem.mutate({ id: editingPost.id, updates: { name, payload: postData } });
-        } else {
-            addContentItem.mutate({ type: 'social-post', name, payload: postData });
+    const handleSave = async () => {
+        const hasGif = mediaAssets.some((asset) => asset.mimeType === 'image/gif' || /\.gif(?:[?#]|$)/i.test(asset.url));
+        if (selectedPlatforms.includes('twitter') && mediaAssets.length > 1 && hasGif) {
+            toast({
+                title: 'X supports one GIF per post',
+                description: 'Remove the GIF from this carousel or publish it as single media.',
+                variant: 'destructive',
+            });
+            return;
         }
-        setIsDialogOpen(false);
+        if (mediaFormat === 'carousel' && mediaAssets.length < 2) {
+            toast({
+                title: 'Add another carousel slide',
+                description: 'A carousel needs at least two media assets.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        if (mediaAssets.length > carouselLimit) {
+            toast({
+                title: 'Too many carousel slides',
+                description: `The selected platforms support up to ${carouselLimit} slides in this preview.`,
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        setIsSavingMedia(true);
+        try {
+            const persistedAssets = await uploadCampaignMediaAssets(campaignId, mediaAssets);
+            const primaryMediaUrl = persistedAssets[0]?.url || '';
+            const postData = {
+                campaignId,
+                name,
+                creativeBrief: topic,
+                visualGuide,
+                caption,
+                hashtags: [], // Hashtags implicitly live in the caption now.
+                image: primaryMediaUrl,
+                mediaAssets: persistedAssets,
+                mediaFormat,
+                generatedImages,
+                imageAspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                platforms: selectedPlatforms,
+                scheduledDate: date ? date.toISOString() : '',
+                topic,
+                status: 'draft' as const,
+            };
+
+            if (editingPost) {
+                await updateContentItem.mutateAsync({ id: editingPost.id, updates: { name, payload: postData } });
+            } else {
+                await addContentItem.mutateAsync({ type: 'social-post', name, payload: postData });
+            }
+
+            const nextPaths = new Set(persistedAssets.map((asset) => asset.storagePath).filter(Boolean));
+            const removedPaths = (editingPost?.mediaAssets || [])
+                .map((asset) => asset.storagePath || '')
+                .filter((path) => path && !nextPaths.has(path));
+            if (removedPaths.length) {
+                removeCampaignMediaAssets(removedPaths).catch(() => undefined);
+            }
+
+            revokePendingCampaignMediaAssets(mediaAssets);
+            setMediaAssets(persistedAssets);
+            setImage(primaryMediaUrl);
+            setIsDialogOpen(false);
+        } catch (error) {
+            toast({
+                title: 'Media could not be saved',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsSavingMedia(false);
+        }
     };
 
-    const handleConfirmDelete = () => {
+    const handleConfirmDelete = async () => {
         if (!postToDelete) return;
-        deleteContentItem.mutate(postToDelete.id);
-        setPostToDelete(null);
+        const post = posts.find((item) => item.id === postToDelete.id);
+        try {
+            await deleteContentItem.mutateAsync(postToDelete.id);
+            setPostToDelete(null);
+        } catch (error) {
+            toast({
+                title: 'Post could not be deleted',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const mediaPaths = (post?.mediaAssets || []).map((asset) => asset.storagePath || '').filter(Boolean);
+        try {
+            if (mediaPaths.length) await removeCampaignMediaAssets(mediaPaths);
+        } catch {
+            toast({ title: 'Post deleted', description: 'Its media cleanup will need to be retried.' });
+        }
     };
 
     const togglePlatform = (p: string) => {
@@ -1256,16 +1344,71 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
         });
     };
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            const objectUrl = URL.createObjectURL(file);
-            setImage(objectUrl);
+    const handleMediaFilesSelected = (files: File[]) => {
+        const availableSlots = mediaFormat === 'carousel' ? Math.max(carouselLimit - mediaAssets.length, 0) : 1;
+        const accepted: EditableCampaignMediaAsset[] = [];
+
+        files.forEach((file) => {
+            const validation = validateCampaignMediaFile(file);
+            if (!validation.valid) {
+                toast({ title: 'Unsupported media', description: validation.message, variant: 'destructive' });
+                return;
+            }
+            if (accepted.length >= availableSlots) return;
+            accepted.push(createPendingCampaignMediaAsset(file));
+        });
+
+        if (files.length > accepted.length && accepted.length >= availableSlots) {
+            toast({
+                title: 'Carousel limit reached',
+                description: `${selectedPlatforms.includes('twitter') ? 'X' : 'The selected platforms'} supports up to ${carouselLimit} slides.`,
+            });
         }
+
+        setMediaAssets((current) => {
+            const next = mediaFormat === 'carousel' ? [...current, ...accepted] : accepted.slice(0, 1);
+            if (mediaFormat === 'single') revokePendingCampaignMediaAssets(current);
+            setImage(next[0]?.url || '');
+            return next;
+        });
     };
 
-    const triggerFileUpload = () => {
-        fileInputRef.current?.click();
+    const handleMediaFormatChange = (nextFormat: CampaignMediaFormat) => {
+        if (nextFormat === 'single' && mediaAssets.length > 1) {
+            revokePendingCampaignMediaAssets(mediaAssets.slice(1));
+            const firstAsset = mediaAssets.slice(0, 1);
+            setMediaAssets(firstAsset);
+            setImage(firstAsset[0]?.url || '');
+            toast({ title: 'Switched to single media', description: 'The first carousel slide was kept.' });
+        }
+        setMediaFormat(nextFormat);
+    };
+
+    const handleRemoveMedia = (id: string) => {
+        setMediaAssets((current) => {
+            const removed = current.find((asset) => asset.id === id);
+            if (removed) revokePendingCampaignMediaAssets([removed]);
+            const next = current.filter((asset) => asset.id !== id);
+            setImage(next[0]?.url || '');
+            return next;
+        });
+    };
+
+    const handleGeneratedImageSelect = (imageUrl: string) => {
+        const generatedAsset: CampaignMediaAsset = {
+            id: `generated-${crypto.randomUUID()}`,
+            url: imageUrl,
+            kind: 'image',
+            name: 'Generated image',
+        };
+        setMediaAssets((current) => {
+            const withoutDuplicate = current.filter((asset) => asset.url !== imageUrl);
+            const next = mediaFormat === 'carousel'
+                ? [...withoutDuplicate, generatedAsset].slice(0, carouselLimit)
+                : [generatedAsset];
+            setImage(next[0]?.url || imageUrl);
+            return next;
+        });
     };
 
     const handleGenerateImage = async () => {
@@ -1281,7 +1424,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                 useBrandGuide,
                 brandGuide: useBrandGuide ? brandVisualContext : null,
             });
-            setImage(imageUrl);
+            handleGeneratedImageSelect(imageUrl);
             setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
             toast({
                 title: 'Image generated',
@@ -1322,8 +1465,15 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                     {posts.map(post => (
                         <Card key={post.id} className="soft-card soft-card-interactive overflow-hidden cursor-pointer group relative" onClick={() => handleOpen(post)}>
                             <div className="h-48 flex items-center justify-center text-muted-foreground relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
-                                {post.image ? (
-                                    <img src={post.image} alt="Post asset" className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                                {post.mediaAssets?.[0] ? (
+                                    <>
+                                        <CampaignMediaContent asset={post.mediaAssets[0]} className="object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                                        {post.mediaFormat === 'carousel' && post.mediaAssets.length > 1 && (
+                                            <Badge className="absolute bottom-2 right-2 border-0 bg-slate-950/70 text-white hover:bg-slate-950/70">
+                                                {post.mediaAssets.length} slides
+                                            </Badge>
+                                        )}
+                                    </>
                                 ) : (
                                     <div className="flex h-full w-full flex-col justify-between p-5">
                                         <div className="flex items-center justify-between">
@@ -1349,7 +1499,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                     <Badge variant="outline" className="border-blue-100 bg-blue-50 text-[10px] font-normal text-blue-600">
                                         {formatDateLabel(post.scheduledDate, 'MMM d', 'Unscheduled')}
                                     </Badge>
-                                    {post.image && <PlatformMarkStack platforms={post.platforms} />}
+                                    {post.mediaAssets?.length ? <PlatformMarkStack platforms={post.platforms} /> : null}
                                 </div>
                                 <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
                                     {post.name || "Untitled Post"}
@@ -1358,6 +1508,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                             <Button
                                 variant="ghost"
                                 size="icon"
+                                aria-label={`Delete ${post.name || 'Untitled Post'}`}
                                 className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
                                 onClick={(e) => {
                                     e.stopPropagation();
@@ -1377,18 +1528,18 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             )}
 
             {/* Editor Modal - Refined UI */}
-            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogContent className="sm:max-w-[1200px] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
-                    <div className="flex items-center justify-between px-6 py-4 bg-white border-b sticky top-0 z-20 shadow-sm">
-                        <div className="flex items-center gap-4">
-                            <div className="bg-blue-100 p-2 rounded-lg"><Share2 className="w-5 h-5 text-blue-600" /></div>
-                            <div>
+            <Dialog open={isDialogOpen} onOpenChange={handlePostDialogOpenChange}>
+                <DialogContent closeClassName="hidden" className="sm:max-w-[1200px] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
+                    <div className="flex items-center justify-between gap-3 px-4 py-4 bg-white border-b sticky top-0 z-20 shadow-sm sm:px-6">
+                        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                            <div className="hidden bg-blue-100 p-2 rounded-lg sm:block"><Share2 className="w-5 h-5 text-blue-600" /></div>
+                            <div className="min-w-0">
                                 {isEditingName ? (
                                     <div className="flex items-center gap-2">
                                         <Input
                                             value={name}
                                             onChange={(e) => setName(e.target.value)}
-                                            className="h-8 text-lg font-bold w-64"
+                                            className="h-8 w-40 text-lg font-bold sm:w-64"
                                             autoFocus
                                             onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
                                         />
@@ -1397,8 +1548,8 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                         </Button>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingName(true)}>
-                                        <DialogTitle className="text-lg font-bold text-gray-900">{name}</DialogTitle>
+                                    <div className="group flex min-w-0 cursor-pointer items-center gap-2" onClick={() => setIsEditingName(true)}>
+                                        <DialogTitle className="truncate text-lg font-bold text-gray-900">{name}</DialogTitle>
                                         <Pencil className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                     </div>
                                 )}
@@ -1408,9 +1559,16 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                 </div>
                             </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                            <Button variant="ghost" onClick={() => setIsDialogOpen(false)} className="hover:bg-slate-100">Cancel</Button>
-                            <Button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200">Save Draft</Button>
+                        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                            <Button variant="ghost" onClick={() => handlePostDialogOpenChange(false)} className="hidden hover:bg-slate-100 sm:inline-flex" disabled={isSavingMedia}>Cancel</Button>
+                            <Button onClick={handleSave} disabled={isSavingMedia} className="bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-200">
+                                {isSavingMedia ? 'Uploading media…' : 'Save Draft'}
+                            </Button>
+                            <DialogClose asChild>
+                                <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-slate-500 hover:bg-blue-50 hover:text-blue-600" disabled={isSavingMedia} aria-label="Close social media post editor">
+                                    <X className="h-4 w-4" />
+                                </Button>
+                            </DialogClose>
                         </div>
                     </div>
 
@@ -1510,7 +1668,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                         <GeneratedImageStrip
                                             images={generatedImages}
                                             selectedImage={image}
-                                            onSelect={setImage}
+                                            onSelect={handleGeneratedImageSelect}
                                             onPreview={setLightboxImage}
                                         />
                                     </CardContent>
@@ -1545,45 +1703,20 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                     </CardContent>
                                 </Card>
 
-                                {/* Media Assets (Improved) */}
+                                {/* Media Assets */}
                                 <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
                                     <CardContent className="p-6">
                                         <Label className="text-sm font-semibold text-slate-700 mb-3 block">Media Assets</Label>
-                                        <input
-                                            type="file"
-                                            ref={fileInputRef}
-                                            className="hidden"
-                                            accept="image/*"
-                                            onChange={handleImageUpload}
+                                        <CampaignMediaEditor
+                                            assets={mediaAssets}
+                                            format={mediaFormat}
+                                            maxItems={carouselLimit}
+                                            disabled={isSavingMedia}
+                                            onFormatChange={handleMediaFormatChange}
+                                            onFilesSelected={handleMediaFilesSelected}
+                                            onRemove={handleRemoveMedia}
+                                            onPreview={setLightboxImage}
                                         />
-
-                                        {image ? (
-                                            <div
-                                                className="relative rounded-xl overflow-hidden border border-slate-200 group aspect-video bg-slate-100 flex items-center justify-center cursor-zoom-in"
-                                                onClick={() => setLightboxImage(image)}
-                                            >
-                                                <img src={image} className="w-full h-full object-contain" alt="Uploaded asset" />
-                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                                                    <Button variant="secondary" size="sm" onClick={(event) => { event.stopPropagation(); downloadImageAsset(image); }}>
-                                                        <Download className="mr-1.5 h-3.5 w-3.5" />
-                                                        Download
-                                                    </Button>
-                                                    <Button variant="secondary" size="sm" onClick={(event) => { event.stopPropagation(); triggerFileUpload(); }}>Replace</Button>
-                                                    <Button variant="destructive" size="sm" onClick={(event) => { event.stopPropagation(); setImage(''); }}>Remove</Button>
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <div
-                                                onClick={triggerFileUpload}
-                                                className="border-2 border-dashed border-blue-100 bg-blue-50/50 rounded-xl flex flex-col items-center justify-center p-8 text-center cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-all group min-h-[160px]"
-                                            >
-                                                <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                                    <UploadCloud className="w-6 h-6 text-blue-600" />
-                                                </div>
-                                                <h4 className="text-sm font-semibold text-blue-900 mb-1">Click to upload image</h4>
-                                                <p className="text-xs text-blue-600/80">SVG, PNG, JPG or GIF (max. 800x400px)</p>
-                                            </div>
-                                        )}
                                     </CardContent>
                                 </Card>
 
@@ -1594,7 +1727,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                         {/* Right Column: Preview */}
                         <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
                             <div className="p-8 h-full flex items-center justify-center">
-                                <SocialPreview post={{ caption, hashtags: [], image, imageAspectRatio: selectedAspectRatio, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
+                                <SocialPreview post={{ caption, hashtags: [], image, mediaAssets, mediaFormat, imageAspectRatio: selectedAspectRatio, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
                             </div>
                         </div>
                     </div>
@@ -2119,6 +2252,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
                                 <Button
                                     variant="ghost"
                                     size="icon"
+                                    aria-label={`Delete ${ad.name || 'Untitled Ad'}`}
                                     className="h-8 w-8 text-slate-400 hover:bg-red-50 hover:text-red-600"
                                     onClick={(e) => {
                                         e.stopPropagation();
@@ -2412,22 +2546,27 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
 
 const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisualContext, projectName }: { campaignId: string, autoCreate?: boolean, targetContentItemId?: string, brandVisualContext: BrandVisualContext, projectName?: string }) => {
     const { data: dbItems = [], addContentItem, updateContentItem, deleteContentItem } = useContentItems(campaignId);
-    const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => ({
-        id: i.id,
-        campaignId: i.campaignId,
-        name: i.name,
-        status: i.status,
-        ...i.payload,
-        platform: normalizeSocialPlatform(i.payload.platform),
-        cta: normalizeSocialAdCta(i.payload.cta),
-        primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
-        headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
-        description: payloadString(i.payload, ['description', 'supporting_text'], ''),
-        visualGuide: visualGuideFromPayload(i.payload),
-        generatedImages: generatedImagesFromPayload(i.payload),
-        imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
-        useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
-    }));
+    const socialAds = (dbItems || []).filter(i => i.type === 'social-ad').map(i => {
+        const mediaAssets = campaignMediaFromPayload(i.payload);
+        return {
+            id: i.id,
+            campaignId: i.campaignId,
+            name: i.name,
+            status: i.status,
+            ...i.payload,
+            platform: normalizeSocialPlatform(i.payload.platform),
+            cta: normalizeSocialAdCta(i.payload.cta),
+            primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
+            headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
+            description: payloadString(i.payload, ['description', 'supporting_text'], ''),
+            visualGuide: visualGuideFromPayload(i.payload),
+            generatedImages: generatedImagesFromPayload(i.payload),
+            imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
+            useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
+            mediaAssets,
+            mediaFormat: normalizeCampaignMediaFormat(i.payload.mediaFormat ?? i.payload.media_format, mediaAssets.length),
+        };
+    });
     const { toast } = useToast();
     const campaignAds = socialAds.filter(ad => ad.campaignId === campaignId);
 
@@ -2445,17 +2584,20 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
     const [description, setDescription] = useState('');
     const [visualGuide, setVisualGuide] = useState('');
     const [image, setImage] = useState('');
+    const [mediaAssets, setMediaAssets] = useState<EditableCampaignMediaAsset[]>([]);
+    const [mediaFormat, setMediaFormat] = useState<CampaignMediaFormat>('single');
     const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
     const [useBrandGuide, setUseBrandGuide] = useState(false);
     const [lightboxImage, setLightboxImage] = useState('');
     const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+    const [isSavingMedia, setIsSavingMedia] = useState(false);
     const [cta, setCta] = useState<'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download'>('learn_more');
     const [destinationUrl, setDestinationUrl] = useState('');
     const [scheduledDate, setScheduledDate] = useState<Date | undefined>(undefined);
     const [topic, setTopic] = useState('');
 
-    const fileInputRef = useRef<HTMLInputElement>(null);
+    const carouselLimit = getCarouselLimit(platform, 'ad');
 
     const handleOpen = (ad?: SocialAd) => {
         if (ad) {
@@ -2467,6 +2609,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             setDescription(ad.description || '');
             setVisualGuide(ad.visualGuide || '');
             setImage(ad.image || '');
+            setMediaAssets(ad.mediaAssets || []);
+            setMediaFormat(normalizeCampaignMediaFormat(ad.mediaFormat, ad.mediaAssets?.length || 0));
             setGeneratedImages(uniqueImages([...(ad.generatedImages || []), ad.image || '']));
             setSelectedAspectRatio(ad.imageAspectRatio || '1:1');
             setUseBrandGuide(ad.useBrandGuide === true);
@@ -2483,6 +2627,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             setDescription('');
             setVisualGuide('');
             setImage('');
+            setMediaAssets([]);
+            setMediaFormat('single');
             setGeneratedImages([]);
             setSelectedAspectRatio('1:1');
             setUseBrandGuide(false);
@@ -2494,6 +2640,11 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
         setIsDialogOpen(true);
     };
 
+    const handleAdDialogOpenChange = (open: boolean) => {
+        if (!open) revokePendingCampaignMediaAssets(mediaAssets);
+        setIsDialogOpen(open);
+    };
+
     useEffect(() => {
         if (!targetContentItemId || openedTargetRef.current === targetContentItemId) return;
         const targetAd = campaignAds.find(ad => ad.id === targetContentItemId);
@@ -2503,47 +2654,165 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
         handleOpen(targetAd as SocialAd);
     }, [targetContentItemId, campaignAds]);
 
-    const handleSave = () => {
-        const adData = {
-            campaignId,
-            name,
-            platform,
-            primaryText,
-            headline,
-            description,
-            visualGuide,
-            image,
-            generatedImages,
-            imageAspectRatio: selectedAspectRatio,
-            useBrandGuide,
-            cta,
-            destinationUrl,
-            scheduledDate: scheduledDate ? scheduledDate.toISOString() : undefined,
-            topic,
-            status: 'draft' as const,
-        };
-
-        if (editingAd) {
-            updateContentItem.mutate({ id: editingAd.id, updates: { name, payload: adData } });
-        } else {
-            addContentItem.mutate({ type: 'social-ad', name, payload: adData });
+    const handleSave = async () => {
+        if (mediaFormat === 'carousel' && mediaAssets.length < 2) {
+            toast({
+                title: 'Add another carousel slide',
+                description: 'A carousel ad needs at least two media assets.',
+                variant: 'destructive',
+            });
+            return;
         }
-        setIsDialogOpen(false);
+        if (mediaAssets.length > carouselLimit) {
+            toast({
+                title: 'Too many carousel slides',
+                description: `${platform === 'twitter' ? 'X' : platformSpecs[platform].name} supports up to ${carouselLimit} slides in this preview.`,
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        setIsSavingMedia(true);
+        try {
+            const persistedAssets = await uploadCampaignMediaAssets(campaignId, mediaAssets);
+            const primaryMediaUrl = persistedAssets[0]?.url || '';
+            const adData = {
+                campaignId,
+                name,
+                platform,
+                primaryText,
+                headline,
+                description,
+                visualGuide,
+                image: primaryMediaUrl,
+                mediaAssets: persistedAssets,
+                mediaFormat,
+                generatedImages,
+                imageAspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                cta,
+                destinationUrl,
+                scheduledDate: scheduledDate ? scheduledDate.toISOString() : undefined,
+                topic,
+                status: 'draft' as const,
+            };
+
+            if (editingAd) {
+                await updateContentItem.mutateAsync({ id: editingAd.id, updates: { name, payload: adData } });
+            } else {
+                await addContentItem.mutateAsync({ type: 'social-ad', name, payload: adData });
+            }
+
+            const nextPaths = new Set(persistedAssets.map((asset) => asset.storagePath).filter(Boolean));
+            const removedPaths = (editingAd?.mediaAssets || [])
+                .map((asset) => asset.storagePath || '')
+                .filter((path) => path && !nextPaths.has(path));
+            if (removedPaths.length) {
+                removeCampaignMediaAssets(removedPaths).catch(() => undefined);
+            }
+
+            revokePendingCampaignMediaAssets(mediaAssets);
+            setMediaAssets(persistedAssets);
+            setImage(primaryMediaUrl);
+            setIsDialogOpen(false);
+        } catch (error) {
+            toast({
+                title: 'Media could not be saved',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+        } finally {
+            setIsSavingMedia(false);
+        }
     };
 
-    const handleConfirmDelete = () => {
+    const handleConfirmDelete = async () => {
         if (!adToDelete) return;
-        deleteContentItem.mutate(adToDelete.id);
-        setAdToDelete(null);
+        const ad = campaignAds.find((item) => item.id === adToDelete.id);
+        try {
+            await deleteContentItem.mutateAsync(adToDelete.id);
+            setAdToDelete(null);
+        } catch (error) {
+            toast({
+                title: 'Ad could not be deleted',
+                description: error instanceof Error ? error.message : 'Please try again.',
+                variant: 'destructive',
+            });
+            return;
+        }
+        const mediaPaths = (ad?.mediaAssets || []).map((asset) => asset.storagePath || '').filter(Boolean);
+        try {
+            if (mediaPaths.length) await removeCampaignMediaAssets(mediaPaths);
+        } catch {
+            toast({ title: 'Ad deleted', description: 'Its media cleanup will need to be retried.' });
+        }
     };
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => setImage(reader.result as string);
-            reader.readAsDataURL(file);
+    const handleMediaFilesSelected = (files: File[]) => {
+        const availableSlots = mediaFormat === 'carousel' ? Math.max(carouselLimit - mediaAssets.length, 0) : 1;
+        const accepted: EditableCampaignMediaAsset[] = [];
+
+        files.forEach((file) => {
+            const validation = validateCampaignMediaFile(file);
+            if (!validation.valid) {
+                toast({ title: 'Unsupported media', description: validation.message, variant: 'destructive' });
+                return;
+            }
+            if (accepted.length >= availableSlots) return;
+            accepted.push(createPendingCampaignMediaAsset(file));
+        });
+
+        if (files.length > accepted.length && accepted.length >= availableSlots) {
+            toast({
+                title: 'Carousel limit reached',
+                description: `${platform === 'twitter' ? 'X' : platformSpecs[platform].name} supports up to ${carouselLimit} slides.`,
+            });
         }
+
+        setMediaAssets((current) => {
+            const next = mediaFormat === 'carousel' ? [...current, ...accepted] : accepted.slice(0, 1);
+            if (mediaFormat === 'single') revokePendingCampaignMediaAssets(current);
+            setImage(next[0]?.url || '');
+            return next;
+        });
+    };
+
+    const handleMediaFormatChange = (nextFormat: CampaignMediaFormat) => {
+        if (nextFormat === 'single' && mediaAssets.length > 1) {
+            revokePendingCampaignMediaAssets(mediaAssets.slice(1));
+            const firstAsset = mediaAssets.slice(0, 1);
+            setMediaAssets(firstAsset);
+            setImage(firstAsset[0]?.url || '');
+            toast({ title: 'Switched to single media', description: 'The first carousel slide was kept.' });
+        }
+        setMediaFormat(nextFormat);
+    };
+
+    const handleRemoveMedia = (id: string) => {
+        setMediaAssets((current) => {
+            const removed = current.find((asset) => asset.id === id);
+            if (removed) revokePendingCampaignMediaAssets([removed]);
+            const next = current.filter((asset) => asset.id !== id);
+            setImage(next[0]?.url || '');
+            return next;
+        });
+    };
+
+    const handleGeneratedImageSelect = (imageUrl: string) => {
+        const generatedAsset: CampaignMediaAsset = {
+            id: `generated-${crypto.randomUUID()}`,
+            url: imageUrl,
+            kind: 'image',
+            name: 'Generated image',
+        };
+        setMediaAssets((current) => {
+            const withoutDuplicate = current.filter((asset) => asset.url !== imageUrl);
+            const next = mediaFormat === 'carousel'
+                ? [...withoutDuplicate, generatedAsset].slice(0, carouselLimit)
+                : [generatedAsset];
+            setImage(next[0]?.url || imageUrl);
+            return next;
+        });
     };
 
     const handleGenerateImage = async () => {
@@ -2563,7 +2832,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                 useBrandGuide,
                 brandGuide: useBrandGuide ? brandVisualContext : null,
             });
-            setImage(imageUrl);
+            handleGeneratedImageSelect(imageUrl);
             setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
             toast({
                 title: 'Image generated',
@@ -2612,6 +2881,16 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
 
     const AdPreview = () => {
         const mediaAspectClass = platformMediaAspectClass(platform, selectedAspectRatio, SOCIAL_AD_MEDIA_ASPECTS);
+        const RenderAdMedia = ({ className }: { className?: string }) => (
+            <CampaignMediaPreview
+                assets={mediaAssets}
+                format={mediaFormat}
+                platform={platform}
+                aspectClass={mediaAspectClass}
+                className={className}
+                onImageClick={setLightboxImage}
+            />
+        );
 
         return (
         <div className="flex flex-col h-full bg-slate-50/50 rounded-xl overflow-hidden border border-slate-100">
@@ -2733,16 +3012,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             </div>
 
                                             {/* Media FIRST for Instagram */}
-                                            {image ? (
-                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
-                                                </button>
-                                            ) : (
-                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3", mediaAspectClass)}>
-                                                    <ImageIcon className="w-8 h-8 text-slate-300" />
-                                                    <p className="text-xs text-slate-400">No media</p>
-                                                </div>
-                                            )}
+                                            <RenderAdMedia />
 
                                             {/* CTA Banner - Full width below image */}
                                             <div className="flex items-center justify-between px-4 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white">
@@ -2798,16 +3068,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             </div>
 
                                             {/* Media */}
-                                            {image ? (
-                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
-                                                </button>
-                                            ) : (
-                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
-                                                    <ImageIcon className="w-8 h-8 text-slate-300" />
-                                                    <p className="text-xs text-slate-400">No media</p>
-                                                </div>
-                                            )}
+                                            <RenderAdMedia className="border-y border-slate-100" />
 
                                             {/* CTA Bar - Facebook style with headline/description/button */}
                                             <div className="p-4 bg-slate-50 border-t">
@@ -2871,16 +3132,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             </div>
 
                                             {/* Media */}
-                                            {image ? (
-                                                <button type="button" className={cn("w-full bg-slate-100 overflow-hidden border-y border-slate-100 cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
-                                                </button>
-                                            ) : (
-                                                <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3 border-y border-slate-100", mediaAspectClass)}>
-                                                    <ImageIcon className="w-8 h-8 text-slate-300" />
-                                                    <p className="text-xs text-slate-400">No media</p>
-                                                </div>
-                                            )}
+                                            <RenderAdMedia className="border-y border-slate-100" />
 
                                             {/* CTA Bar - LinkedIn style */}
                                             <div className="p-4 bg-slate-50 border-t">
@@ -2937,16 +3189,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
 
                                                     {/* Website Card - Twitter style (media + headline as card) */}
                                                     <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
-                                                        {image ? (
-                                                            <button type="button" className={cn("w-full bg-slate-100 overflow-hidden cursor-zoom-in", mediaAspectClass)} onClick={() => setLightboxImage(image)}>
-                                                                <img src={image} alt="Ad content" className="w-full h-full bg-white object-contain" />
-                                                            </button>
-                                                        ) : (
-                                                            <div className={cn("w-full bg-slate-50 flex flex-col items-center justify-center gap-3", mediaAspectClass)}>
-                                                                <ImageIcon className="w-8 h-8 text-slate-300" />
-                                                                <p className="text-xs text-slate-400">No media</p>
-                                                            </div>
-                                                        )}
+                                                        <RenderAdMedia />
                                                         <div className="p-3 bg-white border-t">
                                                             {destinationUrl && <p className="text-xs text-slate-400 truncate">{destinationUrl.replace(/^https?:\/\//, '').split('/')[0]}</p>}
                                                             <p className="text-sm font-medium text-slate-900 truncate">{headline || 'Your Headline'}</p>
@@ -3005,22 +3248,22 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             {/* Header */}
             <div className="flex justify-between items-center">
                 <h3 className="text-lg font-semibold text-foreground">Social Media Ads</h3>
-                <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <Dialog open={isDialogOpen} onOpenChange={handleAdDialogOpenChange}>
                     <DialogTrigger asChild>
                         <Button className="gap-2" onClick={() => handleOpen()}>
                             <Plus className="w-4 h-4" /> New Ad
                         </Button>
                     </DialogTrigger>
-                    <DialogContent className="max-w-6xl h-[90vh] p-0 flex flex-col overflow-hidden">
+                    <DialogContent closeClassName="hidden" className="max-w-6xl h-[90vh] p-0 flex flex-col overflow-hidden">
                         {/* Dialog Header */}
-                        <div className="p-4 border-b flex items-center justify-between bg-white shrink-0">
-                            <div>
+                        <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-white p-4">
+                            <div className="min-w-0">
                                 {isEditingName ? (
                                     <div className="flex items-center gap-2">
                                         <Input
                                             value={name}
                                             onChange={(e) => setName(e.target.value)}
-                                            className="h-8 text-lg font-bold w-64"
+                                            className="h-8 w-40 text-lg font-bold sm:w-64"
                                             autoFocus
                                             onKeyDown={(e) => e.key === 'Enter' && setIsEditingName(false)}
                                         />
@@ -3029,16 +3272,23 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                         </Button>
                                     </div>
                                 ) : (
-                                    <div className="flex items-center gap-2 group cursor-pointer" onClick={() => setIsEditingName(true)}>
-                                        <DialogTitle className="text-lg font-bold text-gray-900">{name}</DialogTitle>
+                                    <div className="group flex min-w-0 cursor-pointer items-center gap-2" onClick={() => setIsEditingName(true)}>
+                                        <DialogTitle className="truncate text-lg font-bold text-gray-900">{name}</DialogTitle>
                                         <Pencil className="w-3.5 h-3.5 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                     </div>
                                 )}
                                 <DialogDescription className="text-xs text-muted-foreground">Social Media Advertisement</DialogDescription>
                             </div>
-                            <div className="flex items-center gap-3">
-                                <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                                <Button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 text-white">Save Ad</Button>
+                            <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+                                <Button variant="ghost" className="hidden sm:inline-flex" onClick={() => handleAdDialogOpenChange(false)} disabled={isSavingMedia}>Cancel</Button>
+                                <Button onClick={handleSave} disabled={isSavingMedia} className="bg-blue-600 hover:bg-blue-700 text-white">
+                                    {isSavingMedia ? 'Uploading media…' : 'Save Ad'}
+                                </Button>
+                                <DialogClose asChild>
+                                    <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-slate-500 hover:bg-blue-50 hover:text-blue-600" disabled={isSavingMedia} aria-label="Close social media ad editor">
+                                        <X className="h-4 w-4" />
+                                    </Button>
+                                </DialogClose>
                             </div>
                         </div>
 
@@ -3177,43 +3427,26 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             <GeneratedImageStrip
                                                 images={generatedImages}
                                                 selectedImage={image}
-                                                onSelect={setImage}
+                                                onSelect={handleGeneratedImageSelect}
                                                 onPreview={setLightboxImage}
                                             />
                                         </CardContent>
                                     </Card>
 
-                                    {/* Image Upload */}
+                                    {/* Media Upload */}
                                     <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
                                         <CardContent className="p-6">
-                                            <Label className="text-sm font-semibold text-slate-700 mb-3 block">Ad Image</Label>
-                                            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
-                                            {image ? (
-                                                <div className="relative group cursor-zoom-in" onClick={() => setLightboxImage(image)}>
-                                                    <img src={image} alt="Ad" className="w-full h-48 bg-white object-contain rounded-lg" />
-                                                    <Button
-                                                        variant="secondary"
-                                                        size="icon"
-                                                        className="absolute top-2 right-12 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                        onClick={(event) => { event.stopPropagation(); downloadImageAsset(image); }}
-                                                        aria-label="Download image"
-                                                    >
-                                                        <Download className="w-4 h-4" />
-                                                    </Button>
-                                                    <Button
-                                                        variant="destructive"
-                                                        size="sm"
-                                                        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                        onClick={(event) => { event.stopPropagation(); setImage(''); }}
-                                                    >
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </Button>
-                                                </div>
-                                            ) : (
-                                                <Button variant="outline" className="w-full h-32 border-dashed" onClick={() => fileInputRef.current?.click()}>
-                                                    <UploadCloud className="w-6 h-6 mr-2" /> Upload Image
-                                                </Button>
-                                            )}
+                                            <Label className="text-sm font-semibold text-slate-700 mb-3 block">Ad Media</Label>
+                                            <CampaignMediaEditor
+                                                assets={mediaAssets}
+                                                format={mediaFormat}
+                                                maxItems={carouselLimit}
+                                                disabled={isSavingMedia}
+                                                onFormatChange={handleMediaFormatChange}
+                                                onFilesSelected={handleMediaFilesSelected}
+                                                onRemove={handleRemoveMedia}
+                                                onPreview={setLightboxImage}
+                                            />
                                         </CardContent>
                                     </Card>
 
@@ -3309,10 +3542,17 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                             className="soft-card soft-card-interactive overflow-hidden cursor-pointer group relative"
                             onClick={() => handleOpen(ad)}
                         >
-                            {/* Image */}
+                            {/* Media */}
                             <div className="aspect-square flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
-                                {ad.image ? (
-                                    <img src={ad.image} alt={ad.name} className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                                {ad.mediaAssets?.[0] ? (
+                                    <>
+                                        <CampaignMediaContent asset={ad.mediaAssets[0]} className="object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
+                                        {ad.mediaFormat === 'carousel' && ad.mediaAssets.length > 1 && (
+                                            <Badge className="absolute bottom-2 right-2 border-0 bg-slate-950/70 text-white hover:bg-slate-950/70">
+                                                {ad.mediaAssets.length} slides
+                                            </Badge>
+                                        )}
+                                    </>
                                 ) : (
                                     <div className="flex h-full w-full flex-col justify-between p-5">
                                         <div className="flex items-center justify-between">
@@ -3338,6 +3578,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                     variant="ghost"
                                     size="icon"
                                     className="absolute top-2 right-2 h-7 w-7 bg-white/80 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50"
+                                    aria-label={`Delete ${ad.name || 'Untitled Ad'}`}
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setAdToDelete({
@@ -3354,7 +3595,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                     <Badge variant="outline" className="text-[10px] font-normal">
                                         {formatDateLabel(ad.scheduledDate, 'MMM d', 'Unscheduled')}
                                     </Badge>
-                                    {ad.image && <PlatformMark platform={adPlatform} />}
+                                    {ad.mediaAssets?.length ? <PlatformMark platform={adPlatform} /> : null}
                                 </div>
                                 <h4 className="text-sm font-semibold text-gray-900 line-clamp-1 mb-1">
                                     {ad.name || "Untitled Ad"}
