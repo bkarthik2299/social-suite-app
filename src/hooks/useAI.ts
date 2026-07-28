@@ -1,9 +1,10 @@
+import { useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
 import type { BrandGuide } from '@/hooks/useDatabase';
-import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
+import type { AiAgent, AiArtifact, AiCreditAccount, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
 
 const db = supabase as unknown as SupabaseClient;
 export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
@@ -200,6 +201,58 @@ export function useAiRuns(limit = 5) {
     },
     enabled: !!orgId,
   });
+}
+
+export function useAiCredits({ live = false }: { live?: boolean } = {}) {
+  const qc = useQueryClient();
+  const { organization } = useAuth();
+  const orgId = organization?.id || '';
+  const queryKey = ['ai_credit_account', orgId] as const;
+
+  const query = useQuery({
+    queryKey,
+    queryFn: async () => {
+      const { data, error } = await db
+        .from('ai_credit_accounts')
+        .select('*')
+        .eq('org_id', orgId)
+        .maybeSingle();
+      if (error) {
+        if (isMissingTableError(error)) return null;
+        throw error;
+      }
+      return data as AiCreditAccount | null;
+    },
+    enabled: !!orgId,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (!live || !orgId) return;
+
+    const channel = supabase
+      .channel(`ai-credit-account:${orgId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'ai_credit_accounts',
+          filter: `org_id=eq.${orgId}`,
+        },
+        (payload) => {
+          const account = payload.new as AiCreditAccount;
+          if (account.org_id === orgId) qc.setQueryData(['ai_credit_account', orgId], account);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [live, orgId, qc]);
+
+  return query;
 }
 
 export function useDeleteAiRun() {
