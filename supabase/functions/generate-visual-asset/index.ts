@@ -1,3 +1,5 @@
+import { createClient } from 'npm:@supabase/supabase-js@2';
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -5,6 +7,7 @@ const corsHeaders = {
 };
 
 type GenerateVisualAssetBody = {
+  campaignId?: string;
   visualGuide?: string;
   context?: Record<string, unknown>;
 };
@@ -55,6 +58,80 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Visual Guide must be at least 12 characters.' }, 400);
   }
 
+  const campaignId = cleanText(body.campaignId);
+  if (campaignId && !isUuid(campaignId)) {
+    return jsonResponse({ error: 'A valid campaign is required to generate an image.' }, 400);
+  }
+
+  const authHeader = req.headers.get('Authorization') || '';
+  if (!authHeader) {
+    return jsonResponse({ error: 'Authentication required.' }, 401);
+  }
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  let publishableKey: string;
+  try {
+    publishableKey = getSupabasePublishableKey();
+  } catch (error) {
+    return jsonResponse({ error: error instanceof Error ? error.message : 'Supabase is not configured.' }, 500);
+  }
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    return jsonResponse({ error: 'Supabase server credentials are not configured.' }, 500);
+  }
+
+  const userClient = createClient(supabaseUrl, publishableKey, {
+    global: { headers: { Authorization: authHeader } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: authData, error: authError } = await userClient.auth.getUser();
+  if (authError || !authData.user) {
+    return jsonResponse({ error: 'Authentication required.' }, 401);
+  }
+
+  let orgId = '';
+  if (campaignId) {
+    const { data: campaign, error: campaignError } = await userClient
+      .from('campaigns')
+      .select('id, folders!inner(projects!inner(org_id))')
+      .eq('id', campaignId)
+      .maybeSingle();
+    orgId = readCampaignOrgId(campaign);
+    if (campaignError || !orgId) {
+      return jsonResponse({ error: 'Campaign not found or access denied.' }, 403);
+    }
+  } else {
+    // Keep older clients working during rollout. The current app sends a
+    // campaign ID; older builds use the same first-membership fallback as auth.
+    const { data: membership, error: membershipError } = await userClient
+      .from('org_members')
+      .select('org_id')
+      .eq('user_id', authData.user.id)
+      .limit(1)
+      .maybeSingle();
+    orgId = cleanText(membership?.org_id);
+    if (membershipError || !orgId) {
+      return jsonResponse({ error: 'Workspace not found or access denied.' }, 403);
+    }
+  }
+
+  const { data: creditAccount, error: creditError } = await userClient
+    .from('ai_credit_accounts')
+    .select('credits_remaining')
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (creditError || !creditAccount) {
+    return jsonResponse({ error: 'AI credit balance is unavailable.' }, 500);
+  }
+  if (creditAccount.credits_remaining < 1) {
+    return jsonResponse({ error: 'No AI credits remaining. Upgrade or wait for your credits to renew.' }, 402);
+  }
+
+  const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
   const model = cleanText(Deno.env.get('REPLICATE_IMAGE_MODEL')) || 'black-forest-labs/flux-schnell';
   const endpoint = modelEndpoint(model);
   if (!endpoint) {
@@ -83,6 +160,23 @@ Deno.serve(async (req) => {
     }
 
     const imageUrl = await imageToDataUrl(outputUrl).catch(() => outputUrl);
+    const generationKey = cleanText(prediction.id)
+      ? `replicate:${cleanText(prediction.id)}`
+      : `request:${crypto.randomUUID()}`;
+    const { error: chargeError } = await serviceClient.rpc('charge_ai_image_credit', {
+      p_org_id: orgId,
+      p_generation_key: generationKey,
+    });
+
+    if (chargeError) {
+      const insufficientCredits = chargeError.code === 'P0001'
+        || /not enough ai credits/i.test(chargeError.message || '');
+      return jsonResponse({
+        error: insufficientCredits
+          ? 'No AI credits remaining. Upgrade or wait for your credits to renew.'
+          : 'The image was generated, but its AI credit could not be recorded. Please try again.',
+      }, insufficientCredits ? 402 : 500);
+    }
 
     return jsonResponse({
       imageUrl,
@@ -271,6 +365,34 @@ function modelEndpoint(model: string) {
 
 function cleanText(value: unknown) {
   return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function getSupabasePublishableKey() {
+  const legacyAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  if (legacyAnonKey) return legacyAnonKey;
+
+  const publishableKeys = Deno.env.get('SUPABASE_PUBLISHABLE_KEYS');
+  if (publishableKeys) {
+    const parsed = JSON.parse(publishableKeys) as Record<string, string>;
+    if (parsed.default) return parsed.default;
+  }
+
+  throw new Error('Supabase publishable key is not configured.');
+}
+
+function readCampaignOrgId(campaign: unknown) {
+  if (!campaign || typeof campaign !== 'object') return '';
+  const folderValue = (campaign as Record<string, unknown>).folders;
+  const folder = Array.isArray(folderValue) ? folderValue[0] : folderValue;
+  if (!folder || typeof folder !== 'object') return '';
+  const projectValue = (folder as Record<string, unknown>).projects;
+  const project = Array.isArray(projectValue) ? projectValue[0] : projectValue;
+  if (!project || typeof project !== 'object') return '';
+  return cleanText((project as Record<string, unknown>).org_id);
 }
 
 function readError(payload: unknown) {
