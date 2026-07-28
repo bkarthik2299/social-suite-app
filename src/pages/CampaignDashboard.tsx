@@ -420,6 +420,7 @@ const normalizeBrandAssetUrl = (value: string) => {
 };
 
 const generateVisualAsset = async (
+    campaignId: string,
     visualGuide: string,
     context: Record<string, unknown>,
 ) => {
@@ -429,7 +430,7 @@ const generateVisualAsset = async (
     }
 
     const { data, error } = await supabase.functions.invoke('generate-visual-asset', {
-        body: { visualGuide: guide, context },
+        body: { campaignId, visualGuide: guide, context },
     });
 
     if (error) {
@@ -1414,7 +1415,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
     const handleGenerateImage = async () => {
         setIsGeneratingImage(true);
         try {
-            const imageUrl = await generateVisualAsset(visualGuide, {
+            const imageUrl = await generateVisualAsset(campaignId, visualGuide, {
                 kind: 'social-post',
                 name,
                 topic,
@@ -2818,7 +2819,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
     const handleGenerateImage = async () => {
         setIsGeneratingImage(true);
         try {
-            const imageUrl = await generateVisualAsset(visualGuide, {
+            const imageUrl = await generateVisualAsset(campaignId, visualGuide, {
                 kind: 'social-ad',
                 name,
                 topic,

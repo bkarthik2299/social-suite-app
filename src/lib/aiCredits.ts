@@ -6,7 +6,7 @@ export const AI_CREDIT_PLANS: Record<AiCreditPlan, { label: string; allowance: n
   agency_pro: { label: 'Agency Pro', allowance: 1500 },
 };
 
-export const aiCreditCost = (workMode: 'instant' | 'deep') => workMode === 'deep' ? 2 : 1;
+export const aiCreditCost = (usage: 'instant' | 'deep' | 'image') => usage === 'deep' ? 2 : 1;
 
 export const aiCreditPlanLabel = (plan: AiCreditPlan) => AI_CREDIT_PLANS[plan].label;
 

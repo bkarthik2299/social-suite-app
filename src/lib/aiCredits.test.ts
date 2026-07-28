@@ -10,9 +10,10 @@ describe('AI credit plans', () => {
     });
   });
 
-  it('charges one credit for Instant and two for Deep Work', () => {
+  it('charges one credit for Instant and image generation, and two for Deep Work', () => {
     expect(aiCreditCost('instant')).toBe(1);
     expect(aiCreditCost('deep')).toBe(2);
+    expect(aiCreditCost('image')).toBe(1);
   });
 
   it('keeps the visual progress within zero and one hundred percent', () => {
