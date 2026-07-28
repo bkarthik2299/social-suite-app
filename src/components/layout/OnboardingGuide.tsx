@@ -304,7 +304,7 @@ export function OnboardingGuide() {
             <Button
               variant="ghost"
               size="icon"
-              className="soft-card relative h-9 w-9 overflow-visible rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
+              className="soft-card header-icon-card relative h-9 w-9 overflow-visible rounded-full text-primary transition-colors hover:bg-white hover:text-primary"
               aria-label={`Getting started, ${pendingCount} item${pendingCount === 1 ? '' : 's'} remaining`}
             >
               <span className="flex h-5 w-5 items-center justify-center">

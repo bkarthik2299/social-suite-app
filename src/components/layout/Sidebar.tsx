@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Building2, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Sparkles, Trash2 } from 'lucide-react';
+import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Blocks, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Sparkles, Trash2 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -71,10 +71,14 @@ export function Sidebar() {
     <>
     <aside className="flex h-full w-60 flex-col border-r border-blue-100/70 bg-sidebar">
       {/* Organization Header */}
-      <div className="shrink-0 px-4 pb-4 pt-7">
+      <div className="flex h-16 shrink-0 items-center border-b border-border px-4">
         <div className="flex w-full items-center gap-3 px-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary shadow-sm shadow-blue-300/40">
-            <Building2 className="w-4 h-4 text-primary-foreground" />
+          <div
+            aria-hidden="true"
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-[13px] bg-gradient-to-br from-blue-400 via-primary to-indigo-600 text-white shadow-[0_8px_18px_-10px_rgb(37_99_235_/_0.75)] ring-1 ring-inset ring-white/25"
+          >
+            <span className="absolute inset-x-1.5 top-1 h-px rounded-full bg-white/35" />
+            <Blocks className="h-[18px] w-[18px]" strokeWidth={1.9} />
           </div>
           <span className="truncate text-[15px] font-semibold tracking-tight text-foreground">
             {organization?.name || 'Workspace'}
