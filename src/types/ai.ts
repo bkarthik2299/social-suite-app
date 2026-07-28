@@ -45,6 +45,16 @@ export type AiWorkflowStep = {
 
 export type AiRunStatus = 'queued' | 'running' | 'needs_approval' | 'completed' | 'failed' | 'canceled';
 export type AiStepStatus = 'queued' | 'working' | 'needs_approval' | 'done' | 'failed' | 'skipped';
+export type AiCreditPlan = 'growth' | 'scale' | 'agency_pro';
+
+export type AiCreditAccount = {
+  org_id: string;
+  plan: AiCreditPlan;
+  monthly_allowance: number;
+  credits_remaining: number;
+  period_started_at: string;
+  updated_at: string;
+};
 
 export type AiRun = {
   id: string;

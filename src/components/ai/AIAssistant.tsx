@@ -64,10 +64,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/use-toast';
-import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
+import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiCredits, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
 import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, sanitizeActivityText, type HandoffDisplayDetails } from '@/lib/aiActivityTrail';
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
+import { aiCreditCost } from '@/lib/aiCredits';
 import { folderPath, projectPath } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
@@ -222,6 +223,7 @@ export function AIAssistant() {
     compileKnowledge,
   } = useBrandKnowledge(selectedRemoteBrandGuideId);
   const { startRun, commitRun } = useAIMission();
+  const { data: creditAccount } = useAiCredits();
   const { run: latestRun, steps, events, artifacts } = useAiRunDetails(currentRun?.id || null);
   const latestArtifact = artifacts[0] || null;
   const researchEvent = useMemo(
@@ -398,6 +400,15 @@ export function AIAssistant() {
     }
     if (!selectedProjectId) {
       toast({ title: 'Choose a project', description: 'AI drafts need a project destination before they can be prepared.' });
+      return;
+    }
+    const requiredCredits = aiCreditCost(workMode);
+    if (creditAccount && creditAccount.credits_remaining < requiredCredits) {
+      toast({
+        title: 'Not enough AI credits',
+        description: `${workMode === 'deep' ? 'Deep Work' : 'Instant'} needs ${requiredCredits} ${requiredCredits === 1 ? 'credit' : 'credits'}.`,
+        variant: 'destructive',
+      });
       return;
     }
 
@@ -750,7 +761,7 @@ export function AIAssistant() {
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-64 text-xs leading-5">
-                      Fast draft generation using brief and brand context, without web research.
+                      Fast draft generation using brief and brand context, without web research. Uses 1 AI credit after a successful output.
                     </TooltipContent>
                   </Tooltip>
                   <Tooltip>
@@ -769,7 +780,7 @@ export function AIAssistant() {
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="top" className="max-w-64 text-xs leading-5">
-                      More deliberate generation with selected web research before drafting.
+                      More deliberate generation with selected web research before drafting. Uses 2 AI credits after a successful output.
                     </TooltipContent>
                   </Tooltip>
                 </div>

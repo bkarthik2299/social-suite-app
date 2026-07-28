@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Building2, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Trash2 } from 'lucide-react';
+import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Building2, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Sparkles, Trash2 } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
-import { useDeleteAiRun, useAiRuns } from '@/hooks/useAI';
+import { useAiCredits, useDeleteAiRun, useAiRuns } from '@/hooks/useAI';
+import { aiCreditProgress, formatAiCredits } from '@/lib/aiCredits';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +42,11 @@ export function Sidebar() {
   const [runToDelete, setRunToDelete] = useState<AiRun | null>(null);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const { data: aiRuns = [] } = useAiRuns(historyExpanded ? 18 : 5);
+  const { data: creditAccount } = useAiCredits({ live: true });
   const deleteAiRun = useDeleteAiRun();
+  const creditPercentage = creditAccount
+    ? aiCreditProgress(creditAccount.credits_remaining, creditAccount.monthly_allowance)
+    : 0;
 
   const isActive = (path: string) => {
     return location.pathname.startsWith(path);
@@ -158,6 +163,28 @@ export function Sidebar() {
 
       {/* User Profile */}
       <div className="shrink-0 border-t border-blue-100/70 p-4">
+        <div
+          className="mb-2.5 rounded-2xl bg-gradient-to-r from-blue-500/[0.09] via-sky-400/[0.055] to-white/30 px-3 py-2.5 ring-1 ring-inset ring-blue-200/55"
+          aria-label={creditAccount ? `${creditAccount.credits_remaining} AI credits remaining` : 'AI credits'}
+        >
+          <div className="flex items-center">
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-white/80 text-primary shadow-sm shadow-blue-200/40">
+              <Sparkles className="h-3.5 w-3.5" />
+            </span>
+            <span className="ml-2.5 text-[12px] font-medium tracking-[-0.01em] text-slate-600">AI credits</span>
+            <span className="ml-auto text-[13px] font-semibold tabular-nums tracking-tight text-primary">
+              {creditAccount
+                ? `${formatAiCredits(creditAccount.credits_remaining)} / ${formatAiCredits(creditAccount.monthly_allowance)}`
+                : '—'}
+            </span>
+          </div>
+          <div className="mt-2 h-1 overflow-hidden rounded-full bg-blue-100/90">
+            <div
+              className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
+              style={{ width: `${creditPercentage}%` }}
+            />
+          </div>
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button className="soft-card flex w-full items-center gap-3 rounded-2xl p-2.5 text-left text-[13px] transition-colors hover:bg-white">

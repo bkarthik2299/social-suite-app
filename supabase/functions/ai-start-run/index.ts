@@ -117,6 +117,7 @@ Deno.serve(async (req) => {
     const selectedModel = modelForMode(workMode, body.context);
     const selectedResearchProvider = researchProviderFromContext(body.context);
     const { orgId, brandGuideId, brandKnowledgeDocumentId } = await resolveRunContext(supabase, body, userId);
+    await assertSufficientAiCredits(supabase, orgId, workMode === 'deep' ? 2 : 1, workMode);
     const agentWorkflow = await loadAgentWorkflow(supabase, orgId);
     const runStepDefinitions = await loadRunStepDefinitions(supabase, orgId, agentWorkflow);
 
@@ -725,10 +726,11 @@ async function processMission({
     });
     await updateStep(activeStep, 'done', 'Saved the review artifact. The next click can create Social Suite drafts.');
 
-    await supabase.from('ai_runs').update({
+    const { error: completionError } = await supabase.from('ai_runs').update({
       status: 'needs_approval',
       output_summary: pack.strategy?.summary || 'Campaign draft pack is ready for approval.',
     }).eq('id', runId);
+    if (completionError) throw completionError;
     captureAiTrace({
       distinctId: userId,
       traceId: runId,
@@ -908,6 +910,25 @@ async function resolveRunContext(supabase: SupabaseClient, body: RequestBody, us
   }
 
   return { orgId, brandGuideId, brandKnowledgeDocumentId };
+}
+
+async function assertSufficientAiCredits(
+  supabase: SupabaseClient,
+  orgId: string,
+  requiredCredits: number,
+  workMode: WorkMode,
+) {
+  const { data: account, error } = await supabase
+    .from('ai_credit_accounts')
+    .select('credits_remaining')
+    .eq('org_id', orgId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!account) throw new Error('AI credits are not configured for this workspace.');
+  if (account.credits_remaining < requiredCredits) {
+    throw new Error(`Not enough AI credits for this ${workMode === 'deep' ? 'Deep Work' : 'Instant'} mission.`);
+  }
 }
 
 async function loadDestinationContext(supabase: SupabaseClient, body: RequestBody) {
