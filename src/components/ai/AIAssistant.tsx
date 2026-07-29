@@ -70,6 +70,7 @@ import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, 
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
 import { aiCreditCost } from '@/lib/aiCredits';
 import { folderPath, projectPath } from '@/lib/routes';
+import { researchNoteFindings } from '@/lib/researchNotes';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import type { Campaign, CampaignType, Folder, Project } from '@/types';
@@ -79,6 +80,7 @@ const agentActivity = [
   { name: 'Planner Agent', message: 'Resolving destination, campaign length, output types, and approval mode.' },
   { name: 'Brand Guide Agent', message: 'Filtering brand knowledge for tone, writing rules, color cues, and healthcare guardrails.' },
   { name: 'Research Agent', message: 'Preparing research context.' },
+  { name: 'Creative Strategist', message: 'Turning the brief, brand rules, and research into one connected idea with distinct content angles.' },
   { name: 'Copywriter Agent', message: 'Drafting channel-ready campaign copy from the brief, brand guide, and research context.' },
   { name: 'Platform Specialist', message: 'Adapting posts, ads, blogs, and calendar items for Social Suite placeholders.' },
   { name: 'QA Agent', message: 'Checking required output groups, campaign dates, claims, and brand fit.' },
@@ -220,9 +222,10 @@ export function AIAssistant() {
   const selectedRemoteBrandGuideId = isUuid(selectedBrandGuideId) ? selectedBrandGuideId : '';
   const {
     document: brandKnowledgeDocument,
+    isLoading: brandKnowledgeLoading,
     compileKnowledge,
   } = useBrandKnowledge(selectedRemoteBrandGuideId);
-  const { startRun, commitRun } = useAIMission();
+  const { startRun, commitRun, cancelRun } = useAIMission();
   const { data: creditAccount } = useAiCredits();
   const { run: latestRun, steps, events, artifacts } = useAiRunDetails(currentRun?.id || null);
   const latestArtifact = artifacts[0] || null;
@@ -333,9 +336,15 @@ export function AIAssistant() {
   const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) || null;
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) || null;
   const selectedGuide = guides.find((guide) => guide.id === selectedBrandGuideId) || null;
-  const workflowSlugs = workflowSteps.length
-    ? workflowSteps.map((step) => step.agent_slug)
-    : defaultAiAgentFlow.filter((slug) => agents.some((agent) => agent.slug === slug));
+  const configuredCustomSlugs = workflowSteps
+    .map((step) => step.agent_slug)
+    .filter((slug) => !defaultAiAgentFlow.includes(slug));
+  const qaFlowIndex = defaultAiAgentFlow.indexOf('qa');
+  const workflowSlugs = [
+    ...defaultAiAgentFlow.slice(0, qaFlowIndex),
+    ...configuredCustomSlugs,
+    ...defaultAiAgentFlow.slice(qaFlowIndex),
+  ].filter((slug, index, values) => agents.some((agent) => agent.slug === slug) && values.indexOf(slug) === index);
 
   const availableFolders = useMemo(
     () => selectedProjectId ? folders.filter((folder) => folder.projectId === selectedProjectId) : folders,
@@ -351,7 +360,9 @@ export function AIAssistant() {
   const activeModelOptions = aiModelOptions[workMode];
   const selectedModel = activeModelOptions.find((model) => model.id === selectedModelIds[workMode]) || activeModelOptions[0];
   const selectedResearchProvider = researchProviderOptions.find((provider) => provider.id === researchProvider) || researchProviderOptions[0];
-  const promptReady = prompt.trim().length >= 12 && !!selectedProjectId;
+  const promptReady = prompt.trim().length >= 12
+    && !!selectedProjectId
+    && (!selectedRemoteBrandGuideId || !brandKnowledgeLoading);
   const artifact = currentArtifact;
   const pack = useMemo(
     () => normalizeBriefToCampaignArtifact(artifact?.content || {}),
@@ -400,6 +411,10 @@ export function AIAssistant() {
     }
     if (!selectedProjectId) {
       toast({ title: 'Choose a project', description: 'AI drafts need a project destination before they can be prepared.' });
+      return;
+    }
+    if (selectedRemoteBrandGuideId && brandKnowledgeLoading) {
+      toast({ title: 'Brand guide is still loading', description: 'Please wait a moment, then start the mission again.' });
       return;
     }
     const requiredCredits = aiCreditCost(workMode);
@@ -498,6 +513,17 @@ export function AIAssistant() {
       navigate(destinationPath);
     } catch (error) {
       toast({ title: 'Could not create drafts', description: errorMessage(error), variant: 'destructive' });
+    }
+  };
+
+  const cancelMission = async () => {
+    if (!currentRun || !['queued', 'running'].includes(currentRun.status)) return;
+    try {
+      await cancelRun.mutateAsync(currentRun.id);
+      setCurrentRun((run) => run ? { ...run, status: 'canceled', error: null } : run);
+      toast({ title: 'AI mission canceled', description: 'The agents stopped before saving a review artifact.' });
+    } catch (error) {
+      toast({ title: 'Could not cancel mission', description: errorMessage(error), variant: 'destructive' });
     }
   };
 
@@ -914,6 +940,17 @@ export function AIAssistant() {
             <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setPanelOpen(true)}>
               Back to Prompt
             </Button>
+            {currentRun && ['queued', 'running'].includes(currentRun.status) ? (
+              <Button
+                variant="outline"
+                className="rounded-xl border-red-200 text-red-700 hover:bg-red-50 hover:text-red-800"
+                disabled={cancelRun.isPending}
+                onClick={cancelMission}
+              >
+                {cancelRun.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                Cancel mission
+              </Button>
+            ) : null}
             <Button
               className="gap-2 rounded-xl bg-primary px-5 text-white hover:bg-primary/90"
               disabled={!currentRun || !artifact || currentRun.status !== 'needs_approval' || commitRun.isPending || selectedDraftKeys.length === 0}
@@ -1415,6 +1452,7 @@ function CustomizeAgentSheet({
   const moveAgent = (index: number, direction: -1 | 1) => {
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= workflowSlugs.length) return;
+    if (defaultAiAgentFlow.includes(workflowSlugs[index]) || defaultAiAgentFlow.includes(workflowSlugs[targetIndex])) return;
     const reordered = [...workflowSlugs];
     [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
     void onSaveWorkflow(reordered).catch(() => undefined);
@@ -1427,7 +1465,11 @@ function CustomizeAgentSheet({
 
   const addAgentToFlow = (agent: AiAgent) => {
     if (workflowSlugs.includes(agent.slug)) return;
-    void onSaveWorkflow([...workflowSlugs, agent.slug])
+    const qaIndex = workflowSlugs.indexOf('qa');
+    const next = qaIndex >= 0
+      ? [...workflowSlugs.slice(0, qaIndex), agent.slug, ...workflowSlugs.slice(qaIndex)]
+      : [...workflowSlugs, agent.slug];
+    void onSaveWorkflow(next)
       .then(() => setSelectedSlug(agent.slug))
       .catch(() => undefined);
   };
@@ -1439,7 +1481,10 @@ function CustomizeAgentSheet({
       description: newAgentDescription,
       skillMd: newAgentSkill,
     });
-    await onSaveWorkflow([...workflowSlugs, agent.slug]);
+    const qaIndex = workflowSlugs.indexOf('qa');
+    await onSaveWorkflow(qaIndex >= 0
+      ? [...workflowSlugs.slice(0, qaIndex), agent.slug, ...workflowSlugs.slice(qaIndex)]
+      : [...workflowSlugs, agent.slug]);
     setSelectedSlug(agent.slug);
     closeCreateAgent();
   };
@@ -1473,7 +1518,7 @@ function CustomizeAgentSheet({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">Agent Workflow</p>
-                    <p className="mt-1 text-sm leading-5 text-slate-500">Each node hands context to the next. Built-in stages stay protected; custom nodes can be removed.</p>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">Built-in stages keep their safe order. Custom agents review the finished copy before final QA.</p>
                   </div>
                   <Button type="button" size="sm" className="gap-2 rounded-lg" onClick={() => setCreateOpen(true)}>
                     <UserPlus className="h-4 w-4" />
@@ -1512,7 +1557,7 @@ function CustomizeAgentSheet({
                                   title={`Move ${agent.name} left`}
                                   aria-label={`Move ${agent.name} left`}
                                   className="h-7 w-7"
-                                  disabled={index === 0 || workflowSaving}
+                                  disabled={protectedAgent || index === 0 || defaultAiAgentFlow.includes(workflowSlugs[index - 1]) || workflowSaving}
                                   onClick={() => moveAgent(index, -1)}
                                 >
                                   <ChevronLeft className="h-3.5 w-3.5" />
@@ -1524,7 +1569,7 @@ function CustomizeAgentSheet({
                                   title={`Move ${agent.name} right`}
                                   aria-label={`Move ${agent.name} right`}
                                   className="h-7 w-7"
-                                  disabled={index === flowAgents.length - 1 || workflowSaving}
+                                  disabled={protectedAgent || index === flowAgents.length - 1 || defaultAiAgentFlow.includes(workflowSlugs[index + 1]) || workflowSaving}
                                   onClick={() => moveAgent(index, 1)}
                                 >
                                   <ChevronRight className="h-3.5 w-3.5" />
@@ -2097,14 +2142,46 @@ function ResearchNotesSheet({
 
             <ResearchNoteSection title="Key Findings">
               {notes.findings.length ? (
-                <ul className="space-y-3">
+                <div className="space-y-3">
                   {notes.findings.map((finding, index) => (
-                    <li key={`${finding}-${index}`} className="flex gap-3 text-sm leading-6 text-slate-700">
-                      <div className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-                      <span>{finding}</span>
-                    </li>
+                    <article key={`${finding.claim}-${index}`} className="rounded-lg border border-slate-100 bg-slate-50/80 p-3.5">
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                          {index + 1}
+                        </div>
+                        <p className="min-w-0 break-words text-sm leading-6 text-slate-700">{finding.claim}</p>
+                      </div>
+                      {(finding.sourceNumbers.length > 0 || finding.confidence || finding.publicUse) && (
+                        <div className="mt-3 flex flex-wrap gap-2 pl-9">
+                          {finding.sourceNumbers.length > 0 && (
+                            <Badge variant="outline" className="bg-white font-medium text-slate-600">
+                              Sources {finding.sourceNumbers.join(', ')}
+                            </Badge>
+                          )}
+                          {finding.confidence && (
+                            <Badge variant="outline" className="bg-white font-medium capitalize text-slate-600">
+                              {finding.confidence} confidence
+                            </Badge>
+                          )}
+                          {finding.publicUse && (
+                            <Badge variant="outline" className={cn(
+                              'bg-white font-medium capitalize',
+                              finding.publicUse === 'safe' ? 'text-emerald-700' : 'text-amber-700',
+                            )}>
+                              {finding.publicUse} to use
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                      {finding.campaignUse && (
+                        <div className="mt-3 border-t border-slate-200/70 pt-3 pl-9">
+                          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Campaign use</p>
+                          <p className="mt-1 text-sm leading-5 text-slate-600">{finding.campaignUse}</p>
+                        </div>
+                      )}
+                    </article>
                   ))}
-                </ul>
+                </div>
               ) : (
                 <p className="text-sm leading-6 text-slate-600">The research step completed without a separate summary.</p>
               )}
@@ -2273,6 +2350,7 @@ function ArtifactPreview({
                 checked={selectedKeys.has(draftKey('googleAds', index))}
                 onCheckedChange={(checked) => onToggleDraft(draftKey('googleAds', index), checked)}
               >
+                {(ad.keywords || []).length > 0 && <PreviewList title="Keyword list" items={ad.keywords || []} compact />}
                 <PreviewList title="Headlines" items={ad.headlines || []} compact />
                 <PreviewList title="Descriptions" items={ad.descriptions || []} compact />
               </PreviewCard>
@@ -2477,7 +2555,13 @@ function syntheticSteps(
     agent_id: null,
     agent_name: agent.name,
     title: agent.name,
-    status: !isRunning ? 'queued' : index < activeIndex ? 'done' : index === activeIndex ? 'working' : 'queued',
+    status: !isRunning
+      ? 'queued'
+      : options.compilingBrandKnowledge
+        ? index === 1 ? 'working' : 'queued'
+        : options.startingRun
+          ? index === 0 ? 'working' : 'queued'
+          : index < activeIndex ? 'done' : index === activeIndex ? 'working' : 'queued',
     message: agent.message,
     sort_order: index,
     started_at: null,
@@ -2537,7 +2621,7 @@ function researchNotesFromEvent(event: AiRunEvent | null, planEvent: AiRunEvent 
   return {
     question: formatResearchQuestion(question),
     campaignGuidance: typeof event?.payload?.campaignGuidance === 'string' ? event.payload.campaignGuidance : '',
-    findings: splitResearchFindings(answer),
+    findings: researchNoteFindings(event?.payload?.evidenceBrief, answer),
     sources: event ? eventSources(event) : [],
   };
 }
@@ -2556,19 +2640,6 @@ function formatResearchQuestion(value: string) {
     : `What ${cleaned}`;
   const capitalized = `${question.charAt(0).toUpperCase()}${question.slice(1)}`;
   return `${capitalized.replace(/[?!.]+$/, '')}?`;
-}
-
-function splitResearchFindings(value: string) {
-  return value
-    .split(/;\s+|(?<=[.!?])\s+(?=[A-Z0-9])/)
-    .flatMap(splitLongResearchFinding)
-    .map((item) => sanitizeActivityText(item.trim()))
-    .filter(Boolean);
-}
-
-function splitLongResearchFinding(value: string) {
-  if (value.length <= 320) return [value];
-  return value.split(/,\s+(?=(?:beginning with|followed by|accompanied by|while|using|featuring|emphasizing|introduce|launch|push|and close with|each ad))/i);
 }
 
 function sourceDomain(value: string) {

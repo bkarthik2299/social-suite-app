@@ -10,7 +10,7 @@ const badgeConfig: Record<CampaignType, { label: string; className: string }> = 
   'socials': { label: 'May Socials', className: 'campaign-badge-socials' },
   'google-ad': { label: 'Google Ad', className: 'campaign-badge-google' },
   'meta-ad': { label: 'Social Media Ad', className: 'campaign-badge-meta' },
-  'blogs': { label: 'Blogs', className: 'campaign-badge-blogs' },
+  'blogs': { label: 'Website Content', className: 'campaign-badge-blogs' },
 };
 
 export function CampaignBadge({ type, label }: CampaignBadgeProps) {

@@ -55,14 +55,29 @@ export function safeSocialPost(
 }
 
 export function safeGoogleAd(index: number, topic: string, startDate?: string): CampaignPack['googleAds'][number] {
-  const compactTopic = titleCase(topic).slice(0, 22).trim();
+  const compactTopic = compactSearchText(titleCase(topic), 21);
   return {
     name: `${titleCase(topic)} Search Ad ${index + 1}`,
     topic,
+    keywords: [topic],
     startDate,
-    headlines: [`Explore ${compactTopic}`, `Learn About ${compactTopic}`, 'See The Campaign Details'],
-    descriptions: [`Discover clear, relevant information about ${topic}. Explore the campaign and learn more.`],
-    callouts: ['Clear information', 'Brief-aligned message', 'Learn more'],
+    headlines: [
+      compactSearchText(titleCase(topic), 30),
+      compactSearchText(`Explore ${compactTopic}`, 30),
+      compactSearchText(`Learn About ${compactTopic}`, 30),
+      compactSearchText(`Discover ${compactTopic}`, 30),
+      'Get Clear Information',
+      'See Helpful Details',
+      'Understand Your Options',
+      'Take The Next Step',
+      'Visit The Official Page',
+      'Learn More Today',
+    ],
+    descriptions: [
+      compactSearchText(`Explore ${compactTopic} with clear information and a simple way to continue.`, 90),
+      compactSearchText(`See practical details about ${compactTopic} and decide what fits your needs.`, 90),
+    ],
+    callouts: ['Clear Information', 'Practical Details', 'Easy to Review', 'Learn More'],
   };
 }
 
@@ -123,4 +138,14 @@ function cleanTopic(value: string) {
 
 function titleCase(value: string) {
   return value.replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function compactSearchText(value: string, maxLength: number) {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  const clipped = normalized.slice(0, maxLength + 1);
+  const wordBoundary = clipped.lastIndexOf(' ');
+  return (wordBoundary >= Math.floor(maxLength * 0.55) ? clipped.slice(0, wordBoundary) : clipped.slice(0, maxLength))
+    .replace(/[\s,;:|/\\-]+$/g, '')
+    .trim();
 }

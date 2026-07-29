@@ -186,7 +186,7 @@ export default function Campaigns() {
     if (type === 'socials') return 'Social Media Post';
     if (type === 'google-ad') return 'Google Ad';
     if (type === 'meta-ad') return 'Social Media Ad';
-    if (type === 'blogs') return 'Blog';
+    if (type === 'blogs') return 'Website Content';
     return 'Content';
   };
 
@@ -194,7 +194,7 @@ export default function Campaigns() {
     { id: 'meta-ad', label: 'Social Media Ads', description: 'Create ads for LinkedIn, Instagram, Facebook, and X.', icon: Share2, color: 'text-blue-600 bg-blue-50', hoverColor: 'group-hover:bg-blue-600 group-hover:text-white' },
     { id: 'socials', label: 'Social Media Post', description: 'Schedule posts across multiple platforms.', icon: Calendar, color: 'text-sky-600 bg-sky-50', hoverColor: 'group-hover:bg-sky-600 group-hover:text-white' },
     { id: 'google-ad', label: 'Google Ads', description: 'Launch and manage search engine campaigns.', icon: Search, color: 'text-amber-600 bg-amber-50', hoverColor: 'group-hover:bg-amber-600 group-hover:text-white' },
-    { id: 'blogs', label: 'Blogs', description: 'Write and publish articles for your website.', icon: FileText, color: 'text-emerald-600 bg-emerald-50', hoverColor: 'group-hover:bg-emerald-600 group-hover:text-white' },
+    { id: 'blogs', label: 'Website Content', description: 'Create blogs, landing pages, website pages, and individual sections.', icon: FileText, color: 'text-emerald-600 bg-emerald-50', hoverColor: 'group-hover:bg-emerald-600 group-hover:text-white' },
   ] as const;
 
   return (

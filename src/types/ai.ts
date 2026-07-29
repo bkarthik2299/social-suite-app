@@ -116,6 +116,7 @@ export type SocialPostDraft = {
 export type GoogleAdDraft = {
   name: string;
   topic: string;
+  keywords: string[];
   startDate?: string;
   finalUrl?: string;
   path1?: string;

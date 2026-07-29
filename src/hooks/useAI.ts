@@ -7,7 +7,8 @@ import type { BrandGuide } from '@/hooks/useDatabase';
 import type { AiAgent, AiArtifact, AiCreditAccount, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
 
 const db = supabase as unknown as SupabaseClient;
-export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
+export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'creative-strategist', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
+const AI_RUN_POLL_MS = 1800;
 
 export type AiCommitRunResult = {
   inserted: {
@@ -442,7 +443,7 @@ export function useAiAgents() {
 
 export function useAiWorkflow() {
   const qc = useQueryClient();
-  const { organization, user } = useAuth();
+  const { organization } = useAuth();
   const orgId = organization?.id || '';
 
   const query = useQuery({
@@ -467,22 +468,10 @@ export function useAiWorkflow() {
       const uniqueSlugs = Array.from(new Set(agentSlugs.filter(Boolean)));
       if (!uniqueSlugs.length) throw new Error('The workflow needs at least one agent.');
 
-      const { error: deleteError } = await db
-        .from('ai_agent_workflow_steps')
-        .delete()
-        .eq('org_id', orgId);
-      if (deleteError) throw deleteError;
-
-      const { data, error } = await db
-        .from('ai_agent_workflow_steps')
-        .insert(uniqueSlugs.map((agentSlug, index) => ({
-          org_id: orgId,
-          agent_slug: agentSlug,
-          sort_order: index,
-          created_by: user?.id || null,
-        })))
-        .select()
-        .order('sort_order');
+      const { data, error } = await db.rpc('replace_ai_agent_workflow', {
+        p_org_id: orgId,
+        p_agent_slugs: uniqueSlugs,
+      });
       if (error) throw error;
       return data as AiWorkflowStep[];
     },
@@ -511,7 +500,7 @@ export function useAiRunDetails(runId: string | null) {
     enabled: !!runId,
     refetchInterval: (query) => {
       const status = (query.state.data as AiRun | undefined)?.status;
-      return status === 'running' || status === 'queued' ? 1200 : false;
+      return status === 'running' || status === 'queued' ? AI_RUN_POLL_MS : false;
     },
   });
 
@@ -525,7 +514,7 @@ export function useAiRunDetails(runId: string | null) {
       return data as AiRunStep[];
     },
     enabled: !!runId,
-    refetchInterval: isLiveRun ? 1200 : false,
+    refetchInterval: isLiveRun ? AI_RUN_POLL_MS : false,
   });
 
   const eventsQuery = useQuery({
@@ -536,7 +525,7 @@ export function useAiRunDetails(runId: string | null) {
       return data as AiRunEvent[];
     },
     enabled: !!runId,
-    refetchInterval: isLiveRun ? 1200 : false,
+    refetchInterval: isLiveRun ? AI_RUN_POLL_MS : false,
   });
 
   const artifactsQuery = useQuery({
@@ -547,7 +536,7 @@ export function useAiRunDetails(runId: string | null) {
       return data as AiArtifact[];
     },
     enabled: !!runId,
-    refetchInterval: isLiveRun ? 1200 : false,
+    refetchInterval: isLiveRun ? AI_RUN_POLL_MS : false,
   });
 
   return {

@@ -127,6 +127,13 @@ function normalizeGoogleAds(input: unknown): GoogleAdDraft[] {
     return {
       name: stringValue(item.name ?? item.ad_name ?? item.ad_type) || `Google Ad ${index + 1}`,
       topic: stringValue(item.topic ?? item.ad_type) || 'Search campaign concept',
+      keywords: uniqueStrings(stringArray(
+        item.keywords
+        ?? item.keywordList
+        ?? item.keyword_list
+        ?? item.targetKeywords
+        ?? item.target_keywords,
+      )),
       startDate: normalizeOptionalDate(item.startDate ?? item.start_date ?? item.date),
       finalUrl: stringValue(item.finalUrl ?? item.final_url ?? item.link) || undefined,
       path1: stringValue(item.path1 ?? item.path_1) || undefined,

@@ -50,4 +50,17 @@ describe('campaign recovery isolation', () => {
     expect(serialized).toMatch(/remote workers/i);
     expect(serialized).not.toMatch(/health awareness|clinical|patient|hospital|storm|restoration/i);
   });
+
+  it('keeps fallback Google Search ads inside current responsive-ad quality requirements', () => {
+    const ad = safeGoogleAd(0, 'online appointment booking');
+
+    expect(ad.headlines.length).toBeGreaterThanOrEqual(8);
+    expect(new Set(ad.headlines).size).toBe(ad.headlines.length);
+    expect(ad.headlines.every((headline) => headline.length <= 30)).toBe(true);
+    expect(ad.keywords).toEqual(['online appointment booking']);
+    expect(ad.descriptions.length).toBeGreaterThanOrEqual(2);
+    expect(ad.descriptions.every((description) => description.length <= 90)).toBe(true);
+    expect(ad.callouts?.every((callout) => callout.length <= 25)).toBe(true);
+    expect(JSON.stringify(ad)).not.toMatch(/active brief|brief-aligned|grounded in/i);
+  });
 });

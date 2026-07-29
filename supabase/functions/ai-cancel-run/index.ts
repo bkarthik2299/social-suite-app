@@ -11,11 +11,21 @@ Deno.serve(async (req) => {
 
     const { data, error } = await supabase
       .from('ai_runs')
-      .update({ status: 'canceled' })
+      .update({ status: 'canceled', error: null })
       .eq('id', runId)
+      .in('status', ['queued', 'running'])
       .select()
-      .single();
+      .maybeSingle();
     if (error) throw error;
+    if (!data) return jsonResponse({ error: 'Run is no longer active' }, 409);
+
+    await supabase.from('ai_run_events').insert({
+      run_id: runId,
+      step_id: null,
+      event_type: 'cancel_requested',
+      message: 'Cancellation requested by the user.',
+      payload: {},
+    });
 
     return jsonResponse({ run: data });
   } catch (error) {

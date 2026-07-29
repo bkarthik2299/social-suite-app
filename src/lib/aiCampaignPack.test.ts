@@ -26,6 +26,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
           headline_1: 'Free Health Checkup',
           headline_2: 'Naruvi Hospitals',
           description_1: 'Call 0416-666 1111 to book.',
+          keyword_list: 'free health checkup, preventive health checkup',
           path_1: 'free-checkup',
         },
       ],
@@ -57,6 +58,7 @@ describe('normalizeBriefToCampaignArtifact', () => {
     expect(pack.socialPosts?.[0].caption).toBe('Book a free preventive health checkup at Naruvi.');
     expect(pack.socialPosts?.[0].visualGuide).toBe('Clean teal carousel.');
     expect(pack.googleAds[0].headlines).toContain('Free Health Checkup');
+    expect(pack.googleAds[0].keywords).toEqual(['free health checkup', 'preventive health checkup']);
     expect(pack.socialAds).toHaveLength(1);
     expect(pack.blogOutlines[0].outline).toEqual(['What is preventive care?', 'How to book']);
     expect(pack.calendar).toHaveLength(3);

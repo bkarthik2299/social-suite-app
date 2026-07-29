@@ -1764,6 +1764,20 @@ const trimGoogleAdField = (value: string | undefined, maxLength: number) => {
     return candidate.replace(/[\s,;:|/\\-]+$/g, '').trim().slice(0, maxLength);
 };
 
+const parseGoogleAdKeywords = (value: string) => {
+    const seen = new Set<string>();
+    return value
+        .split(/[\n,;]+/)
+        .map((keyword) => keyword.trim().replace(/^[-*]\s*/, ''))
+        .filter((keyword) => {
+            const normalized = keyword.toLowerCase();
+            if (!normalized || seen.has(normalized)) return false;
+            seen.add(normalized);
+            return true;
+        })
+        .slice(0, 50);
+};
+
 const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
     const [device, setDevice] = useState<'mobile' | 'desktop'>('mobile');
     const [combinationIndex, setCombinationIndex] = useState(0);
@@ -2080,6 +2094,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
     const [sitelinks, setSitelinks] = useState<{ text: string, desc1?: string }[]>([]);
     const [callouts, setCallouts] = useState<string[]>([]);
     const [topic, setTopic] = useState('');
+    const [keywordText, setKeywordText] = useState('');
 
     // Safeguard against undefined googleAds during HMR or initialization
     const ads = (googleAds || []).filter(a => a.campaignId === campaignId);
@@ -2095,6 +2110,9 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
             setHeadlines(ad.headlines?.length ? ad.headlines.map(h => trimGoogleAdField(h, GOOGLE_AD_HEADLINE_LIMIT)).slice(0, GOOGLE_AD_MAX_HEADLINES) : ['', '', '']);
             setDescriptions(ad.descriptions?.length ? ad.descriptions.map(d => trimGoogleAdField(d, GOOGLE_AD_DESCRIPTION_LIMIT)).slice(0, GOOGLE_AD_MAX_DESCRIPTIONS) : ['', '']);
             setTopic(ad.topic || '');
+            setKeywordText((ad.keywords || []).join('\n'));
+            setSitelinks(ad.sitelinks || []);
+            setCallouts(ad.callouts || []);
         } else {
             setEditingAd(null);
             setName('New Search Ad');
@@ -2105,6 +2123,9 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
             setHeadlines(['', '', '']); // Start with 3 suggested
             setDescriptions(['', '']); // Start with 2 suggested
             setTopic('');
+            setKeywordText('');
+            setSitelinks([]);
+            setCallouts([]);
         }
         setIsDialogOpen(true);
     };
@@ -2131,6 +2152,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
             sitelinks: sitelinks.filter(s => s.text.trim() !== ''),
             callouts: callouts.filter(c => c.trim() !== ''),
             topic,
+            keywords: parseGoogleAdKeywords(keywordText),
             status: 'active' as const,
         };
 
@@ -2344,16 +2366,30 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
                                     </CardContent>
                                 </Card>
 
-                                {/* Topic / Idea */}
+                                {/* Topic / Idea and keyword group */}
                                 <Card className="border-none shadow-sm ring-1 ring-slate-200/50 bg-white">
-                                    <CardContent className="p-6">
-                                        <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Topic / Idea</Label>
-                                        <Textarea
-                                            placeholder="Describe your ad concept, target keywords, or key message..."
-                                            value={topic}
-                                            onChange={(e) => setTopic(e.target.value)}
-                                            className="min-h-[80px] resize-none"
-                                        />
+                                    <CardContent className="p-6 space-y-5">
+                                        <div>
+                                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Topic / Idea</Label>
+                                            <Textarea
+                                                placeholder="Describe the ad concept or key message..."
+                                                value={topic}
+                                                onChange={(e) => setTopic(e.target.value)}
+                                                className="min-h-[80px] resize-none"
+                                            />
+                                        </div>
+                                        <div>
+                                            <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Keyword list</Label>
+                                            <Textarea
+                                                placeholder={'online dental booking\ndental appointment booking\nbook dentist online'}
+                                                value={keywordText}
+                                                onChange={(e) => setKeywordText(e.target.value)}
+                                                className="min-h-[110px] resize-y bg-slate-50"
+                                            />
+                                            <p className="mt-2 text-xs leading-5 text-slate-500">
+                                                Optional. Add one keyword per line, or separate keywords with commas. Keep closely related searches together and use a separate ad for a different intent.
+                                            </p>
+                                        </div>
                                     </CardContent>
                                 </Card>
 

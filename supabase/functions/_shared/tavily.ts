@@ -22,6 +22,14 @@ type TavilyResultRecord = {
   score?: unknown;
 };
 
+type TavilyResponsePayload = {
+  query?: unknown;
+  answer?: unknown;
+  results?: TavilyResultRecord[];
+  response_time?: unknown;
+  usage?: { credits?: unknown };
+};
+
 export async function tavilySearch(query: string, timeoutMs = 45_000): Promise<TavilySearchResponse> {
   const controller = new AbortController();
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -49,7 +57,7 @@ export async function tavilySearch(query: string, timeoutMs = 45_000): Promise<T
       throw new Error(`Tavily search failed: ${response.status} ${text.slice(0, 300)}`);
     }
 
-    const payload = await response.json();
+    const payload = await response.json() as TavilyResponsePayload;
     const results = Array.isArray(payload.results)
       ? payload.results.map(normalizeResult).filter((item): item is TavilyResult => !!item)
       : [];
