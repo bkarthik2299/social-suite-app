@@ -35,6 +35,17 @@ describe('deliverable contract extraction', () => {
     });
   });
 
+  it('honors an explicitly requested day count for the calendar', () => {
+    expect(extractDeliverableContract('Create 4 posts, 2 Google ads, 2 paid social ads, 1 blog and a 7-day content calendar')).toEqual({
+      socialPosts: 4,
+      googleAds: 2,
+      socialAds: 2,
+      blogOutlines: 1,
+      calendarItems: 7,
+      explicitCounts: true,
+    });
+  });
+
   it('lets deterministic brief counts override a model-suggested contract', () => {
     const fallback = extractDeliverableContract('Make a normal campaign');
     expect(resolveDeliverableContract('Create 2 social posts', {

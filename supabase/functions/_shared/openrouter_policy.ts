@@ -12,8 +12,8 @@ export function structuredOutputModelId(selectedModelId: string) {
 export function structuredMissionModelPlan(selectedModelId: string, fallbackModelIds: string[]) {
   return uniqueStrings([
     structuredOutputModelId(selectedModelId),
-    selectedModelId,
     ...fallbackModelIds,
+    selectedModelId,
   ]);
 }
 

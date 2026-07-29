@@ -65,6 +65,7 @@ export function extractDeliverableContract(prompt: string): DeliverableContract 
   const explicitCalendarItems = firstCount(text, [
     `${countPrefix()}(?:calendar\\s+items?|calendar\\s+touchpoints?|touchpoints?)`,
     `${countPrefix()}(?:day|days)\\s+(?:calendar|campaign\\s+calendar|content\\s+calendar)`,
+    `${numberPattern()}\\s*[-–—]\\s*days?\\s+(?:calendar|campaign\\s+calendar|content\\s+calendar)`,
   ]);
   if (explicitCalendarItems !== null) explicit.calendarItems = explicitCalendarItems;
 
@@ -103,7 +104,7 @@ function normalizeModelDeliverableContract(input: unknown): DeliverableContract 
   const socialAds = numberFromUnknown(record.socialAds);
   const blogOutlines = numberFromUnknown(record.blogOutlines);
   const calendarItems = numberFromUnknown(record.calendarItems);
-  if ([socialPosts, googleAds, socialAds, blogOutlines, calendarItems].some((value) => value === null)) return null;
+  if (socialPosts === null || googleAds === null || socialAds === null || blogOutlines === null || calendarItems === null) return null;
 
   return {
     socialPosts: clampDeliverableCount(socialPosts, 'socialPosts'),

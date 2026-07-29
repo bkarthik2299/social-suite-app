@@ -96,6 +96,7 @@ export interface GoogleAd {
   campaignId: string;
   name?: string; // Custom title
   topic?: string; // Topic/Idea for the ad
+  keywords?: string[]; // Search terms assigned to this ad group
   startDate?: string;
   finalUrl: string;
   path1: string;

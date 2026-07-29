@@ -268,7 +268,7 @@ export async function openRouterTextWithCitations({
   return { content, citations };
 }
 
-async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
+async function fetchOpenRouter(init: RequestInit, timeoutMs: number): Promise<OpenRouterAttempt> {
   const startedAt = performance.now();
   const controller = new AbortController();
   const nativeTimeoutSignal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : null;
@@ -293,14 +293,14 @@ async function fetchOpenRouter(init: RequestInit, timeoutMs: number) {
     if ((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') {
       return {
         response: new Response(null, { status: 599 }),
-        data: {},
+        data: {} as OpenRouterResponse,
         latencyMs: performance.now() - startedAt,
         networkError: `OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`,
       };
     }
     return {
       response: new Response(null, { status: 599 }),
-      data: {},
+      data: {} as OpenRouterResponse,
       latencyMs: performance.now() - startedAt,
       networkError: error instanceof Error ? error.message : 'OpenRouter network request failed',
     };

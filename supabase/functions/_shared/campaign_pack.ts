@@ -1,7 +1,7 @@
 export type CampaignPack = {
   strategy: { title: string; summary: string; objectives: string[]; contentPillars: string[] };
   socialPosts: Array<{ name: string; topic: string; caption: string; platforms: string[]; scheduledDate?: string; creativeBrief?: string; visualGuide?: string }>;
-  googleAds: Array<{ name: string; topic: string; startDate?: string; finalUrl?: string; path1?: string; path2?: string; headlines: string[]; descriptions: string[]; callouts?: string[] }>;
+  googleAds: Array<{ name: string; topic: string; keywords: string[]; startDate?: string; finalUrl?: string; path1?: string; path2?: string; headlines: string[]; descriptions: string[]; callouts?: string[] }>;
   socialAds: Array<{ name: string; topic: string; platform: string; primaryText: string; headline: string; description?: string; visualGuide?: string; cta: string; destinationUrl?: string; scheduledDate?: string }>;
   blogOutlines: Array<{ title: string; slug: string; excerpt: string; metaTitle: string; metaDescription: string; keywords: string[]; outline: string[]; publishDate?: string }>;
   calendar: Array<{ title: string; type: 'socials' | 'google-ad' | 'meta-ad' | 'blogs'; date: string }>;
@@ -13,9 +13,11 @@ const calendarTypes = ['socials', 'google-ad', 'meta-ad', 'blogs'] as const;
 const googleAdLimits = {
   maxHeadlines: 15,
   maxDescriptions: 4,
+  maxCallouts: 10,
   headline: 30,
   description: 90,
   displayPath: 15,
+  callout: 25,
 } as const;
 
 export function normalizeCampaignPack(input: unknown): CampaignPack {
@@ -142,13 +144,22 @@ function normalizeGoogleAds(input: unknown): CampaignPack['googleAds'] {
     return {
       name: stringValue(item.name ?? item.ad_name ?? item.ad_type) || `Google Ad ${index + 1}`,
       topic: stringValue(item.topic ?? item.ad_type) || 'Search campaign concept',
+      keywords: uniqueStrings(stringArray(
+        item.keywords
+        ?? item.keywordList
+        ?? item.keyword_list
+        ?? item.targetKeywords
+        ?? item.target_keywords,
+      )).slice(0, 50),
       startDate: normalizeOptionalDate(item.startDate ?? item.start_date ?? item.date),
       finalUrl: stringValue(item.finalUrl ?? item.final_url ?? item.link) || undefined,
       path1: trimGoogleAdText(item.path1 ?? item.path_1, googleAdLimits.displayPath) || undefined,
       path2: trimGoogleAdText(item.path2 ?? item.path_2, googleAdLimits.displayPath) || undefined,
       headlines,
       descriptions,
-      callouts: stringArray(item.callouts).length ? stringArray(item.callouts) : undefined,
+      callouts: stringArray(item.callouts).length
+        ? uniqueStrings(stringArray(item.callouts).map((value) => trimGoogleAdText(value, googleAdLimits.callout))).slice(0, googleAdLimits.maxCallouts)
+        : undefined,
     };
   });
 }

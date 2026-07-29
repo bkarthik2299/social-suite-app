@@ -14,8 +14,8 @@ describe('OpenRouter mission policy', () => {
       'anthropic/claude-haiku-4.5',
     ])).toEqual([
       'openai/gpt-5.4-mini',
-      'deepseek/deepseek-v4-pro',
       'anthropic/claude-haiku-4.5',
+      'deepseek/deepseek-v4-pro',
     ]);
   });
 
