@@ -5,11 +5,13 @@ import {
   applyContentPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
+  campaignPlatformConsistencyFindings,
   campaignSectionMinimumCount,
   campaignSectionValidationError,
   deterministicQualityFindings,
   limitCampaignPackToContract,
   repairCampaignPack,
+  reviewFindingResolvedByPatches,
 } from '../../supabase/functions/_shared/campaign_workflow';
 import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection, requirePlannerResearch } from '../../supabase/functions/_shared/agent_contracts';
 
@@ -26,6 +28,30 @@ const pack = (): CampaignPack => ({
 });
 
 describe('campaign workflow helpers', () => {
+  it('recognizes a patched LinkedIn opening and CTA as resolving the item-level QA finding', () => {
+    const finding = {
+      group: 'socialPosts' as const,
+      index: 0,
+      severity: 'blocking' as const,
+      problem: 'The LinkedIn post is too broad in its opening and needs a professional insight before the CTA.',
+      suggestion: 'Revise the opening while keeping the CTA.',
+    };
+    expect(reviewFindingResolvedByPatches(finding, [{
+      group: 'socialPosts',
+      index: 0,
+      field: 'caption',
+      value: 'A revised construction-management opening. Request a demo.',
+      reason: 'Strengthens platform relevance.',
+    }])).toBe(true);
+    expect(reviewFindingResolvedByPatches({ ...finding, group: 'socialAds' }, [{
+      group: 'socialAds',
+      index: 0,
+      field: 'visualGuide',
+      value: 'Use a jobsite image.',
+      reason: 'Adds visual direction.',
+    }])).toBe(false);
+  });
+
   it('keeps fallback research specific to the client brief', () => {
     const planner = fallbackPlannerOutput(
       'Target independent dental practice owners in the United States. The tone should be smart, warm and slightly playful. The goal is to make practice owners book a discovery call. Please research recent patient expectations around online booking, response times and first impressions. Create 4 social posts and a 7-day content calendar. Do not invent statistics or promise guaranteed growth.',
@@ -118,10 +144,17 @@ describe('campaign workflow helpers', () => {
     };
     const input = pack();
     input.socialPosts = [input.socialPosts[0]];
+    input.socialPosts[0].name = 'Facebook Paid Ad 1';
+    input.socialPosts[0].topic = 'Google Search ad';
+    input.socialPosts[0].caption = 'Use this Google Search ad to reach the audience.';
     input.socialPosts[0].creativeBrief = 'Turn the Facebook ad and Google Search ad angles into one organic idea.';
-    input.socialPosts[0].visualGuide = 'Responsive search ad companion visual with a clean phone mockup.';
+    input.socialPosts[0].visualGuide = 'Responsive search ad companion visual; Facebook-friendly phone mockup.';
     input.googleAds = [input.googleAds[0]];
-    input.socialAds = [{ ...input.socialAds[0], platform: 'instagram' }];
+    input.socialAds = [{
+      ...input.socialAds[0],
+      platform: 'instagram',
+      visualGuide: 'N/A for search ad; if used in asset extensions, keep the image clean.',
+    }];
     input.blogOutlines = [];
     const prompt = 'i want some creative and funny social media campaign with some insta posts, facebook ads and some google ads to promote the berrystudio app';
 
@@ -134,10 +167,36 @@ describe('campaign workflow helpers', () => {
 
     const aligned = alignCampaignPackToRequestedPlatforms(input, prompt);
     expect(aligned.socialPosts[0].platforms).toEqual(['instagram']);
+    expect(aligned.socialPosts[0].name).toBe('Instagram post 1');
+    expect(aligned.socialPosts[0].topic).toBe('Instagram organic post');
+    expect(aligned.socialPosts[0].caption).toBe('Use this Instagram post to reach the audience.');
     expect(aligned.socialPosts[0].creativeBrief).toBe('Turn the Instagram post and Instagram post angles into one organic idea.');
-    expect(aligned.socialPosts[0].visualGuide).toBe('Instagram post companion visual with a clean phone mockup.');
+    expect(aligned.socialPosts[0].visualGuide).toBe('Instagram post companion visual; Instagram-friendly phone mockup.');
     expect(aligned.socialAds[0].platform).toBe('facebook');
+    expect(aligned.socialAds[0].visualGuide).toContain('Facebook feed');
+    expect(aligned.socialAds[0].visualGuide).not.toMatch(/search ad|asset extensions/i);
     expect(aligned.blogOutlines).toEqual([]);
+    expect(campaignPlatformConsistencyFindings(aligned, prompt)).toEqual([]);
+
+    const contradictory = pack();
+    contradictory.socialPosts = [{
+      ...contradictory.socialPosts[0],
+      topic: 'Google Search ad',
+      platforms: ['instagram'],
+      creativeBrief: 'Write this as a Facebook organic post.',
+    }];
+    expect(campaignPlatformConsistencyFindings(contradictory, prompt)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'socialPosts', severity: 'blocking' }),
+    ]));
+
+    contradictory.socialAds[0] = {
+      ...contradictory.socialAds[0],
+      platform: 'facebook',
+      visualGuide: 'N/A for search ad; use this in asset extensions.',
+    };
+    expect(campaignPlatformConsistencyFindings(contradictory, prompt)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'socialAds', severity: 'blocking' }),
+    ]));
   });
 
   it('keeps a useful creative direction when the strategist model times out', () => {
@@ -148,6 +207,8 @@ describe('campaign workflow helpers', () => {
     const direction = fallbackCreativeDirection(planner);
     expect(direction.title).toBe('Your waiting room starts online');
     expect(direction.contentAngles.length).toBeGreaterThanOrEqual(5);
+    expect(direction.contentAngles.join(' ')).toContain('independent dental practice owners');
+    expect(direction.contentAngles.join(' ')).not.toContain('First impression: show the moments');
     expect(direction.strategy.contentPillars).toHaveLength(4);
     const partial = normalizeCreativeDirection({
       title: 'The Digital Front Door',
@@ -175,6 +236,27 @@ describe('campaign workflow helpers', () => {
     const brand = { ...emptyBrandInstructions(), prohibitedTerms: ['transform your practice'] };
     expect(deterministicQualityFindings(input, brand)).toEqual(expect.arrayContaining([
       expect.objectContaining({ group: 'socialPosts', index: 0, severity: 'blocking' }),
+    ]));
+  });
+
+  it('matches prohibited terms as whole words instead of substrings', () => {
+    const brand = { ...emptyBrandInstructions(), prohibitedTerms: ['date'] };
+    const input = pack();
+    input.socialPosts[0].caption = 'Project updates should be easier to review.';
+    expect(deterministicQualityFindings(input, brand)).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ problem: expect.stringContaining('prohibited brand wording: date') }),
+    ]));
+    input.socialPosts[0].caption = 'Do not publish a date before it is confirmed.';
+    expect(deterministicQualityFindings(input, brand)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ problem: expect.stringContaining('prohibited brand wording: date') }),
+    ]));
+  });
+
+  it('flags genuinely duplicated copy without warning on normal cross-channel brand overlap', () => {
+    const input = pack();
+    input.socialPosts[1].caption = input.socialPosts[0].caption;
+    expect(deterministicQualityFindings(input, emptyBrandInstructions())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'socialPosts', index: 1, severity: 'warning', problem: expect.stringContaining('100% word overlap') }),
     ]));
   });
 
@@ -217,6 +299,39 @@ describe('campaign workflow helpers', () => {
     expect(deterministicQualityFindings(input, emptyBrandInstructions())).toEqual(expect.arrayContaining([
       expect.objectContaining({ group: 'googleAds', severity: 'blocking', problem: expect.stringContaining('keyword group') }),
     ]));
+  });
+
+  it('removes generic conversion actions from inferred Google keyword lists', () => {
+    const input = pack();
+    input.googleAds[0].keywords = ['Book a Demo', 'orthodontic practice software'];
+    input.googleAds[0].topic = 'orthodontic practice software';
+
+    expect(deterministicQualityFindings(input, emptyBrandInstructions())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'googleAds', severity: 'blocking', problem: expect.stringContaining('CTA text') }),
+    ]));
+
+    const repaired = repairCampaignPack(input, {
+      desiredAction: 'Book a Demo',
+      keywordTargets: [],
+      confirmedFacts: [],
+    }).pack;
+    expect(repaired.googleAds[0].keywords).toEqual(['orthodontic practice software']);
+  });
+
+  it('removes unsupported audience-attribution framing before final QA', () => {
+    const input = pack();
+    input.socialAds[0].primaryText = 'Practice managers and clinic owners tell us the same thing: too much time is lost to admin.';
+
+    expect(deterministicQualityFindings(input, emptyBrandInstructions())).toEqual(expect.arrayContaining([
+      expect.objectContaining({ group: 'socialAds', severity: 'blocking', problem: expect.stringContaining('unsupported customer') }),
+    ]));
+
+    const repaired = repairCampaignPack(input, {
+      desiredAction: 'Book a Demo',
+      keywordTargets: [],
+      confirmedFacts: [],
+    }).pack;
+    expect(repaired.socialAds[0].primaryText).toBe('Too much time is lost to admin.');
   });
 
   it('preserves a client keyword list and repairs coverage without choosing one primary keyword', () => {
