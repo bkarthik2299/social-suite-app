@@ -87,15 +87,26 @@ export function alignCampaignPackToRequestedPlatforms(pack: CampaignPack, prompt
       return {
         ...post,
         platforms,
+        name: alignOrganicChannelText(post.name, platforms[0]) || post.name,
+        topic: alignOrganicTopic(post.topic, platforms[0]),
+        caption: alignOrganicChannelText(post.caption, platforms[0]) || post.caption,
         creativeBrief: alignOrganicChannelText(post.creativeBrief, platforms[0]),
         visualGuide: alignOrganicChannelText(post.visualGuide, platforms[0]),
       };
     }),
     socialAds: pack.socialAds.map((ad, index) => {
-      if (!requested.paidSocial.length || requested.paidSocial.includes(ad.platform)) return ad;
+      const platform = requested.paidSocial.length && !requested.paidSocial.includes(ad.platform)
+        ? requested.paidSocial[index % requested.paidSocial.length]
+        : ad.platform;
       return {
         ...ad,
-        platform: requested.paidSocial[index % requested.paidSocial.length],
+        platform,
+        name: alignPaidSocialChannelText(ad.name, platform) || ad.name,
+        topic: alignPaidSocialChannelText(ad.topic, platform) || ad.topic,
+        primaryText: alignPaidSocialChannelText(ad.primaryText, platform) || ad.primaryText,
+        headline: alignPaidSocialChannelText(ad.headline, platform) || ad.headline,
+        description: alignPaidSocialChannelText(ad.description, platform) || ad.description,
+        visualGuide: alignPaidSocialChannelText(ad.visualGuide, platform),
       };
     }),
   });
@@ -105,11 +116,128 @@ function alignOrganicChannelText(value: string | undefined, platform: string) {
   if (!value) return value;
   const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
   return value
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+organic\s+posts?\b/gi, `${label} organic post`)
+    .replace(/\b(?:responsive\s+)?(?:google\s+)?search[- ]style\s+ads?\b/gi, `${label} organic post`)
     .replace(/\b(?:responsive\s+)?(?:google\s+)?search\s+ads?\b/gi, `${label} post`)
     .replace(/\bgoogle(?:\s+search)?\s+ads?\b/gi, `${label} post`)
     .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+(?:paid\s+)?ads?\b/gi, `${label} post`)
     .replace(/\bpaid\s+social\s+ads?\b/gi, `${label} post`)
-    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+posts?\b/gi, `${label} post`);
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+posts?\b/gi, `${label} post`)
+    .replace(/\bsearch[- ]focused\b/gi, `${label}-focused`)
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter)\b/gi, label)
+    .replace(/\bX\b(?=\s+(?:post|thread|organic|feed|content|first|friendly)\b)/g, label);
+}
+
+function alignPaidSocialChannelText(value: string | undefined, platform: string) {
+  if (!value) return value;
+  const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
+  return value
+    .replace(
+      /\bn\/?a\s+for\s+(?:a\s+)?(?:google\s+)?search\s+ads?\s*;?\s*(?:if\s+used\s+in\s+asset\s+extensions,?\s*)?/gi,
+      `For the ${label} feed, `,
+    )
+    .replace(/\b(?:responsive\s+)?(?:google\s+)?search[- ]style\s+ads?\b/gi, `${label} paid social ad`)
+    .replace(/\b(?:responsive\s+)?(?:google\s+)?search\s+ads?\b/gi, `${label} paid social ad`)
+    .replace(/\basset\s+extensions?\b/gi, `${label} feed placement`)
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter)\b/gi, label)
+    .replace(/\bX\b(?=\s+(?:post|thread|organic|feed|content|first|friendly|ad)\b)/g, label)
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function alignOrganicTopic(value: string, platform: string) {
+  if (!/\b(?:facebook|instagram|insta|linkedin|twitter|google|search|paid|organic|social\s+ad)\b/i.test(value)) return value;
+  const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
+  return `${label} organic post`;
+}
+
+export function campaignPlatformConsistencyFindings(pack: CampaignPack, prompt: string): QaFinding[] {
+  const requested = extractRequestedChannelConstraints(prompt);
+  const findings: QaFinding[] = [];
+
+  pack.socialPosts.forEach((post, index) => {
+    if (requested.organicSocial.length) {
+      const invalidPlatform = post.platforms.find((platform) => !requested.organicSocial.includes(platform));
+      if (invalidPlatform) {
+        findings.push({
+          group: 'socialPosts',
+          index,
+          severity: 'blocking',
+          problem: `Organic post uses unrequested platform ${invalidPlatform}.`,
+          suggestion: `Use only the requested organic platforms: ${requested.organicSocial.join(', ')}.`,
+        });
+      }
+    }
+    const expectedPlatforms = post.platforms.length ? post.platforms : requested.organicSocial;
+    const metadata = `${post.name} ${post.topic} ${post.creativeBrief || ''} ${post.visualGuide || ''}`;
+    const conflictingChannel = organicMetadataConflict(metadata, expectedPlatforms);
+    if (conflictingChannel) {
+      findings.push({
+        group: 'socialPosts',
+        index,
+        severity: 'blocking',
+        problem: `Organic post metadata still describes ${conflictingChannel} instead of ${expectedPlatforms.join(', ') || 'its selected organic platform'}.`,
+        suggestion: 'Make topic, creative brief, visual guide, and platform fields describe the same organic asset.',
+      });
+    }
+  });
+
+  pack.socialAds.forEach((ad, index) => {
+    if (requested.paidSocial.length && !requested.paidSocial.includes(ad.platform)) {
+      findings.push({
+        group: 'socialAds',
+        index,
+        severity: 'blocking',
+        problem: `Paid social ad uses unrequested platform ${ad.platform}.`,
+        suggestion: `Use only the requested paid platforms: ${requested.paidSocial.join(', ')}.`,
+      });
+    }
+    const metadata = `${ad.name} ${ad.topic} ${ad.visualGuide || ''}`;
+    const conflictingChannel = paidSocialMetadataConflict(metadata, ad.platform);
+    if (!conflictingChannel) return;
+    findings.push({
+      group: 'socialAds',
+      index,
+      severity: 'blocking',
+      problem: `Paid social ad metadata still describes ${conflictingChannel} instead of ${ad.platform}.`,
+      suggestion: 'Make the ad name, topic, visual guide, and platform fields describe the same paid social asset.',
+    });
+  });
+
+  return findings;
+}
+
+function organicMetadataConflict(value: string, expectedPlatforms: string[]) {
+  if (/\b(?:google(?:\s+search)?|responsive\s+search|search(?:[- ]style)?)\s+ads?\b|\basset\s+extensions?\b/i.test(value)) return 'a Google/Search ad';
+  if (/\b(?:paid\s+social|social\s+ad)\b/i.test(value)) return 'a paid social ad';
+  const platformPatterns: Array<[string, RegExp]> = [
+    ['Instagram', /\b(?:instagram|insta)\b/i],
+    ['Facebook', /\bfacebook\b/i],
+    ['LinkedIn', /\blinkedin\b/i],
+    ['X/Twitter', /\btwitter\b|\bx(?:\/twitter)?\s+(?:post|thread|organic)\b/i],
+  ];
+  for (const [label, pattern] of platformPatterns) {
+    const normalized = label === 'X/Twitter' ? 'x' : label.toLowerCase();
+    if (pattern.test(value) && !expectedPlatforms.includes(normalized)) return `${label} content`;
+  }
+  return '';
+}
+
+function paidSocialMetadataConflict(value: string, expectedPlatform: string) {
+  if (/\b(?:google(?:\s+search)?|responsive\s+search|search(?:[- ]style)?)\s+ads?\b|\basset\s+extensions?\b/i.test(value)) {
+    return 'a Google/Search ad';
+  }
+  const platformPatterns: Array<[string, RegExp]> = [
+    ['Instagram', /\b(?:instagram|insta)\b/i],
+    ['Facebook', /\bfacebook\b/i],
+    ['LinkedIn', /\blinkedin\b/i],
+    ['X/Twitter', /\btwitter\b|\bx(?:\/twitter)?\s+(?:post|thread|organic|ad)\b/i],
+  ];
+  for (const [label, pattern] of platformPatterns) {
+    const normalized = label === 'X/Twitter' ? 'x' : label.toLowerCase();
+    if (pattern.test(value) && normalized !== expectedPlatform) return `${label} content`;
+  }
+  return '';
 }
 
 export function campaignSectionValidationError(
@@ -148,6 +276,32 @@ export function applyContentPatches(pack: CampaignPack, patches: ContentPatch[])
   return normalizeCampaignPack(draft);
 }
 
+export function reviewFindingResolvedByPatches(finding: QaFinding, patches: ContentPatch[]) {
+  const relevant = patches.filter((patch) => patch.group === finding.group && patch.index === finding.index);
+  if (!relevant.length) return false;
+  const problem = finding.problem.toLowerCase();
+  const actionFields = finding.group === 'socialPosts'
+    ? ['caption']
+    : finding.group === 'googleAds'
+      ? ['headlines', 'descriptions', 'callouts']
+      : finding.group === 'socialAds'
+        ? ['cta', 'primaryText', 'headline', 'description']
+        : ['title', 'excerpt', 'metaTitle', 'metaDescription', 'outline'];
+  const expectedFields = Array.from(new Set([
+    ...(problem.includes('visual') ? ['visualGuide'] : []),
+    ...(problem.includes('caption') || problem.includes('opening') ? ['caption'] : []),
+    ...(problem.includes('primary text') || problem.includes('primary copy') ? ['primaryText'] : []),
+    ...(problem.includes('keyword') ? ['keywords', 'headlines', 'descriptions'] : []),
+    ...(problem.includes('cta') || problem.includes('action') || problem.includes('next step') ? actionFields : []),
+    ...(problem.includes('headline') ? ['headline', 'headlines'] : []),
+    ...(problem.includes('description') ? ['description', 'descriptions'] : []),
+    ...(problem.includes('platform') ? ['platform', 'topic', 'creativeBrief', 'visualGuide'] : []),
+  ]));
+  return expectedFields.length
+    ? relevant.some((patch) => expectedFields.includes(patch.field))
+    : true;
+}
+
 export function repairCampaignPack(
   pack: CampaignPack,
   brief: Pick<InternalBrief, 'desiredAction'> & Partial<Pick<InternalBrief, 'keywordTargets' | 'confirmedFacts'>>,
@@ -156,7 +310,7 @@ export function repairCampaignPack(
   const notes: string[] = [];
   const repair = (value: string | undefined, location: string) => {
     if (!value) return value;
-    const repaired = repairActionLanguage(repairAwkwardActionPhrase(value), brief.desiredAction);
+    const repaired = repairUnsupportedAttribution(repairActionLanguage(repairAwkwardActionPhrase(value), brief.desiredAction));
     if (repaired !== value) notes.push(`${location}: aligned the wording with the requested action.`);
     return repaired;
   };
@@ -239,7 +393,8 @@ export function deterministicQualityFindings(
   for (let left = 0; left < copyItems.length; left += 1) {
     for (let right = left + 1; right < copyItems.length; right += 1) {
       const score = jaccard(copyItems[left].value, copyItems[right].value);
-      if (score < 0.58) continue;
+      const overlapThreshold = copyItems[left].group === copyItems[right].group ? 0.68 : 0.75;
+      if (score < overlapThreshold) continue;
       findings.push({
         group: copyItems[right].group,
         index: copyItems[right].index,
@@ -252,7 +407,7 @@ export function deterministicQualityFindings(
 
   const prohibited = brand.prohibitedTerms.map((term) => term.trim()).filter((term) => term.length >= 3);
   for (const item of copyItems) {
-    const matched = prohibited.filter((term) => item.value.toLowerCase().includes(term.toLowerCase()));
+    const matched = prohibited.filter((term) => containsWholeTerm(item.value, term));
     if (!matched.length) continue;
     findings.push({
       group: item.group,
@@ -272,6 +427,17 @@ export function deterministicQualityFindings(
       severity: 'blocking',
       problem: `Uses a different conversion action from the brief’s requested “${desiredAction}”.`,
       suggestion: 'Use the same requested next step consistently across every asset.',
+    });
+  }
+
+  for (const item of copyItems) {
+    if (!unsupportedAttributionPattern.test(item.value)) continue;
+    findings.push({
+      group: item.group,
+      index: item.index,
+      severity: 'blocking',
+      problem: 'Uses an unsupported customer or audience attribution as if it were a verified testimonial or research finding.',
+      suggestion: 'State the audience problem directly without claiming that customers or users reported it.',
     });
   }
 
@@ -295,6 +461,16 @@ export function deterministicQualityFindings(
       });
     }
     const keywords = cleanKeywords(ad.keywords);
+    const actionKeywords = keywords.filter(isGenericActionKeyword);
+    if (actionKeywords.length) {
+      findings.push({
+        group: 'googleAds',
+        index,
+        severity: 'blocking',
+        problem: `Uses conversion CTA text as a Google Search keyword: ${actionKeywords.join(', ')}.`,
+        suggestion: 'Keep keywords to real search terms; use the conversion action in headlines or descriptions instead.',
+      });
+    }
     const keywordWords = keywords.flatMap(searchThemeWords);
     const keywordHeadlineCount = ad.headlines.filter((headline) => {
       return keywords.some((keyword) => keywordMatchesText(keyword, headline));
@@ -420,6 +596,16 @@ export function deterministicQualityFindings(
   return findings.slice(0, 30);
 }
 
+function containsWholeTerm(value: string, term: string) {
+  const phrase = term
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  if (!phrase) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${phrase}(?=$|[^a-z0-9])`, 'i').test(value);
+}
+
 function repairActionLanguage(value: string, desiredAction: string) {
   if (/\bdiscovery call\b/i.test(desiredAction)) {
     const preferredAction = normalizePreferredAction(desiredAction);
@@ -437,6 +623,17 @@ function repairActionLanguage(value: string, desiredAction: string) {
 
 function repairAwkwardActionPhrase(value: string) {
   return value.replace(/,\s*and\s+worth\s+(?:booking|scheduling|requesting)[^.?!]+?\s+around(?=[.?!]|$)/gi, ', and simple to continue');
+}
+
+const unsupportedAttributionPattern = /\b(?:customers?|clients?|users?|patients?|practice managers?|clinic owners?|teams?)\s+(?:often\s+)?(?:tell us|say|report|agree|love)\b/i;
+
+function repairUnsupportedAttribution(value: string) {
+  const repaired = value.replace(
+    /\b(?:customers?|clients?|users?|patients?|practice managers?(?:\s+and\s+clinic owners?)?|clinic owners?|teams?)\s+(?:often\s+)?(?:tell us|say|report|agree)(?:\s+the same thing)?\s*:\s*/gi,
+    '',
+  ).trim();
+  if (!repaired || repaired === value) return value;
+  return `${repaired.charAt(0).toUpperCase()}${repaired.slice(1)}`;
 }
 
 function removeConversionActionFromHeading(value: string) {
@@ -488,12 +685,16 @@ function buildGoogleHeadlines(existing: string[], keywords: string[], desiredAct
     nonKeywordHeadlines.push(fallback);
   }
 
-  return uniqueCaseInsensitive([
+  const headlines = uniqueCaseInsensitive([
     ...keywordHeadlines,
     ...nonKeywordHeadlines.slice(0, 3),
     ...existing,
-    ...fallbackGoogleHeadlines(desiredAction),
-  ]).filter((headline) => headline.length <= 30 && !looksLikeIncompleteGoogleHeadline(headline)).slice(0, 15);
+  ]).filter((headline) => headline.length <= 30 && !looksLikeIncompleteGoogleHeadline(headline));
+  for (const fallback of fallbackGoogleHeadlines(desiredAction)) {
+    if (headlines.length >= 8) break;
+    if (!headlines.some((headline) => headline.toLowerCase() === fallback.toLowerCase())) headlines.push(fallback);
+  }
+  return headlines.slice(0, 15);
 }
 
 function buildGoogleDescriptions(existing: string[], keywords: string[]) {
@@ -540,9 +741,14 @@ function fallbackGoogleDescriptions(keyword = 'your options') {
 }
 
 function assignedKeywords(current: string[], topic: string, recoveredTargets: string[]) {
-  const combined = cleanKeywords([...(current || []), ...recoveredTargets]);
+  const combined = cleanKeywords([...(current || []), ...recoveredTargets]).filter((keyword) => !isGenericActionKeyword(keyword));
   if (combined.length) return combined;
-  return cleanKeywords([topic]);
+  return cleanKeywords([topic]).filter((keyword) => !isGenericActionKeyword(keyword));
+}
+
+function isGenericActionKeyword(value: string) {
+  return /^(?:(?:book|request|schedule)(?:\s+(?:a|your))?\s+demo(?:\s+today)?|contact\s+us|learn\s+more|get\s+started|sign\s+up|shop\s+now|download(?:\s+the)?\s+app)$/i
+    .test(value.trim());
 }
 
 function cleanKeywords(values: string[]) {

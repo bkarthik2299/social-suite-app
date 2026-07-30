@@ -67,6 +67,7 @@ export function payloadString(event: AiRunEvent | null, key: string) {
 
 export function sanitizeActivityText(value: string) {
   return value
+    .replace(/Tavily\s+research/gi, 'web research')
     .replace(/Tavily/gi, 'web research')
     .replace(/OpenRouter model\s+\S+/gi, 'the selected AI route')
     .replace(/OpenRouter/gi, 'AI generation');

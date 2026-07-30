@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { activityTrailEvents, eventHandoffDetails } from './aiActivityTrail';
+import { activityTrailEvents, eventHandoffDetails, sanitizeActivityText } from './aiActivityTrail';
 import type { AiRunEvent } from '@/types/ai';
 
 function runEvent(input: Partial<AiRunEvent> & Pick<AiRunEvent, 'id' | 'event_type' | 'created_at'>): AiRunEvent {
@@ -14,6 +14,10 @@ function runEvent(input: Partial<AiRunEvent> & Pick<AiRunEvent, 'id' | 'event_ty
 }
 
 describe('ai activity trail helpers', () => {
+  it('keeps provider-neutral research messages grammatical', () => {
+    expect(sanitizeActivityText('Tavily research was started.')).toBe('web research was started.');
+  });
+
   it('keeps all handoff events while limiting ordinary recent activity', () => {
     const events = [
       runEvent({ id: 'planning', event_type: 'planning', created_at: '2026-07-01T10:00:00.000Z' }),

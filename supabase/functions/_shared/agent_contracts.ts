@@ -286,6 +286,17 @@ export function fallbackCreativeDirection(planner: PlannerOutput): CreativeDirec
   const title = roughLine || planner.internalBrief.offerOrSubject || 'Campaign Direction';
   const desiredAction = planner.internalBrief.desiredAction || 'take the requested next step';
   const audience = planner.internalBrief.audience || 'the stated audience';
+  const primaryAudience = audience.split(';')[0]?.trim() || audience;
+  const offeringFact = planner.internalBrief.confirmedFacts.find((fact) => /^\s*business and offering\s*:/i.test(fact));
+  const subject = conciseOffering(
+    offeringFact?.replace(/^\s*business and offering\s*:\s*/i, '')
+      || planner.internalBrief.offerOrSubject
+      || 'the verified offering',
+  );
+  const proofPoint = planner.internalBrief.confirmedFacts.find((fact) => (
+    !/^\s*(?:brand name|business and offering|primary audience|official website|primary (?:brand )?cta|verified brand colors)\s*:/i.test(fact)
+  ));
+  const proofPhrase = conciseFact(proofPoint || 'one confirmed brand fact');
   const channelGuidance = Object.fromEntries(planner.internalBrief.requestedChannels.map((channel) => {
     const normalized = channel.toLowerCase();
     if (normalized.includes('google') || normalized.includes('search')) {
@@ -303,18 +314,18 @@ export function fallbackCreativeDirection(planner: PlannerOutput): CreativeDirec
     return [channel, 'Use this channel for a distinct stage of the campaign instead of repeating another asset.'];
   }));
   const contentAngles = [
-    'First impression: show the moments that shape the audience experience before the main interaction begins.',
-    'Ease and clarity: explain one practical way to remove avoidable friction from the next step.',
-    'Responsiveness: focus on clear, timely communication and understandable next steps.',
-    'Everyday journey: show how the experience works in the audience’s real context, especially on mobile when relevant.',
-    'Practical self-check: give the audience a simple way to review the current experience without fear or hype.',
+    compact(`Audience reality: show one recognizable problem, need, or goal for ${primaryAudience}.`, 280),
+    compact(`Offering in practice: explain one verified way ${subject} is relevant to that audience need.`, 280),
+    'Useful detail: turn a confirmed capability or workflow from the brief into a concrete, easy-to-understand benefit.',
+    compact(`Proof without hype: build the message around ${proofPhrase} without inventing outcomes or guarantees.`, 280),
+    compact(`Decision support: answer one practical question ${primaryAudience} may have before taking the next step.`, 280),
     `Low-pressure action: invite the audience to ${desiredAction.replace(/[.!?]+$/, '')} with a useful reason to continue.`,
   ];
   return {
     title,
     centralIdea: roughLine || planner.internalBrief.objective,
-    audienceProblem: `${audience} need a clear, trustworthy path from first impression to the next step.`,
-    promise: `Give ${audience} a clearer, evidence-led reason to ${desiredAction.replace(/[.!?]+$/, '')}.`,
+    audienceProblem: compact(`${primaryAudience} need a clear, trustworthy answer to the problems or goals connected to ${subject}.`, 400),
+    promise: compact(`Show how ${subject} is relevant to ${primaryAudience}, then give them a clear reason to ${desiredAction.replace(/[.!?]+$/, '')}.`, 400),
     keyMessages: planner.internalBrief.confirmedFacts.slice(0, 5),
     callsToAction: planner.internalBrief.desiredAction ? [planner.internalBrief.desiredAction] : [],
     contentAngles,
@@ -324,10 +335,10 @@ export function fallbackCreativeDirection(planner: PlannerOutput): CreativeDirec
       summary: `${planner.internalBrief.objective} Keep every asset connected by one recognizable idea, while using a different audience insight, practical angle, or stage of the journey in each piece. The desired action is to ${desiredAction.replace(/[.!?]+$/, '')}.`,
       objectives: [planner.internalBrief.objective].filter(Boolean),
       contentPillars: [
-        'The experience and first impression formed before the main interaction.',
-        'Practical ease, clarity, and reduced friction in the audience journey.',
-        'Responsive communication and understandable next steps.',
-        'Evidence-led guidance with a warm, low-pressure invitation to act.',
+        compact(`The real needs, friction points, and goals of ${primaryAudience}.`, 240),
+        compact(`The verified offering and practical value of ${subject}.`, 240),
+        'Confirmed brand facts and responsible proof without unsupported claims.',
+        `A clear, natural path to ${desiredAction.replace(/[.!?]+$/, '')}.`,
       ],
     },
   };
@@ -529,7 +540,25 @@ function booleanValue(input: unknown, fallback: boolean): boolean {
 }
 
 function compact(input: string, maxLength: number) {
-  return input.replace(/\s+/g, ' ').trim().slice(0, maxLength);
+  const normalized = input.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) return normalized;
+  const candidate = normalized.slice(0, Math.max(1, maxLength - 1));
+  const wordBoundary = candidate.lastIndexOf(' ');
+  const clipped = wordBoundary >= Math.floor(maxLength * 0.65)
+    ? candidate.slice(0, wordBoundary)
+    : candidate;
+  return `${clipped.trim()}…`;
+}
+
+function conciseOffering(input: string) {
+  const normalized = input.replace(/\([^)]*\)/g, '').replace(/\s+/g, ' ').trim();
+  const offering = normalized.match(/\b(?:offering|offers|provides)\s+([^.!;]+)/i)?.[1]?.trim();
+  return compact(offering || normalized.split(/[.!;]/)[0] || 'the verified offering', 150);
+}
+
+function conciseFact(input: string) {
+  const withoutLabel = input.replace(/^\s*[^:]{1,80}:\s*/, '').trim();
+  return compact(withoutLabel.split(/[.!?]/)[0] || withoutLabel, 170);
 }
 
 function sentenceMatch(input: string, pattern: RegExp) {

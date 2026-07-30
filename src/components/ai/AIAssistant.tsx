@@ -78,7 +78,7 @@ import type { AiAgent, AiArtifact, AiDraftSelection, AiRun, AiRunEvent, AiRunSte
 
 const agentActivity = [
   { name: 'Planner Agent', message: 'Resolving destination, campaign length, output types, and approval mode.' },
-  { name: 'Brand Guide Agent', message: 'Filtering brand knowledge for tone, writing rules, color cues, and healthcare guardrails.' },
+  { name: 'Brand Guide Agent', message: 'Filtering brand knowledge for tone, writing rules, color cues, and campaign guardrails.' },
   { name: 'Research Agent', message: 'Preparing research context.' },
   { name: 'Creative Strategist', message: 'Turning the brief, brand rules, and research into one connected idea with distinct content angles.' },
   { name: 'Copywriter Agent', message: 'Drafting channel-ready campaign copy from the brief, brand guide, and research context.' },
@@ -437,7 +437,16 @@ export function AIAssistant() {
     setMissionStartedAt(Date.now());
     setRunningSeconds(0);
 
-    let brandKnowledgeDocumentId = brandKnowledgeDocument?.status === 'ready' ? brandKnowledgeDocument.id : null;
+    const selectedGuide = guides.find((guide) => guide.id === selectedRemoteBrandGuideId);
+    const brandKnowledgeIsStale = Boolean(
+      !brandKnowledgeDocument?.manual_edit
+        && brandKnowledgeDocument?.generated_at
+        && selectedGuide?.updated_at
+        && Date.parse(selectedGuide.updated_at) > Date.parse(brandKnowledgeDocument.generated_at),
+    );
+    let brandKnowledgeDocumentId = brandKnowledgeDocument?.status === 'ready' && !brandKnowledgeIsStale
+      ? brandKnowledgeDocument.id
+      : null;
     if (selectedRemoteBrandGuideId && !brandKnowledgeDocumentId) {
       try {
         const compiled = await compileKnowledge.mutateAsync();
