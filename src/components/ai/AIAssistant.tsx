@@ -2651,6 +2651,7 @@ function formatResearchQuestion(value: string) {
     .replace(/https?:\/\/[^\s)]+/gi, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s+(and|or|for|with|about|to|of|in|on)$/i, '')
+    .replace(/\b(?:campa|campai|campaig)$/i, 'campaign')
     .replace(/[,:;]+$/, '')
     .trim();
 
