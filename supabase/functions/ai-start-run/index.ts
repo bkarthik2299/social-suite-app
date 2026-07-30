@@ -1,6 +1,5 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
 import { openRouterJson, openRouterTextWithCitations } from '../_shared/openrouter.ts';
-import { structuredMissionModelPlan, structuredOutputModelId } from '../_shared/openrouter_policy.ts';
 import { captureAiTrace, type AiObservabilityContext } from '../_shared/posthog_ai.ts';
 import { hasCampaignOutput, normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pack.ts';
 import { campaignTopic, safeBlogOutline, safeCalendarItem, safeGoogleAd, safeSocialAd, safeSocialPost, safeStrategy } from '../_shared/campaign_recovery.ts';
@@ -141,8 +140,9 @@ const researchProviders: ResearchProviderOption[] = [
   { id: 'perplexity', name: 'Perplexity', model: 'perplexity/sonar-pro' },
 ];
 
-const MISSION_SOFT_LIMIT_MS = 135_000;
-const COPYWRITER_MIN_BUDGET_MS = 35_000;
+const MISSION_SOFT_LIMIT_MS = 118_000;
+const MISSION_WATCHDOG_MS = 125_000;
+const COPYWRITER_MIN_BUDGET_MS = 42_000;
 const PLANNER_TIMEOUT_MS = 25_000;
 const RESEARCH_TIMEOUT_MS = 45_000;
 const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
@@ -282,6 +282,30 @@ async function processMission({
   let activeStep: StepName = 'Planner Agent';
   const missionDeadlineAt = Date.now() + MISSION_SOFT_LIMIT_MS;
   const remainingMissionMs = () => Math.max(0, missionDeadlineAt - Date.now());
+  const watchdogMessage = 'The mission exceeded its safe processing window and was stopped. Please retry; no incomplete drafts were saved.';
+  const watchdogId = setTimeout(() => {
+    void (async () => {
+      const completedAt = new Date().toISOString();
+      const { data: timedOutRun } = await supabase.from('ai_runs').update({
+        status: 'failed',
+        error: watchdogMessage,
+        completed_at: completedAt,
+      }).eq('id', runId).eq('status', 'running').select('id').maybeSingle();
+      if (!timedOutRun?.id) return;
+      await supabase.from('ai_run_steps').update({
+        status: 'failed',
+        message: watchdogMessage,
+        completed_at: completedAt,
+      }).eq('run_id', runId).eq('status', 'working');
+      await supabase.from('ai_run_events').insert({
+        run_id: runId,
+        step_id: stepIds[stepSlugFor(activeStep)] || null,
+        event_type: 'run_timeout',
+        message: watchdogMessage,
+        payload: { activeStep },
+      });
+    })().catch(() => undefined);
+  }, MISSION_WATCHDOG_MS);
   let agentSkills: AgentSkills = {};
   let plannerOutput: PlannerOutput = fallbackPlannerOutput(body.prompt, { projectName: '', campaignName: '' });
   let brandKnowledge: LoadedBrandKnowledge = {
@@ -305,7 +329,7 @@ async function processMission({
       socialsuite_work_mode: workMode,
     },
   };
-  const structuredModelId = structuredOutputModelId(selectedModel.id);
+  const structuredModelId = selectedModel.id;
   const completedCustomSteps = new Set<string>();
   const stepSlugFor = (nameOrSlug: StepName) => builtInSlugByName.get(nameOrSlug) || nameOrSlug;
   const stepDefinitionFor = (nameOrSlug: StepName) => {
@@ -369,6 +393,7 @@ async function processMission({
       .single();
     if (error) throw error;
     if (data?.status === 'canceled') throw new MissionCanceledError();
+    if (data?.status !== 'running') throw new Error('The mission is no longer active.');
   };
 
   const addHandoffEvent = async (name: StepName, handoff: HandoffPayload) => {
@@ -585,6 +610,7 @@ async function processMission({
         sourceTitle: brandKnowledge.title,
         brandSkill: agentSkills['brand-guide'] || '',
         model: structuredModelId,
+        timeoutMs: Math.max(1_000, Math.min(BRAND_FILTER_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
         observability: withRunObservation(runObservability, 'brand-guide', 'mission-brand-filter'),
       });
       brandInstructions = groundBrandInstructionsWithBrand(brandInstructions, brandKnowledge.grounding);
@@ -688,7 +714,7 @@ async function processMission({
           brandKnowledge.grounding,
           agentSkills.research,
           structuredModelId,
-          Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()),
+          Math.max(1_000, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
           withRunObservation(runObservability, 'research-digest', 'mission-research-digest'),
         );
         researchBrief = sanitizeResearchBriefWithBrand(researchBrief, brandKnowledge.grounding, {
@@ -727,7 +753,7 @@ async function processMission({
             brandKnowledge.grounding,
             agentSkills.research,
             structuredModelId,
-            Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs()),
+            Math.max(1_000, Math.min(RESEARCH_DIGEST_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
             withRunObservation(runObservability, 'research-digest-tavily-fallback', 'mission-research-digest'),
           );
           researchBrief = sanitizeResearchBriefWithBrand(researchBrief, brandKnowledge.grounding, {
@@ -823,6 +849,7 @@ async function processMission({
       researchBrief,
       creativeSkill: agentSkills['creative-strategist'] || '',
       model: structuredModelId,
+      timeoutMs: Math.max(1_000, Math.min(CREATIVE_DIRECTION_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
       observability: withRunObservation(runObservability, 'creative-strategist', 'mission-creative-direction'),
     }), brandKnowledge.grounding, {
       ...plannerOutput.internalBrief,
@@ -854,7 +881,7 @@ async function processMission({
     await assertRunActive();
     activeStep = 'Copywriter Agent';
     const model = selectedModel.id;
-    const generationModelIds = generationFallbackModelIds(selectedModel, workMode);
+    const generationModelIds = [selectedModel.id];
     const generationPrimaryModel = generationModelIds[0] || model;
     const generationPrimaryOption = [...instantModels, ...deepWorkModels]
       .find((option) => option.id === generationPrimaryModel);
@@ -1164,11 +1191,13 @@ async function processMission({
     });
     await updateStep(activeStep, 'done', 'Saved the review artifact. The next click can create Social Suite drafts.');
 
-    const { error: completionError } = await supabase.from('ai_runs').update({
+    const { data: completedRun, error: completionError } = await supabase.from('ai_runs').update({
       status: 'needs_approval',
       output_summary: pack.strategy?.summary || 'Campaign draft pack is ready for approval.',
-    }).eq('id', runId);
+      completed_at: new Date().toISOString(),
+    }).eq('id', runId).eq('status', 'running').select('id').maybeSingle();
     if (completionError) throw completionError;
+    if (!completedRun?.id) throw new Error('The mission was no longer active when the review artifact was ready.');
     captureAiTrace({
       distinctId: userId,
       traceId: runId,
@@ -1228,7 +1257,11 @@ async function processMission({
       // Continue to the authoritative run status update below.
     }
     try {
-      await supabase.from('ai_runs').update({ status: 'failed', error: message }).eq('id', runId);
+      await supabase.from('ai_runs').update({
+        status: 'failed',
+        error: message,
+        completed_at: new Date().toISOString(),
+      }).eq('id', runId).eq('status', 'running');
     } catch {
       // Nothing else can be done from the Edge Function once the final status write fails.
     }
@@ -1247,6 +1280,8 @@ async function processMission({
         socialsuite_failed_step: activeStep,
       },
     });
+  } finally {
+    clearTimeout(watchdogId);
   }
 }
 
@@ -1664,9 +1699,10 @@ async function buildBrandInstructions(args: {
   sourceTitle: string;
   brandSkill: string;
   model: string;
+  timeoutMs?: number;
   observability?: AiObservabilityContext;
 }): Promise<BrandInstructions> {
-  const { plannerOutput, brandKnowledge, sourceTitle, brandSkill, model, observability } = args;
+  const { plannerOutput, brandKnowledge, sourceTitle, brandSkill, model, timeoutMs = BRAND_FILTER_TIMEOUT_MS, observability } = args;
   if (!brandKnowledge.trim()) return emptyBrandInstructions(sourceTitle);
   const fallback = emptyBrandInstructions(sourceTitle);
   try {
@@ -1674,7 +1710,7 @@ async function buildBrandInstructions(args: {
       model,
       temperature: 0.1,
       maxTokens: 1600,
-      timeoutMs: BRAND_FILTER_TIMEOUT_MS,
+      timeoutMs,
       observability,
       messages: [
         {
@@ -1715,16 +1751,17 @@ async function buildCreativeDirection(args: {
   researchBrief: ResearchBrief;
   creativeSkill: string;
   model: string;
+  timeoutMs?: number;
   observability?: AiObservabilityContext;
 }): Promise<CreativeDirection> {
-  const { plannerOutput, brandInstructions, brandGrounding, researchBrief, creativeSkill, model, observability } = args;
+  const { plannerOutput, brandInstructions, brandGrounding, researchBrief, creativeSkill, model, timeoutMs = CREATIVE_DIRECTION_TIMEOUT_MS, observability } = args;
   const fallback = fallbackCreativeDirection(plannerOutput);
   try {
     const result = await openRouterJson<unknown>({
       model,
       temperature: 0.35,
       maxTokens: 1800,
-      timeoutMs: CREATIVE_DIRECTION_TIMEOUT_MS,
+      timeoutMs,
       observability,
       messages: [
         {
@@ -2055,8 +2092,8 @@ async function buildCampaignPackInParts({
     };
   }
 
-  const sectionTimeoutMs = Math.max(18_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
-  const batchTimeoutMs = Math.max(20_000, Math.min(60_000, remainingForSectionsMs));
+  const sectionTimeoutMs = Math.max(6_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
+  const batchTimeoutMs = Math.max(6_000, Math.min(45_000, remainingForSectionsMs));
   const results = await withTimeout(Promise.all(sectionSpecs.map(async (section) => {
     if (section.expectedCount <= 0) {
       return { section, value: { [section.key]: [] }, error: '' };
@@ -2129,8 +2166,9 @@ async function generateCampaignSection({
   timeoutMs: number;
   observability?: AiObservabilityContext;
 }) {
-  const modelPlan = (models.length ? models : [deepWorkModels[0].id]).slice(0, 2);
-  const attemptTimeoutMs = Math.max(16_000, Math.min(25_000, Math.floor(timeoutMs / modelPlan.length)));
+  const modelPlan = models.slice(0, 1);
+  if (!modelPlan.length) throw new Error('No selected generation model was supplied.');
+  const attemptTimeoutMs = Math.max(5_000, Math.min(25_000, Math.floor(timeoutMs / modelPlan.length)));
   let lastError = '';
   for (const [modelIndex, model] of modelPlan.entries()) {
     const retryPrefix = modelIndex === 0
@@ -2200,16 +2238,6 @@ function campaignSectionPlatformError(input: unknown, key: GeneratedCampaignSect
   return findings.length
     ? findings.map((finding) => finding.problem).join(' ')
     : '';
-}
-
-function generationFallbackModelIds(selectedModel: AiModelOption, workMode: WorkMode) {
-  const fastRecoveryModels = workMode === 'deep'
-    ? [instantModels[1], instantModels[2], instantModels[0]]
-    : [instantModels[2], instantModels[1], instantModels[0]];
-  return structuredMissionModelPlan(
-    selectedModel.id,
-    fastRecoveryModels.map((model) => model.id),
-  );
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {

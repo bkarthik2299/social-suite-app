@@ -7,14 +7,12 @@ import {
 } from '../../supabase/functions/_shared/openrouter_policy';
 
 describe('OpenRouter mission policy', () => {
-  it('uses GPT-5.4-mini for schema-heavy output when DeepSeek Pro is selected', () => {
-    expect(structuredOutputModelId('deepseek/deepseek-v4-pro')).toBe('openai/gpt-5.4-mini');
+  it('uses only the explicitly selected model for structured mission output', () => {
+    expect(structuredOutputModelId('deepseek/deepseek-v4-pro')).toBe('deepseek/deepseek-v4-pro');
     expect(structuredMissionModelPlan('deepseek/deepseek-v4-pro', [
       'openai/gpt-5.4-mini',
       'anthropic/claude-haiku-4.5',
     ])).toEqual([
-      'openai/gpt-5.4-mini',
-      'anthropic/claude-haiku-4.5',
       'deepseek/deepseek-v4-pro',
     ]);
   });
@@ -24,7 +22,6 @@ describe('OpenRouter mission policy', () => {
       'openai/gpt-5.4-mini',
     ])).toEqual([
       'anthropic/claude-opus-4.7',
-      'openai/gpt-5.4-mini',
     ]);
   });
 

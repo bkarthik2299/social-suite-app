@@ -1,3 +1,5 @@
+import { sanitizeActivityText } from './aiActivityTrail';
+
 export type ResearchNoteFinding = {
   claim: string;
   sourceNumbers: number[];
@@ -13,6 +15,17 @@ export function researchNoteFindings(evidenceBrief: unknown, answer: string): Re
     : [];
 
   return structured.length ? structured : parseResearchAnswer(answer);
+}
+
+export function formatResearchCampaignFocus(input: string) {
+  return sanitizeActivityText(input)
+    .replace(/\s+/g, ' ')
+    .replace(/\s+(Offering|Audience|Desired action|Campaign plan|Objective|Requested outputs|Restrictions|Assumptions):\s*/gi, '\n\n$1: ')
+    .replace(/\s+Audience should be treated as\s+/i, '\n\nAudience details: ')
+    .replace(/\s+Keep the tone\s+/i, '\n\nTone: ')
+    .replace(/\s+The output should\s+/i, '\n\nOutput requirements: The output should ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function parseResearchAnswer(answer: string): ResearchNoteFinding[] {
@@ -45,7 +58,7 @@ function normalizeFinding(input: unknown): ResearchNoteFinding | null {
 }
 
 function normalizeTextFinding(input: string): ResearchNoteFinding | null {
-  const value = input.replace(/\s+/g, ' ').trim();
+  const value = sanitizeActivityText(input).replace(/\s+/g, ' ').trim();
   if (!value) return null;
   const sourceMatch = value.match(/\bSource numbers?:\s*([\d,\s]+)/i);
   const confidenceMatch = value.match(/\bConfidence:\s*(high|medium|low)\b/i);
@@ -72,7 +85,7 @@ function asRecord(input: unknown): Record<string, unknown> {
 }
 
 function stringValue(input: unknown) {
-  return typeof input === 'string' ? input.replace(/\s+/g, ' ').trim() : '';
+  return typeof input === 'string' ? sanitizeActivityText(input).replace(/\s+/g, ' ').trim() : '';
 }
 
 function numberArray(input: unknown) {

@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { researchNoteFindings } from './researchNotes';
+import { formatResearchCampaignFocus, researchNoteFindings } from './researchNotes';
 
 describe('research note findings', () => {
+  it('formats campaign focus into readable labeled sections', () => {
+    const formatted = formatResearchCampaignFocus('Verified context. Offering: South Indian snacks. Audience: Global diaspora. Desired action: Browse and buy products. Campaign plan: Use monsoon nostalgia. Keep the tone clear and warm. The output should avoid invented offers.â€¦');
+
+    expect(formatted).toContain('Verified context.\n\nOffering: South Indian snacks.');
+    expect(formatted).toContain('\n\nAudience: Global diaspora.');
+    expect(formatted).toContain('\n\nDesired action: Browse and buy products.');
+    expect(formatted).toContain('\n\nCampaign plan: Use monsoon nostalgia.');
+    expect(formatted).toContain('\n\nTone: clear and warm.');
+    expect(formatted).toContain('\n\nOutput requirements: The output should avoid invented offers.…');
+    expect(formatted).not.toContain('â€¦');
+  });
+
   it('uses the structured evidence brief without splitting a finding into bullets', () => {
     const findings = researchNoteFindings({
       findings: [{

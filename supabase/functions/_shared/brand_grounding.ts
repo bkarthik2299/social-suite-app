@@ -136,7 +136,7 @@ export function buildBrandGrounding({
     ...collectNestedStringArray(currentGuide.custom_sections, 'observedCtas'),
     ...writingDos,
   ]);
-  const primaryCta = ctaCandidates.map(canonicalCta).find(Boolean) || '';
+  const primaryCta = ctaCandidates.map((candidate) => canonicalCta(candidate)).find(Boolean) || '';
   const guideUpdatedAt = stringValue(currentGuide.updated_at);
   const documentStale = Boolean(
     guideUpdatedAt
@@ -325,7 +325,7 @@ export function brandGroundingQualityFindings(
   if (!grounding.requiredFacts.length) return [];
   const findings = brandStrategyGroundingFindings(pack.strategy, grounding);
   const packText = normalizeSearchText(JSON.stringify(pack));
-  const requiredCta = (grounding.primaryCta || context.desiredAction || '').replace(/[.!?]+$/, '').trim();
+  const requiredCta = campaignCta(grounding, context);
   if (requiredCta && !containsNormalizedPhrase(packText, requiredCta)) {
     findings.push(groundingFinding(`Campaign omits the verified campaign CTA “${requiredCta}”.`, 'Use the approved campaign CTA naturally in at least one relevant asset.'));
   }
@@ -474,7 +474,7 @@ export function applyBrandGroundingDefaults(
   grounding: BrandGrounding,
   context: BrandCampaignContext = {},
 ): CampaignPack {
-  const primaryCta = (grounding.primaryCta || context.desiredAction || '').replace(/[.!?]+$/, '').trim();
+  const primaryCta = campaignCta(grounding, context);
   const unmappedProducts = unmappedNamedProducts(grounding);
   const officialWebsite = verifiedWebsite(grounding, context);
   const sparseBrand = isSparseBrandGrounding(grounding);
@@ -822,16 +822,33 @@ function collectNestedStringArray(input: unknown, targetKey: string): string[] {
     : collectNestedStringArray(value, targetKey));
 }
 
-function canonicalCta(value: string) {
-  const quoted = value.match(/[“"]([^”"]{2,80})[”"]/g)
-    ?.map((match) => match.replace(/^[“"]|[”"]$/g, ''))
-    .find((match) => actionableCtaPattern.test(match));
-  if (quoted) return quoted;
-  const match = value.match(actionableCtaPattern);
-  return match?.[0] || '';
+function canonicalCta(value: string, inferIntent = false) {
+  const normalized = compact(value, 500);
+  if (!normalized) return '';
+  if (/\bbook(?:\s+a)?\s+(?:demo|discovery call)\b/i.test(normalized)) return 'Book a Demo';
+  if (/\brequest(?:\s+a)?\s+(?:demo|discovery call)\b/i.test(normalized)) return 'Request a Demo';
+  if (/\bschedule(?:\s+(?:a|your))?\s+(?:demo|call|consultation|appointment)\b/i.test(normalized)) {
+    const target = normalized.match(/\bschedule(?:\s+(?:a|your))?\s+(demo|call|consultation|appointment)\b/i)?.[1] || 'call';
+    return `Schedule a ${capitalizeFirst(target)}`;
+  }
+  if (/\bcontact(?:\s+us)?\b/i.test(normalized)) return 'Contact Us';
+  if (/\bget started\b/i.test(normalized)) return 'Get Started';
+  if (/\bstart(?:\s+a)?\s+(?:free\s+)?trial\b/i.test(normalized)) return 'Start a Trial';
+  if (/\bsign up\b/i.test(normalized)) return 'Sign Up';
+  if (/\bdownload(?:\s+the\s+app)?\b/i.test(normalized)) return 'Download the App';
+  if (/\bshop now\b/i.test(normalized)) return 'Shop Now';
+  if (/\blearn more\b/i.test(normalized)) return 'Learn More';
+  if (/\bapply now\b/i.test(normalized)) return 'Apply Now';
+  if (!inferIntent) return '';
+  if (/\b(?:shop|buy|purchase|order)\b|\bbrowse\b[^.!?]{0,80}\bproducts?\b/i.test(normalized)) return 'Shop Now';
+  if (/\b(?:visit|click|website|browse|explore|discover|read)\b/i.test(normalized)) return 'Learn More';
+  return '';
 }
 
-const actionableCtaPattern = /\b(?:book(?:\s+a)?\s+demo|schedule(?:\s+(?:a|your))?\s+[a-z ]{2,30}|request(?:\s+[a-z ]{2,30})?|contact(?:\s+us)?|get started|start(?:\s+a)?\s+trial|sign up|download(?:\s+the\s+app)?|shop now|learn more|apply now)\b/i;
+function campaignCta(grounding: BrandGrounding, context: BrandCampaignContext) {
+  return canonicalCta(grounding.primaryCta)
+    || canonicalCta(context.desiredAction || '', true);
+}
 
 function domainFromUrl(value: string) {
   try {
@@ -1022,7 +1039,7 @@ function sanitizeSparseBrandClaims(
 }
 
 function sparseBrandSafeSentence(grounding: BrandGrounding, context: BrandCampaignContext) {
-  const action = (context.desiredAction || grounding.primaryCta || 'Explore the product').replace(/[.!?]+$/, '').trim();
+  const action = campaignCta(grounding, context) || 'Explore the product';
   const audience = (context.audience || 'your team').replace(/[.!?]+$/, '').trim();
   return `${action.charAt(0).toUpperCase()}${action.slice(1)} to explore ${grounding.brandName} and evaluate it for ${audience}.`;
 }
@@ -1032,7 +1049,7 @@ function unsupportedSparseOutcomeHeadline(value: string) {
 }
 
 function sparseBrandHeadline(index: number, grounding: BrandGrounding, context: BrandCampaignContext) {
-  const action = (context.desiredAction || grounding.primaryCta || 'Explore the Product').replace(/[.!?]+$/, '').trim();
+  const action = campaignCta(grounding, context) || 'Explore the Product';
   const candidates = uniqueStrings([
     grounding.brandName,
     action,
@@ -1256,7 +1273,7 @@ function campaignAudience(context: BrandCampaignContext) {
 }
 
 function campaignAction(grounding: BrandGrounding, context: BrandCampaignContext) {
-  return (context.desiredAction || grounding.primaryCta || 'Explore the product').replace(/[.!?]+$/, '').trim();
+  return campaignCta(grounding, context) || 'Explore the product';
 }
 
 function lowercaseFirst(value: string) {
