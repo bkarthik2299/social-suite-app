@@ -512,8 +512,8 @@ export function applyBrandGroundingDefaults(
         ? sparseEditorialInstructions(grounding, context, post.platforms.join(' or ') || 'social')
         : post.creativeBrief,
       visualGuide: sparseBrand
-        ? sanitizeSparseVisualGuide(sanitizeUnverifiedPalette(post.visualGuide, grounding), grounding, context)
-        : sanitizeUnverifiedPalette(post.visualGuide, grounding),
+        ? sanitizeSparseVisualGuide(sanitizeVisualGuidePalette(post.visualGuide, grounding), grounding, context)
+        : sanitizeVisualGuidePalette(post.visualGuide, grounding),
     })),
     googleAds: pack.googleAds.map((ad, adIndex) => {
       let headlines = sparseBrand
@@ -562,7 +562,7 @@ export function applyBrandGroundingDefaults(
         description: sparseCopy?.description || sanitizeClaim(description),
         visualGuide: sparseBrand
           ? sparseSocialAdVisualGuide(index, grounding, context)
-          : sanitizeUnverifiedPalette(ad.visualGuide, grounding),
+          : sanitizeVisualGuidePalette(ad.visualGuide, grounding),
         cta: /\bdemo\b/i.test(primaryCta) ? 'contact_us' as const : ad.cta,
         destinationUrl: officialWebsite || undefined,
       };
@@ -1315,6 +1315,22 @@ function sanitizeUnverifiedPalette(value: string | undefined, grounding: BrandGr
   const sentences = value.split(/(?<=[.!?])\s+/).filter(Boolean);
   const sanitized = sentences.map((sentence) => (
     unverifiedPaletteReference(sentence, aliases) || namedColorMentions(sentence).length ? safeSentence : sentence
+  ));
+  return sanitized.filter((sentence, index) => index === 0 || sentence !== sanitized[index - 1]).join(' ');
+}
+
+function sanitizeVisualGuidePalette(value: string | undefined, grounding: BrandGrounding) {
+  if (!value) return value;
+  if (!grounding.brandColors.length) return sanitizeUnverifiedPalette(value, grounding);
+
+  const allowedColorFamilies = new Set(grounding.brandColors.flatMap((color) => colorFamilies(color.hex)));
+  if (!unsupportedNamedColors(value, allowedColorFamilies).length) return value;
+
+  const palette = grounding.brandColors.map(formatBrandColor).join(', ');
+  const safeSentence = `Use only the verified brand palette: ${palette}.`;
+  const sentences = value.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const sanitized = sentences.map((sentence) => (
+    unsupportedNamedColors(sentence, allowedColorFamilies).length ? safeSentence : sentence
   ));
   return sanitized.filter((sentence, index) => index === 0 || sentence !== sanitized[index - 1]).join(' ');
 }

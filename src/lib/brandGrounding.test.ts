@@ -346,6 +346,12 @@ None provided. (No case studies, testimonials, or data points available.)`;
     expect(brandGroundingQualityFindings(groundedPack, grounding())).toEqual(expect.arrayContaining([
       expect.objectContaining({ group: 'socialPosts', problem: expect.stringContaining('outside the verified brand palette') }),
     ]));
+
+    const repairedPalette = applyBrandGroundingDefaults(groundedPack, grounding());
+    expect(repairedPalette.socialPosts[0].visualGuide).toContain('verified brand palette');
+    expect(repairedPalette.socialPosts[0].visualGuide).not.toMatch(/\bgreen\b/i);
+    expect(brandGroundingQualityFindings(repairedPalette, grounding())).toEqual([]);
+
     groundedPack.socialPosts[0].visualGuide = 'Use verified purple and white brand colors.';
     expect(brandGroundingQualityFindings(groundedPack, grounding())).toEqual([]);
 

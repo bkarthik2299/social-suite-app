@@ -2150,7 +2150,13 @@ function ResearchNotesSheet({
 
             {notes.campaignGuidance && (
               <ResearchNoteSection title="Campaign Focus">
-                <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{notes.campaignGuidance}</p>
+                <div className="space-y-3">
+                  {notes.campaignGuidance.split(/\n{2,}/).map((section, index) => (
+                    <p key={`${section}-${index}`} className="break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">
+                      {section}
+                    </p>
+                  ))}
+                </div>
               </ResearchNoteSection>
             )}
 
@@ -2645,6 +2651,7 @@ function formatResearchQuestion(value: string) {
     .replace(/https?:\/\/[^\s)]+/gi, ' ')
     .replace(/\s+/g, ' ')
     .replace(/\s+(and|or|for|with|about|to|of|in|on)$/i, '')
+    .replace(/\b(?:campa|campai|campaig)$/i, 'campaign')
     .replace(/[,:;]+$/, '')
     .trim();
 

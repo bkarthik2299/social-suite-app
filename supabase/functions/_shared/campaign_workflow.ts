@@ -157,7 +157,8 @@ export function campaignPlatformConsistencyFindings(pack: CampaignPack, prompt: 
 
   pack.socialPosts.forEach((post, index) => {
     if (requested.organicSocial.length) {
-      const invalidPlatform = post.platforms.find((platform) => !requested.organicSocial.includes(platform));
+      const requestedOrganicPlatforms = requested.organicSocial.map(normalizeSocialPlatformAlias);
+      const invalidPlatform = post.platforms.find((platform) => !requestedOrganicPlatforms.includes(normalizeSocialPlatformAlias(platform)));
       if (invalidPlatform) {
         findings.push({
           group: 'socialPosts',
@@ -183,7 +184,7 @@ export function campaignPlatformConsistencyFindings(pack: CampaignPack, prompt: 
   });
 
   pack.socialAds.forEach((ad, index) => {
-    if (requested.paidSocial.length && !requested.paidSocial.includes(ad.platform)) {
+    if (requested.paidSocial.length && !requested.paidSocial.map(normalizeSocialPlatformAlias).includes(normalizeSocialPlatformAlias(ad.platform))) {
       findings.push({
         group: 'socialAds',
         index,
@@ -216,9 +217,10 @@ function organicMetadataConflict(value: string, expectedPlatforms: string[]) {
     ['LinkedIn', /\blinkedin\b/i],
     ['X/Twitter', /\btwitter\b|\bx(?:\/twitter)?\s+(?:post|thread|organic)\b/i],
   ];
+  const normalizedExpectedPlatforms = expectedPlatforms.map(normalizeSocialPlatformAlias);
   for (const [label, pattern] of platformPatterns) {
     const normalized = label === 'X/Twitter' ? 'x' : label.toLowerCase();
-    if (pattern.test(value) && !expectedPlatforms.includes(normalized)) return `${label} content`;
+    if (pattern.test(value) && !normalizedExpectedPlatforms.includes(normalized)) return `${label} content`;
   }
   return '';
 }
@@ -233,11 +235,17 @@ function paidSocialMetadataConflict(value: string, expectedPlatform: string) {
     ['LinkedIn', /\blinkedin\b/i],
     ['X/Twitter', /\btwitter\b|\bx(?:\/twitter)?\s+(?:post|thread|organic|ad)\b/i],
   ];
+  const normalizedExpectedPlatform = normalizeSocialPlatformAlias(expectedPlatform);
   for (const [label, pattern] of platformPatterns) {
     const normalized = label === 'X/Twitter' ? 'x' : label.toLowerCase();
-    if (pattern.test(value) && normalized !== expectedPlatform) return `${label} content`;
+    if (pattern.test(value) && normalized !== normalizedExpectedPlatform) return `${label} content`;
   }
   return '';
+}
+
+function normalizeSocialPlatformAlias(value: string) {
+  const normalized = value.trim().toLowerCase();
+  return normalized === 'twitter' || normalized === 'x/twitter' ? 'x' : normalized;
 }
 
 export function campaignSectionValidationError(

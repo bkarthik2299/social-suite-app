@@ -63,6 +63,7 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 
 type RequestBody = {
   prompt: string;
+  resumeRunId?: string;
   projectId?: string | null;
   folderId?: string | null;
   campaignId?: string | null;
@@ -140,18 +141,18 @@ const researchProviders: ResearchProviderOption[] = [
   { id: 'perplexity', name: 'Perplexity', model: 'perplexity/sonar-pro' },
 ];
 
-const MISSION_SOFT_LIMIT_MS = 118_000;
-const MISSION_WATCHDOG_MS = 125_000;
-const COPYWRITER_MIN_BUDGET_MS = 42_000;
-const PLANNER_TIMEOUT_MS = 25_000;
+const MISSION_SOFT_LIMIT_MS = 134_000;
+const MISSION_WATCHDOG_MS = 142_000;
+const COPYWRITER_MIN_BUDGET_MS = 32_000;
+const PLANNER_TIMEOUT_MS = 20_000;
 const RESEARCH_TIMEOUT_MS = 45_000;
 const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
 const SECTION_TIMEOUT_MS = 50_000;
-const BRAND_FILTER_TIMEOUT_MS = 18_000;
-const CREATIVE_DIRECTION_TIMEOUT_MS = 28_000;
+const BRAND_FILTER_TIMEOUT_MS = 14_000;
+const CREATIVE_DIRECTION_TIMEOUT_MS = 16_000;
 const QA_REVIEW_TIMEOUT_MS = 16_000;
-const CUSTOM_AGENT_MIN_BUDGET_MS = 20_000;
-const CUSTOM_AGENT_TIMEOUT_MS = 14_000;
+const CUSTOM_AGENT_MIN_BUDGET_MS = 36_000;
+const CUSTOM_AGENT_TIMEOUT_MS = 26_000;
 
 const stepDefinitions = [
   { slug: 'planner', agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -177,6 +178,58 @@ Deno.serve(async (req) => {
   try {
     const userId = await currentUserId(supabase);
     const body = await readJson<RequestBody>(req);
+    if (body.resumeRunId) {
+      const { data: existingRun, error: existingRunError } = await supabase
+        .from('ai_runs')
+        .select('*')
+        .eq('id', body.resumeRunId)
+        .eq('created_by', userId)
+        .eq('status', 'running')
+        .single();
+      if (existingRunError) throw existingRunError;
+
+      const workMode: WorkMode = existingRun.context?.workMode === 'deep' ? 'deep' : 'instant';
+      const selectedModel = modelForMode(workMode, existingRun.context);
+      const selectedResearchProvider = researchProviderFromContext(existingRun.context);
+      const agentWorkflow = await loadAgentWorkflow(supabase, existingRun.org_id);
+      const runStepDefinitions = await loadRunStepDefinitions(supabase, existingRun.org_id, agentWorkflow);
+      const { data: existingSteps, error: existingStepsError } = await supabase
+        .from('ai_run_steps')
+        .select('id,status,sort_order')
+        .eq('run_id', existingRun.id)
+        .order('sort_order');
+      if (existingStepsError) throw existingStepsError;
+      const stepIds = Object.fromEntries((existingSteps || []).map((step, index) => [runStepDefinitions[index]?.slug, step.id])) as Record<StepName, string>;
+      const completedStepSlugs = (existingSteps || [])
+        .map((step, index) => (step.status === 'done' || step.status === 'skipped') ? runStepDefinitions[index]?.slug : '')
+        .filter(Boolean);
+      EdgeRuntime.waitUntil(processMission({
+        supabase,
+        body: {
+          prompt: existingRun.prompt,
+          projectId: existingRun.project_id,
+          folderId: existingRun.folder_id,
+          campaignId: existingRun.campaign_id,
+          brandGuideId: existingRun.brand_guide_id,
+          brandKnowledgeDocumentId: existingRun.brand_knowledge_document_id,
+          context: existingRun.context || {},
+        },
+        runId: existingRun.id,
+        stepIds,
+        workMode,
+        selectedModel,
+        selectedResearchProvider,
+        orgId: existingRun.org_id,
+        userId,
+        agentWorkflow,
+        runStepDefinitions,
+        resumeFromCopywriter: true,
+        completedStepSlugs,
+        authorization: req.headers.get('authorization') || '',
+        apiKey: req.headers.get('apikey') || '',
+      }));
+      return jsonResponse({ run: existingRun, resumed: true });
+    }
     if (!body.prompt?.trim()) return jsonResponse({ error: 'prompt is required' }, 400);
 
     const workMode = body.context?.workMode === 'deep' ? 'deep' : 'instant';
@@ -245,6 +298,8 @@ Deno.serve(async (req) => {
       userId,
       agentWorkflow,
       runStepDefinitions,
+      authorization: req.headers.get('authorization') || '',
+      apiKey: req.headers.get('apikey') || '',
     }));
 
     return jsonResponse({ run, artifact: null });
@@ -265,6 +320,10 @@ async function processMission({
   userId,
   agentWorkflow,
   runStepDefinitions,
+  resumeFromCopywriter = false,
+  completedStepSlugs = [],
+  authorization,
+  apiKey,
 }: {
   supabase: SupabaseClient;
   body: RequestBody;
@@ -277,6 +336,10 @@ async function processMission({
   userId: string;
   agentWorkflow: string[];
   runStepDefinitions: RunStepDefinition[];
+  resumeFromCopywriter?: boolean;
+  completedStepSlugs?: string[];
+  authorization: string;
+  apiKey: string;
 }) {
   const missionStartedAt = performance.now();
   let activeStep: StepName = 'Planner Agent';
@@ -319,6 +382,9 @@ async function processMission({
   let researchBrief = emptyResearchBrief();
   let creativeDirection = fallbackCreativeDirection(plannerOutput);
   let qaDetailedFindings: QaFinding[] = [];
+  let destination: Awaited<ReturnType<typeof loadDestinationContext>> = { projectName: '', folderName: '', campaignName: '' };
+  let agentSkillContext = '';
+  let researchSources: TavilySearchResponse['results'] = [];
   const runObservability: AiObservabilityContext = {
     distinctId: userId,
     traceId: runId,
@@ -330,7 +396,7 @@ async function processMission({
     },
   };
   const structuredModelId = selectedModel.id;
-  const completedCustomSteps = new Set<string>();
+  const completedCustomSteps = new Set<string>(completedStepSlugs);
   const stepSlugFor = (nameOrSlug: StepName) => builtInSlugByName.get(nameOrSlug) || nameOrSlug;
   const stepDefinitionFor = (nameOrSlug: StepName) => {
     const slug = stepSlugFor(nameOrSlug);
@@ -538,15 +604,27 @@ async function processMission({
 
   try {
     await assertRunActive();
-    activeStep = 'Planner Agent';
-    const destination = await loadDestinationContext(supabase, body);
+    destination = await loadDestinationContext(supabase, body);
     agentSkills = await loadAgentSkills(supabase, orgId);
-    const agentSkillContext = formatAgentSkillContext(agentSkills, agentWorkflow);
+    agentSkillContext = formatAgentSkillContext(agentSkills, agentWorkflow);
     brandKnowledge = await loadBrandKnowledge(
       supabase,
       body.brandGuideId || null,
       body.brandKnowledgeDocumentId || null,
     );
+    if (resumeFromCopywriter) {
+      activeStep = 'Copywriter Agent';
+      const continuation = await loadMissionContinuationState(supabase, runId, body.prompt, destination, brandKnowledge.title);
+      plannerOutput = continuation.plannerOutput;
+      brandInstructions = continuation.brandInstructions;
+      researchBrief = continuation.researchBrief;
+      creativeDirection = continuation.creativeDirection;
+      researchSources = continuation.researchSources;
+      await addEvent('Copywriter Agent', 'continuation_started', 'Copywriter resumed in a fresh Edge Function budget using the completed planning handoff.', {
+        selectedModel: selectedModel.id,
+      });
+    } else {
+    activeStep = 'Planner Agent';
     await updateStep(activeStep, 'working', `Understanding the brief and preparing ${workMode === 'deep' ? 'a focused research question' : 'campaign guidance'}.`);
     plannerOutput = await buildPlannerOutput(
       body.prompt,
@@ -601,64 +679,73 @@ async function processMission({
     await completeCustomGuidanceStepsBefore('brand-guide');
 
     await assertRunActive();
-    activeStep = 'Brand Guide Agent';
-    await updateStep(activeStep, 'working', brandKnowledge.markdown ? 'Selecting campaign rules while preserving verified brand identity, audience, offering, and CTA.' : 'Checking whether brand knowledge is available.');
-    if (brandKnowledge.markdown) {
-      brandInstructions = await buildBrandInstructions({
-        plannerOutput,
-        brandKnowledge: brandKnowledge.markdown,
-        sourceTitle: brandKnowledge.title,
-        brandSkill: agentSkills['brand-guide'] || '',
-        model: structuredModelId,
-        timeoutMs: Math.max(1_000, Math.min(BRAND_FILTER_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
-        observability: withRunObservation(runObservability, 'brand-guide', 'mission-brand-filter'),
-      });
-      brandInstructions = groundBrandInstructionsWithBrand(brandInstructions, brandKnowledge.grounding);
-      await addEvent(activeStep, 'brand_context', `Loaded canonical Brand Knowledge before planning and preserved verified identity, audience, offering, CTA, and campaign guardrails.`, {
-        documentId: body.brandKnowledgeDocumentId,
-        guideId: body.brandGuideId,
-        title: brandKnowledge.title,
-        characters: brandKnowledge.markdown.length,
-        grounding: brandKnowledge.grounding,
-      });
-      await addHandoffEvent(activeStep, {
-        title: 'Brand context handoff',
-        summary: `Selected campaign-specific rules from ${brandKnowledge.title || 'the brand knowledge document'} for downstream agents.`,
-        sections: [
-          { title: 'Brand source', body: brandKnowledge.title || 'Compiled brand knowledge document' },
-          { title: 'Verified brand grounding', body: handoffText(brandGroundingText(brandKnowledge.grounding), 1600) },
-          { title: 'Hard rules', body: brandInstructions.hardRules.length ? brandInstructions.hardRules : 'No campaign-specific hard rules were extracted.' },
-          { title: 'Tone rules', body: brandInstructions.toneRules.length ? brandInstructions.toneRules : 'Use the tone stated in the internal brief.' },
-          { title: 'Prohibited wording', body: brandInstructions.prohibitedTerms.length ? brandInstructions.prohibitedTerms : 'No prohibited wording was recorded.' },
-        ],
-        metrics: {
-          sourceCharacters: brandKnowledge.markdown.length,
-          hardRuleCount: brandInstructions.hardRules.length,
-          toneRuleCount: brandInstructions.toneRules.length,
-          approvedFactCount: brandInstructions.approvedFacts.length,
-        },
-      });
-      await updateStep(activeStep, 'done', `Preserved ${brandInstructions.approvedFacts.length} verified brand facts and selected ${brandInstructions.hardRules.length + brandInstructions.toneRules.length} relevant brand and tone rules.`);
-    } else {
-      await addEvent(activeStep, 'brand_context', 'No usable brand guide or compiled Brand Knowledge document was selected; continuing with prompt context.', { documentId: null, guideId: body.brandGuideId || null });
-      await addHandoffEvent(activeStep, {
-        title: 'Brand context handoff',
-        summary: 'No usable brand context was selected, so downstream agents used the original brief and planner guidance as the primary source.',
-        sections: [
-          { title: 'Brand source', body: 'No compiled brand knowledge document selected.' },
-        ],
-      });
-      await updateStep(activeStep, 'skipped', 'No usable brand context was selected; using the brief as the primary source.');
-    }
-    await recordRunDocument('brand_instructions', { ...brandInstructions, grounding: brandKnowledge.grounding });
-    await snapshotStep(activeStep, {
-      internalBrief: plannerOutput.internalBrief,
-      sourceTitle: brandKnowledge.title,
-      grounding: brandKnowledge.grounding,
-    }, { ...brandInstructions }, structuredModelId);
-    await completeCustomGuidanceStepsBefore('research');
+    const brandStep: StepName = 'Brand Guide Agent';
+    activeStep = brandStep;
+    const brandTask = (async (): Promise<Error | null> => {
+      try {
+        await updateStep(brandStep, 'working', brandKnowledge.markdown ? 'Selecting campaign rules while preserving verified brand identity, audience, offering, and CTA.' : 'Checking whether brand knowledge is available.');
+        if (brandKnowledge.markdown) {
+          brandInstructions = await buildBrandInstructions({
+            plannerOutput,
+            brandKnowledge: brandKnowledge.markdown,
+            sourceTitle: brandKnowledge.title,
+            brandSkill: agentSkills['brand-guide'] || '',
+            model: structuredModelId,
+            timeoutMs: Math.max(1_000, Math.min(BRAND_FILTER_TIMEOUT_MS, remainingMissionMs() - COPYWRITER_MIN_BUDGET_MS)),
+            observability: withRunObservation(runObservability, 'brand-guide', 'mission-brand-filter'),
+          });
+          brandInstructions = groundBrandInstructionsWithBrand(brandInstructions, brandKnowledge.grounding);
+          await addEvent(brandStep, 'brand_context', `Loaded canonical Brand Knowledge before planning and preserved verified identity, audience, offering, CTA, and campaign guardrails.`, {
+            documentId: body.brandKnowledgeDocumentId,
+            guideId: body.brandGuideId,
+            title: brandKnowledge.title,
+            characters: brandKnowledge.markdown.length,
+            grounding: brandKnowledge.grounding,
+          });
+          await addHandoffEvent(brandStep, {
+            title: 'Brand context handoff',
+            summary: `Selected campaign-specific rules from ${brandKnowledge.title || 'the brand knowledge document'} for downstream agents.`,
+            sections: [
+              { title: 'Brand source', body: brandKnowledge.title || 'Compiled brand knowledge document' },
+              { title: 'Verified brand grounding', body: handoffText(brandGroundingText(brandKnowledge.grounding), 1600) },
+              { title: 'Hard rules', body: brandInstructions.hardRules.length ? brandInstructions.hardRules : 'No campaign-specific hard rules were extracted.' },
+              { title: 'Tone rules', body: brandInstructions.toneRules.length ? brandInstructions.toneRules : 'Use the tone stated in the internal brief.' },
+              { title: 'Prohibited wording', body: brandInstructions.prohibitedTerms.length ? brandInstructions.prohibitedTerms : 'No prohibited wording was recorded.' },
+            ],
+            metrics: {
+              sourceCharacters: brandKnowledge.markdown.length,
+              hardRuleCount: brandInstructions.hardRules.length,
+              toneRuleCount: brandInstructions.toneRules.length,
+              approvedFactCount: brandInstructions.approvedFacts.length,
+            },
+          });
+          await updateStep(brandStep, 'done', `Preserved ${brandInstructions.approvedFacts.length} verified brand facts and selected ${brandInstructions.hardRules.length + brandInstructions.toneRules.length} relevant brand and tone rules.`);
+        } else {
+          await addEvent(brandStep, 'brand_context', 'No usable brand guide or compiled Brand Knowledge document was selected; continuing with prompt context.', { documentId: null, guideId: body.brandGuideId || null });
+          await addHandoffEvent(brandStep, {
+            title: 'Brand context handoff',
+            summary: 'No usable brand context was selected, so downstream agents used the original brief and planner guidance as the primary source.',
+            sections: [
+              { title: 'Brand source', body: 'No compiled brand knowledge document selected.' },
+            ],
+          });
+          await updateStep(brandStep, 'skipped', 'No usable brand context was selected; using the brief as the primary source.');
+        }
+        await recordRunDocument('brand_instructions', { ...brandInstructions, grounding: brandKnowledge.grounding });
+        await snapshotStep(brandStep, {
+          internalBrief: plannerOutput.internalBrief,
+          sourceTitle: brandKnowledge.title,
+          grounding: brandKnowledge.grounding,
+        }, { ...brandInstructions }, structuredModelId);
+        await completeCustomGuidanceStepsBefore('research');
+        return null;
+      } catch (error) {
+        const brandError = error instanceof Error ? error : new Error('Brand Guide Agent failed unexpectedly.');
+        await updateStep(brandStep, 'failed', brandError.message).catch(() => undefined);
+        return brandError;
+      }
+    })();
 
-    let researchSources: TavilySearchResponse['results'] = [];
     await assertRunActive();
     activeStep = 'Research Agent';
     if (workMode === 'deep') {
@@ -837,6 +924,8 @@ async function processMission({
     }
     await recordRunDocument('research_brief', { ...researchBrief });
     await snapshotStep(activeStep, { question: plannerOutput.researchQuery }, { ...researchBrief }, workMode === 'deep' ? selectedResearchProvider.model || structuredModelId : undefined);
+    const brandError = await brandTask;
+    if (brandError) throw brandError;
     await completeCustomGuidanceStepsBefore('creative-strategist');
 
     await assertRunActive();
@@ -877,6 +966,13 @@ async function processMission({
     }, { ...creativeDirection }, structuredModelId);
     await updateStep(activeStep, 'done', `Prepared the campaign idea and ${creativeDirection.contentAngles.length} distinct writing angles.`);
     await completeCustomGuidanceStepsBefore('copywriter');
+
+    await addEvent(activeStep, 'continuation_queued', 'Planning handoff completed. Copywriter is starting with a fresh Edge Function budget.', {
+      selectedModel: selectedModel.id,
+    });
+    await dispatchMissionContinuation({ runId, authorization, apiKey });
+    return;
+    }
 
     await assertRunActive();
     activeStep = 'Copywriter Agent';
@@ -1283,6 +1379,77 @@ async function processMission({
   } finally {
     clearTimeout(watchdogId);
   }
+}
+
+async function dispatchMissionContinuation({
+  runId,
+  authorization,
+  apiKey,
+}: {
+  runId: string;
+  authorization: string;
+  apiKey: string;
+}) {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+  const effectiveApiKey = apiKey || Deno.env.get('SUPABASE_ANON_KEY') || '';
+  if (!supabaseUrl || !authorization || !effectiveApiKey) {
+    throw new Error('The copywriter continuation could not authenticate a fresh Edge Function invocation.');
+  }
+  const response = await fetch(`${supabaseUrl}/functions/v1/ai-start-run`, {
+    method: 'POST',
+    headers: {
+      Authorization: authorization,
+      apikey: effectiveApiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ resumeRunId: runId }),
+  });
+  if (response.ok) return;
+  const payload = await response.json().catch(() => ({})) as { error?: string };
+  throw new Error(payload.error || `The copywriter continuation request failed with HTTP ${response.status}.`);
+}
+
+async function loadMissionContinuationState(
+  supabase: SupabaseClient,
+  runId: string,
+  prompt: string,
+  destination: Awaited<ReturnType<typeof loadDestinationContext>>,
+  brandSourceTitle: string,
+) {
+  const [{ data: planEvent, error: planError }, { data: documents, error: documentsError }, { data: researchEvent, error: researchError }] = await Promise.all([
+    supabase.from('ai_run_events').select('payload').eq('run_id', runId).eq('event_type', 'research_plan').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    supabase.from('ai_run_documents').select('document_type,content').eq('run_id', runId).order('created_at', { ascending: false }),
+    supabase.from('ai_run_events').select('payload').eq('run_id', runId).eq('event_type', 'web_sources').order('created_at', { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  if (planError) throw planError;
+  if (documentsError) throw documentsError;
+  if (researchError) throw researchError;
+
+  const documentContent = (documentType: string) => {
+    const document = (documents || []).find((item) => item.document_type === documentType);
+    return document?.content || {};
+  };
+  const plannerFallback = fallbackPlannerOutput(prompt, destination);
+  const plannerOutput = normalizePlannerOutput(planEvent?.payload || {}, plannerFallback, prompt);
+  const brandInstructions = normalizeBrandInstructions(documentContent('brand_instructions'), brandSourceTitle);
+  const researchBrief = normalizeResearchBrief(documentContent('research_brief'), plannerOutput.researchQuery);
+  const creativeDirection = normalizeCreativeDirection(documentContent('creative_direction'), fallbackCreativeDirection(plannerOutput));
+  const researchPayload = researchEvent?.payload && typeof researchEvent.payload === 'object'
+    ? researchEvent.payload as Record<string, unknown>
+    : {};
+  const researchSources = Array.isArray(researchPayload.sources)
+    ? researchPayload.sources.map((source) => {
+      const value = source && typeof source === 'object' ? source as Record<string, unknown> : {};
+      return {
+        title: stringValue(value.title),
+        url: stringValue(value.url),
+        content: stringValue(value.content),
+        score: Number(value.score) || 0,
+      };
+    }).filter((source) => source.title && source.url)
+    : [];
+
+  return { plannerOutput, brandInstructions, researchBrief, creativeDirection, researchSources };
 }
 
 function handoffText(value: string, maxLength = 900) {
@@ -2026,7 +2193,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.socialPosts}` : `Create exactly ${deliverableContract.socialPosts}`} organic social posts only.\n\n${commonContext}`,
-      maxTokens: 5200,
+      maxTokens: 2800,
     },
     {
       key: 'googleAds',
@@ -2047,7 +2214,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.googleAds}` : `Create exactly ${deliverableContract.googleAds}`} Google ads only.\n\n${commonContext}`,
-      maxTokens: 3400,
+      maxTokens: 2400,
     },
     {
       key: 'socialAds',
@@ -2065,7 +2232,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.socialAds}` : `Create exactly ${deliverableContract.socialAds}`} paid social ads only.\n\n${commonContext}`,
-      maxTokens: 3000,
+      maxTokens: 2200,
     },
     {
       key: 'blogOutlines',
@@ -2080,7 +2247,7 @@ async function buildCampaignPackInParts({
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.blogOutlines}` : `Create exactly ${deliverableContract.blogOutlines}`} blog outlines only.\n\n${commonContext}`,
-      maxTokens: 2400,
+      maxTokens: 1600,
     },
   ] as const;
 
@@ -2090,6 +2257,57 @@ async function buildCampaignPackInParts({
       pack: normalizeCampaignPack({}),
       failures: [{ section: 'All sections', error: 'Skipped model generation because the Edge Function time budget was nearly exhausted.' }],
     };
+  }
+
+  const activeSections = sectionSpecs.filter((section) => section.expectedCount > 0);
+  const requestedItemCount = activeSections.reduce((total, section) => total + section.expectedCount, 0);
+  if (requestedItemCount <= 12) {
+    const compactTimeoutMs = Math.max(8_000, Math.min(116_000, remainingForSectionsMs));
+    try {
+      const value = await generateCompactCampaignPack({
+        model: models[0],
+        sections: activeSections,
+        commonContext,
+        timeoutMs: compactTimeoutMs,
+        observability: withRunObservation(observability, 'copywriter-campaign-pack', 'mission-copywriter', {
+          socialsuite_section: 'Complete campaign pack',
+          socialsuite_request_mode: 'compact-single-call',
+          socialsuite_requested_items: requestedItemCount,
+        }),
+      });
+      const alignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(value), prompt);
+      const sectionFailures = activeSections.flatMap((section) => {
+        const validationError = campaignSectionValidationError(value, section.key, section.expectedCount);
+        if (validationError) return [{ section: section.label, error: `${models[0]}: ${validationError}` }];
+        const alignedValidationError = campaignSectionValidationError(alignedValue, section.key, section.expectedCount);
+        if (alignedValidationError) return [{ section: section.label, error: `${models[0]}: ${alignedValidationError}` }];
+        const platformError = campaignSectionPlatformError(alignedValue, section.key, section.brief);
+        return platformError ? [{ section: section.label, error: `${models[0]}: ${platformError}` }] : [];
+      });
+      const rawPack = normalizeCampaignPack({
+        ...alignedValue,
+        strategy: creativeDirection.strategy,
+        calendar: [],
+      });
+      const limitedPack = limitCampaignPackToContract(rawPack, deliverableContract);
+      const normalizedPack = normalizeCampaignPack({
+        ...limitedPack,
+        calendar: buildCampaignCalendar(limitedPack, campaignCalendarCount(limitedPack, deliverableContract), today),
+      });
+      return {
+        pack: normalizedPack,
+        failures: uniqueSectionFailures([
+          ...sectionFailures,
+          ...campaignCountFailures(normalizedPack, deliverableContract),
+        ]),
+      };
+    } catch (error) {
+      const message = `${models[0]}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
+      return {
+        pack: normalizeCampaignPack({}),
+        failures: activeSections.map((section) => ({ section: section.label, error: message })),
+      };
+    }
   }
 
   const sectionTimeoutMs = Math.max(6_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
@@ -2147,6 +2365,60 @@ async function buildCampaignPackInParts({
   };
 }
 
+async function generateCompactCampaignPack({
+  model,
+  sections,
+  commonContext,
+  timeoutMs,
+  observability,
+}: {
+  model?: string;
+  sections: ReadonlyArray<{
+    key: GeneratedCampaignSectionKey;
+    label: string;
+    expectedCount: number;
+    system: string;
+  }>;
+  commonContext: string;
+  timeoutMs: number;
+  observability?: AiObservabilityContext;
+}) {
+  if (!model) throw new Error('No selected generation model was supplied.');
+  const rootKeys = sections.map((section) => section.key);
+  const sectionRequirements = sections.map((section) => section.system
+    .replace('You are Social Suite Mission Mode. Return only valid JSON. ', '')
+    .replace(`Return exactly one key: ${section.key}. `, ''));
+  const maxTokens = Math.min(5_200, Math.max(2_400, sections.reduce((total, section) => {
+    if (section.key === 'socialPosts') return total + 2_800;
+    if (section.key === 'googleAds') return total + 2_400;
+    if (section.key === 'socialAds') return total + 2_200;
+    return total + 1_600;
+  }, 0)));
+
+  return await openRouterJson<unknown>({
+    model,
+    temperature: 0.25,
+    maxTokens,
+    timeoutMs,
+    observability,
+    messages: [
+      {
+        role: 'system',
+        content: campaignSafetyInstructions([
+          'You are Social Suite Mission Mode. Return only one complete, valid JSON object with no markdown or commentary.',
+          `The object must contain exactly these root keys: ${rootKeys.join(', ')}. Generate every requested section in this single response.`,
+          'Keep the response focused enough to finish within the request. Never omit a section, return partial JSON, or add unrequested content types.',
+          ...sectionRequirements,
+        ].join(' ')),
+      },
+      {
+        role: 'user',
+        content: `Create the complete campaign pack in one response.\n\n${commonContext}`,
+      },
+    ],
+  });
+}
+
 async function generateCampaignSection({
   models,
   section,
@@ -2168,7 +2440,7 @@ async function generateCampaignSection({
 }) {
   const modelPlan = models.slice(0, 1);
   if (!modelPlan.length) throw new Error('No selected generation model was supplied.');
-  const attemptTimeoutMs = Math.max(5_000, Math.min(25_000, Math.floor(timeoutMs / modelPlan.length)));
+  const attemptTimeoutMs = Math.max(5_000, Math.min(35_000, Math.floor(timeoutMs / modelPlan.length)));
   let lastError = '';
   for (const [modelIndex, model] of modelPlan.entries()) {
     const retryPrefix = modelIndex === 0
@@ -2319,29 +2591,16 @@ async function applyWorkspaceAgentToPack({
         ].filter(Boolean).join('\n\n'),
       },
     ] as const;
-  let reviewed: unknown;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const attemptRemainingMs = Math.max(0, deadlineAt - Date.now() - 8_000);
-    if (attemptRemainingMs < 8_000) break;
-    try {
-      reviewed = await openRouterJson<unknown>({
-        model,
-        temperature: attempt === 0 ? 0.2 : 0.1,
-        maxTokens: attempt === 0 ? 1800 : 1200,
-        timeoutMs: Math.min(attempt === 0 ? CUSTOM_AGENT_TIMEOUT_MS : 8_000, attemptRemainingMs),
-        observability,
-        messages: [...messages],
-      });
-      lastError = undefined;
-      break;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  if (lastError || reviewed === undefined) {
-    throw lastError instanceof Error ? lastError : new Error('The workspace agent could not complete its focused review.');
-  }
+  const attemptRemainingMs = Math.max(0, deadlineAt - Date.now() - 8_000);
+  if (attemptRemainingMs < 8_000) throw new Error('The workspace agent did not have enough time for a guarded review.');
+  const reviewed = await openRouterJson<unknown>({
+    model,
+    temperature: 0.2,
+    maxTokens: 1800,
+    timeoutMs: Math.min(CUSTOM_AGENT_TIMEOUT_MS, attemptRemainingMs),
+    observability,
+    messages: [...messages],
+  });
 
   const patches = normalizeContentPatches(reviewed);
   const patched = applyContentPatches(pack, patches);
@@ -2544,6 +2803,7 @@ function finalizeResearchQuestion(value: string) {
   const cleaned = value
     .replace(/\s+/g, ' ')
     .replace(/\s+(and|or|for|with|about|to|of|in|on)$/i, '')
+    .replace(/\b(?:campa|campai|campaig)$/i, 'campaign')
     .replace(/[,:;]+$/, '')
     .trim();
   if (!cleaned) return '';

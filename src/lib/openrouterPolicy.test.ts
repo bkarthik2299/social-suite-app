@@ -3,6 +3,7 @@ import {
   prefersNativeJsonMode,
   supportsTemperatureParameter,
   structuredMissionModelPlan,
+  structuredOutputReasoning,
   structuredOutputModelId,
 } from '../../supabase/functions/_shared/openrouter_policy';
 
@@ -34,5 +35,11 @@ describe('OpenRouter mission policy', () => {
     expect(supportsTemperatureParameter('openai/gpt-5.4-mini')).toBe(false);
     expect(supportsTemperatureParameter('openai/gpt-5.5')).toBe(false);
     expect(supportsTemperatureParameter('deepseek/deepseek-v4-pro')).toBe(true);
+  });
+
+  it('reserves DeepSeek V4 structured-output tokens for the final JSON response', () => {
+    expect(structuredOutputReasoning('deepseek/deepseek-v4-pro')).toEqual({ effort: 'none', exclude: true });
+    expect(structuredOutputReasoning('deepseek/deepseek-v4-flash')).toEqual({ effort: 'none', exclude: true });
+    expect(structuredOutputReasoning('openai/gpt-5.5')).toBeUndefined();
   });
 });

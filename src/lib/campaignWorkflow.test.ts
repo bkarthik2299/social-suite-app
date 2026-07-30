@@ -199,6 +199,27 @@ describe('campaign workflow helpers', () => {
     ]));
   });
 
+  it('treats Twitter and X as the same platform in organic and paid metadata', () => {
+    const input = pack();
+    input.socialPosts = [{
+      name: 'X/Twitter monsoon memory',
+      topic: 'Twitter organic post',
+      caption: 'A rainy-day snack memory worth sharing.',
+      platforms: ['twitter'],
+      creativeBrief: 'Write a concise X/Twitter post.',
+    }];
+    input.socialAds = [{
+      name: 'X/Twitter monsoon ad',
+      topic: 'Twitter paid social',
+      platform: 'twitter',
+      primaryText: 'Bring rainy-day snack memories home.',
+      headline: 'Monsoon snacks',
+      cta: 'shop_now',
+    }];
+
+    expect(campaignPlatformConsistencyFindings(input, 'Create Twitter posts and Twitter ads.')).toEqual([]);
+  });
+
   it('keeps a useful creative direction when the strategist model times out', () => {
     const planner = fallbackPlannerOutput(
       'Target independent dental practice owners. The goal is to make practice owners book a discovery call. Create 4 social posts, 2 Google ads, 2 paid social ads, 1 blog and a 7-day content calendar. The rough line is “Your waiting room starts online”.',
