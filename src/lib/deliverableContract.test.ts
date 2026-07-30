@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { extractDeliverableContract, extractRequestedChannelConstraints, requestedChannelLabels, resolveDeliverableContract } from '../../supabase/functions/_shared/deliverable_contract';
 
 describe('deliverable contract extraction', () => {
-  it('uses the default balanced pack when the brief has no explicit counts', () => {
+  it('uses a focused default pack when the brief has no explicit counts', () => {
     expect(extractDeliverableContract('Create a campaign for a new service launch')).toEqual({
-      socialPosts: 12,
-      googleAds: 3,
-      socialAds: 4,
-      blogOutlines: 2,
-      calendarItems: 30,
+      socialPosts: 4,
+      googleAds: 2,
+      socialAds: 2,
+      blogOutlines: 1,
+      calendarItems: 9,
       explicitCounts: false,
     });
   });

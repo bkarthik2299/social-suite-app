@@ -8,11 +8,11 @@ export type DeliverableContract = {
 };
 
 export const defaultDeliverableContract: DeliverableContract = {
-  socialPosts: 12,
-  googleAds: 3,
-  socialAds: 4,
-  blogOutlines: 2,
-  calendarItems: 30,
+  socialPosts: 4,
+  googleAds: 2,
+  socialAds: 2,
+  blogOutlines: 1,
+  calendarItems: 9,
   explicitCounts: false,
 };
 

@@ -1,6 +1,6 @@
 import { getRequiredSecret } from './http.ts';
 import { parseJsonContent } from './json.ts';
-import { supportsTemperatureParameter } from './openrouter_policy.ts';
+import { structuredOutputReasoning, supportsTemperatureParameter } from './openrouter_policy.ts';
 import { captureOpenRouterGeneration, type AiObservabilityContext } from './posthog_ai.ts';
 
 type ChatMessage = {
@@ -53,15 +53,17 @@ export async function openRouterJson<T>({
   observability?: AiObservabilityContext;
 }): Promise<T> {
   const effectiveTemperature = supportsTemperatureParameter(model) ? temperature : undefined;
+  const reasoning = structuredOutputReasoning(model);
   const body = {
     model,
     messages,
     ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
     ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(jsonMode ? {
       response_format: { type: 'json_object' },
       plugins: [{ id: 'response-healing' }],
-      provider: { require_parameters: true },
+      provider: { require_parameters: true, sort: 'throughput' },
     } : {}),
   };
   let attempt = await fetchOpenRouter({
@@ -102,6 +104,7 @@ export async function openRouterJson<T>({
         messages,
         ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
         ...(maxTokens ? { max_tokens: maxTokens } : {}),
+        ...(reasoning ? { reasoning } : {}),
       }),
     }, timeoutMs);
     assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode: false, observability });
@@ -271,23 +274,20 @@ export async function openRouterTextWithCitations({
 async function fetchOpenRouter(init: RequestInit, timeoutMs: number): Promise<OpenRouterAttempt> {
   const startedAt = performance.now();
   const controller = new AbortController();
-  const nativeTimeoutSignal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : null;
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      controller.abort();
-      reject(new Error(`OpenRouter request timed out after ${Math.round(timeoutMs / 1000)}s`));
-    }, timeoutMs);
-  });
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const request = fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       ...init,
-      signal: nativeTimeoutSignal || controller.signal,
+      signal: controller.signal,
     });
-
-    const response = await Promise.race([request, timeout]);
-    const data = await response.json().catch(() => ({})) as OpenRouterResponse;
+    let data: OpenRouterResponse;
+    try {
+      data = await response.json() as OpenRouterResponse;
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      data = {} as OpenRouterResponse;
+    }
     return { response, data, latencyMs: performance.now() - startedAt };
   } catch (error) {
     if ((error as Error)?.name === 'TimeoutError' || (error as Error)?.name === 'AbortError') {

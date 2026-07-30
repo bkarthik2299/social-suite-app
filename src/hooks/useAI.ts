@@ -493,6 +493,7 @@ function slugifyAgentName(name: string) {
 export function useAiRunDetails(runId: string | null) {
   const qc = useQueryClient();
   const recoveredRunRef = useRef<string | null>(null);
+  const terminalRefreshRef = useRef<string | null>(null);
   const runQuery = useQuery({
     queryKey: ['ai_run', runId],
     queryFn: async () => {
@@ -508,6 +509,16 @@ export function useAiRunDetails(runId: string | null) {
   });
 
   const isLiveRun = runQuery.data?.status === 'running' || runQuery.data?.status === 'queued';
+
+  useEffect(() => {
+    if (!runId || !runQuery.data || isLiveRun || terminalRefreshRef.current === runId) return;
+    terminalRefreshRef.current = runId;
+    void Promise.all([
+      qc.invalidateQueries({ queryKey: ['ai_run_steps', runId] }),
+      qc.invalidateQueries({ queryKey: ['ai_run_events', runId] }),
+      qc.invalidateQueries({ queryKey: ['ai_artifacts', runId] }),
+    ]);
+  }, [isLiveRun, qc, runId, runQuery.data]);
 
   useEffect(() => {
     const run = runQuery.data;

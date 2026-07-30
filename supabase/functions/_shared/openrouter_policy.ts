@@ -15,3 +15,9 @@ export function prefersNativeJsonMode(modelId: string) {
 export function supportsTemperatureParameter(modelId: string) {
   return !modelId.startsWith('openai/gpt-5');
 }
+
+export function structuredOutputReasoning(modelId: string) {
+  return modelId === 'deepseek/deepseek-v4-pro' || modelId === 'deepseek/deepseek-v4-flash'
+    ? { effort: 'none' as const, exclude: true }
+    : undefined;
+}
