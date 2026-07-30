@@ -83,7 +83,7 @@ Set these in the Supabase dashboard or with `supabase secrets set`:
 - `FIRECRAWL_API_KEY`
 - `TRIGGER_SECRET_KEY` (reserved for the durable workflow phase)
 
-Mission Mode now uses explicit user-selected models. Defaults are `deepseek/deepseek-v4-flash` for Instant, `deepseek/deepseek-v4-pro` for Deep Work, and Tavily for research. Perplexity research uses `perplexity/sonar-pro` through OpenRouter.
+Mission Mode uses the explicitly selected generation model for every planning, strategy, copywriting, custom-agent, and QA model call; it never silently switches to a different provider model. Defaults are `deepseek/deepseek-v4-flash` for Instant, `deepseek/deepseek-v4-pro` for Deep Work, and Tavily for research. Research is configured separately, so selecting Perplexity intentionally uses `perplexity/sonar-pro` for the web-research call while the selected generation model remains unchanged for the rest of the mission.
 
 ### AI observability
 

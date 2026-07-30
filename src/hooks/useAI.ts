@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
@@ -9,6 +9,7 @@ import type { AiAgent, AiArtifact, AiCreditAccount, AiDraftSelection, AiRun, AiR
 const db = supabase as unknown as SupabaseClient;
 export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'creative-strategist', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
 const AI_RUN_POLL_MS = 1800;
+const AI_RUN_STALE_MS = 4 * 60 * 1000;
 
 export type AiCommitRunResult = {
   inserted: {
@@ -490,6 +491,8 @@ function slugifyAgentName(name: string) {
 }
 
 export function useAiRunDetails(runId: string | null) {
+  const qc = useQueryClient();
+  const recoveredRunRef = useRef<string | null>(null);
   const runQuery = useQuery({
     queryKey: ['ai_run', runId],
     queryFn: async () => {
@@ -505,6 +508,38 @@ export function useAiRunDetails(runId: string | null) {
   });
 
   const isLiveRun = runQuery.data?.status === 'running' || runQuery.data?.status === 'queued';
+
+  useEffect(() => {
+    const run = runQuery.data;
+    const startedAt = Date.parse(run?.created_at || '');
+    if (!runId || !run || !isLiveRun || !Number.isFinite(startedAt)) return;
+    if (Date.now() - startedAt < AI_RUN_STALE_MS || recoveredRunRef.current === runId) return;
+
+    recoveredRunRef.current = runId;
+    const message = 'The mission exceeded its safe processing window and was stopped. Please retry; no incomplete drafts were saved.';
+    void (async () => {
+      const [stepResult, runResult] = await Promise.all([
+        db.from('ai_run_steps').update({
+          status: 'failed',
+          message,
+          completed_at: new Date().toISOString(),
+        }).eq('run_id', runId).eq('status', 'working'),
+        db.from('ai_runs').update({
+          status: 'failed',
+          error: message,
+          completed_at: new Date().toISOString(),
+        }).eq('id', runId).in('status', ['queued', 'running']),
+      ]);
+      if (stepResult.error) throw stepResult.error;
+      if (runResult.error) throw runResult.error;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['ai_run', runId] }),
+        qc.invalidateQueries({ queryKey: ['ai_run_steps', runId] }),
+      ]);
+    })().catch(() => {
+      recoveredRunRef.current = null;
+    });
+  }, [isLiveRun, qc, runId, runQuery.data, runQuery.dataUpdatedAt]);
 
   const stepsQuery = useQuery({
     queryKey: ['ai_run_steps', runId],

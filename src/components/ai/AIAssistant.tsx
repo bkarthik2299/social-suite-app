@@ -30,6 +30,7 @@ import {
   UserPlus,
   Workflow,
   X,
+  XCircle,
   Zap,
 } from 'lucide-react';
 
@@ -70,7 +71,7 @@ import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, 
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
 import { aiCreditCost } from '@/lib/aiCredits';
 import { folderPath, projectPath } from '@/lib/routes';
-import { researchNoteFindings } from '@/lib/researchNotes';
+import { formatResearchCampaignFocus, researchNoteFindings } from '@/lib/researchNotes';
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import type { Campaign, CampaignType, Folder, Project } from '@/types';
@@ -401,7 +402,7 @@ export function AIAssistant() {
   const missionBubbleDescription = currentRun?.status === 'needs_approval'
     ? 'Open the mission to review and create drafts.'
     : currentRun?.status === 'failed'
-      ? currentRun.error || 'Open the mission to review what happened.'
+      ? sanitizeActivityText(currentRun.error || 'Open the mission to review what happened.')
       : sanitizeActivityText(activeMissionStep?.message || 'Agents are working in the background.');
 
   const startMission = async () => {
@@ -908,7 +909,7 @@ export function AIAssistant() {
             <ScrollArea className="min-h-0 min-w-0 max-w-full bg-white shadow-[8px_0_28px_-30px_rgba(37,99,235,0.45),1px_0_3px_rgba(15,23,42,0.04)]">
               <div className="space-y-3 p-5">
                 {displaySteps.map((step, index) => (
-                  <AgentStepCard key={`${step.agent_name}-${index}`} step={step} activeFallback={running && index === syntheticStep} />
+                  <AgentStepCard key={`${step.agent_name}-${index}`} step={step} activeFallback={running && steps.length === 0 && index === syntheticStep} />
                 ))}
               </div>
             </ScrollArea>
@@ -1813,7 +1814,7 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
     : status === 'working'
       ? Loader2
       : status === 'failed'
-        ? Circle
+        ? XCircle
         : Clock3;
 
   useEffect(() => {
@@ -1837,12 +1838,16 @@ function AgentStepCard({ step, activeFallback }: { step: AiRunStep; activeFallba
           'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500',
           status === 'working' && 'bg-primary/10 text-primary',
           status === 'done' && 'bg-emerald-50 text-emerald-600',
+          status === 'failed' && 'bg-red-100 text-red-600',
         )}>
           <Icon className={cn('h-4 w-4', status === 'working' && 'animate-spin')} />
         </div>
         <span className="min-w-0 flex-1 pt-0.5">
           <span className="block break-words text-sm font-semibold leading-5 text-slate-900">{step.agent_name}</span>
-          {collapsed && <span className="mt-0.5 block break-words text-xs font-medium capitalize leading-4 text-slate-500">{stepStatusLabel(status)}</span>}
+          <span className={cn(
+            'mt-0.5 block break-words text-xs font-medium capitalize leading-4 text-slate-500',
+            status === 'failed' && 'text-red-700',
+          )}>{stepStatusLabel(status)}</span>
         </span>
         <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 text-slate-400 transition-transform', !collapsed && 'rotate-180')} />
       </button>
@@ -2145,7 +2150,7 @@ function ResearchNotesSheet({
 
             {notes.campaignGuidance && (
               <ResearchNoteSection title="Campaign Focus">
-                <p className="text-sm leading-6 text-slate-700">{notes.campaignGuidance}</p>
+                <p className="whitespace-pre-line break-words text-sm leading-6 text-slate-700 [overflow-wrap:anywhere]">{notes.campaignGuidance}</p>
               </ResearchNoteSection>
             )}
 
@@ -2584,7 +2589,7 @@ function missionDescription(run: AiRun | null, running: boolean) {
   if (running) return 'Agents are working through the brief now.';
   if (run?.status === 'completed') return 'Drafts have been created in Social Suite.';
   if (run?.status === 'needs_approval') return 'Review the campaign pack before creating drafts.';
-  if (run?.status === 'failed') return run.error || 'The mission could not complete.';
+  if (run?.status === 'failed') return sanitizeActivityText(run.error || 'The mission could not complete.');
   return 'Prepare, review, and approve campaign drafts.';
 }
 
@@ -2629,7 +2634,7 @@ function researchNotesFromEvent(event: AiRunEvent | null, planEvent: AiRunEvent 
     || payloadString(event, 'query');
   return {
     question: formatResearchQuestion(question),
-    campaignGuidance: typeof event?.payload?.campaignGuidance === 'string' ? event.payload.campaignGuidance : '',
+    campaignGuidance: typeof event?.payload?.campaignGuidance === 'string' ? formatResearchCampaignFocus(event.payload.campaignGuidance) : '',
     findings: researchNoteFindings(event?.payload?.evidenceBrief, answer),
     sources: event ? eventSources(event) : [],
   };
@@ -2648,7 +2653,7 @@ function formatResearchQuestion(value: string) {
     ? cleaned
     : `What ${cleaned}`;
   const capitalized = `${question.charAt(0).toUpperCase()}${question.slice(1)}`;
-  return `${capitalized.replace(/[?!.]+$/, '')}?`;
+  return `${capitalized.replace(/[?!.…]+$/, '')}?`;
 }
 
 function sourceDomain(value: string) {

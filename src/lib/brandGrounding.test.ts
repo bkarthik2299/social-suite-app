@@ -101,6 +101,38 @@ describe('brand grounding', () => {
     expect(value.documentStale).toBe(true);
   });
 
+  it('turns a broad shopping objective into a channel-safe CTA instead of requiring the full sentence', () => {
+    const sweetGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Sweet Kaaram Coffee',
+        website_url: 'https://sweetkaramcoffee.in',
+        elevator_pitch: 'Traditional South Indian snacks delivered globally.',
+        target_audience: 'Customers who value South Indian snacks and nostalgic homemade taste.',
+      },
+      markdown: '',
+    });
+    const input = pack('Sweet Kaaram Coffee brings traditional South Indian snacks to customers who value nostalgic homemade taste.');
+    input.googleAds = [0, 1, 2].map((index) => ({
+      name: `Monsoon search ${index + 1}`,
+      topic: 'South Indian monsoon snacks',
+      keywords: ['South Indian snacks'],
+      headlines: ['Rainy Day Snack Rituals'],
+      descriptions: ['Browse traditional South Indian snacks for rainy-day moments.'],
+    }));
+    const context = {
+      audience: 'Customers who value South Indian snacks and nostalgic homemade taste.',
+      offerOrSubject: 'Traditional South Indian snacks delivered globally.',
+      desiredAction: 'Engage with the campaign and click through to the website to browse and buy relevant products.',
+    };
+
+    const grounded = applyBrandGroundingDefaults(input, sweetGrounding, context);
+
+    expect(grounded.googleAds.every((ad) => ad.headlines.includes('Shop Now'))).toBe(true);
+    expect(brandGroundingQualityFindings(grounded, sweetGrounding, context)
+      .filter((finding) => /campaign CTA/i.test(finding.problem))).toEqual([]);
+    expect(JSON.stringify(grounded)).not.toContain(context.desiredAction);
+  });
+
   it('does not promote undefined Brand Knowledge placeholders into campaign facts', () => {
     const sparseMarkdown = `# KYRO Construction SaaS — Brand Knowledge Document
 

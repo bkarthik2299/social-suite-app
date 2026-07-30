@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { activityTrailEvents, eventHandoffDetails, sanitizeActivityText } from './aiActivityTrail';
+import { activityTrailEvents, eventHandoffDetails, repairMojibake, sanitizeActivityText } from './aiActivityTrail';
 import type { AiRunEvent } from '@/types/ai';
 
 function runEvent(input: Partial<AiRunEvent> & Pick<AiRunEvent, 'id' | 'event_type' | 'created_at'>): AiRunEvent {
@@ -16,6 +16,11 @@ function runEvent(input: Partial<AiRunEvent> & Pick<AiRunEvent, 'id' | 'event_ty
 describe('ai activity trail helpers', () => {
   it('keeps provider-neutral research messages grammatical', () => {
     expect(sanitizeActivityText('Tavily research was started.')).toBe('web research was started.');
+  });
+
+  it('repairs mojibake punctuation without changing valid Unicode or emoji', () => {
+    expect(repairMojibake('CTA â€œShop Nowâ€\u009d and waitâ€¦ ❤️')).toBe('CTA “Shop Now” and wait… ❤️');
+    expect(repairMojibake('The brand’s verified promise ❤️')).toBe('The brand’s verified promise ❤️');
   });
 
   it('keeps all handoff events while limiting ordinary recent activity', () => {
