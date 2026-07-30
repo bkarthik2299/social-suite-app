@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractDeliverableContract, resolveDeliverableContract } from '../../supabase/functions/_shared/deliverable_contract';
+import { extractDeliverableContract, extractRequestedChannelConstraints, requestedChannelLabels, resolveDeliverableContract } from '../../supabase/functions/_shared/deliverable_contract';
 
 describe('deliverable contract extraction', () => {
   it('uses the default balanced pack when the brief has no explicit counts', () => {
@@ -63,5 +63,27 @@ describe('deliverable contract extraction', () => {
       calendarItems: 2,
       explicitCounts: true,
     });
+  });
+
+  it('uses only the deliverable types named in the Berry Studio prompt and keeps their counts flexible', () => {
+    const prompt = 'i want some creative and funny social media campaign with some insta posts, facebook ads and some google ads to promote the berrystudio app';
+
+    expect(extractDeliverableContract(prompt)).toEqual({
+      socialPosts: 4,
+      googleAds: 2,
+      socialAds: 2,
+      blogOutlines: 0,
+      calendarItems: 8,
+      explicitCounts: false,
+    });
+    expect(extractRequestedChannelConstraints(prompt)).toEqual({
+      organicSocial: ['instagram'],
+      paidSocial: ['facebook'],
+    });
+    expect(requestedChannelLabels(prompt)).toEqual([
+      'Instagram organic posts',
+      'Facebook paid ads',
+      'Google Search ads',
+    ]);
   });
 });

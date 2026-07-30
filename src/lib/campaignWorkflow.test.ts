@@ -1,7 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { CampaignPack } from '../../supabase/functions/_shared/campaign_pack';
-import { applyContentPatches, buildCampaignCalendar, deterministicQualityFindings, repairCampaignPack } from '../../supabase/functions/_shared/campaign_workflow';
-import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection } from '../../supabase/functions/_shared/agent_contracts';
+import {
+  alignCampaignPackToRequestedPlatforms,
+  applyContentPatches,
+  buildCampaignCalendar,
+  campaignCalendarCount,
+  campaignSectionMinimumCount,
+  campaignSectionValidationError,
+  deterministicQualityFindings,
+  limitCampaignPackToContract,
+  repairCampaignPack,
+} from '../../supabase/functions/_shared/campaign_workflow';
+import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection, requirePlannerResearch } from '../../supabase/functions/_shared/agent_contracts';
 
 const pack = (): CampaignPack => ({
   strategy: { title: 'Campaign', summary: 'A useful campaign rationale with enough detail to be reviewed.', objectives: ['Book a call'], contentPillars: ['First impressions'] },
@@ -27,12 +37,107 @@ describe('campaign workflow helpers', () => {
     expect(planner.internalBrief.researchNeeded).toBe(true);
   });
 
+  it('passes the Berry Studio prompt deliverables and named platforms through the planner handoff', () => {
+    const planner = fallbackPlannerOutput(
+      'i want some creative and funny social media campaign with some insta posts, facebook ads and some google ads to promote the berrystudio app',
+      { projectName: 'BerryStudio', campaignName: '' },
+    );
+
+    expect(planner.deliverableContract).toMatchObject({
+      socialPosts: 4,
+      googleAds: 2,
+      socialAds: 2,
+      blogOutlines: 0,
+      explicitCounts: false,
+    });
+    expect(planner.internalBrief.requestedChannels).toEqual([
+      'Instagram organic posts',
+      'Facebook paid ads',
+      'Google Search ads',
+    ]);
+  });
+
+  it('forces a source-ready research question for Deep Work even when the brief does not request research', () => {
+    const prompt = 'i want some creative and funny social media campaign with some insta posts, facebook ads and some google ads to promote the berrystudio app';
+    const destination = { projectName: 'Berry Studio AI', campaignName: '' };
+    const planner = fallbackPlannerOutput(prompt, destination);
+
+    expect(planner.internalBrief.researchNeeded).toBe(false);
+    const deepPlanner = requirePlannerResearch({ ...planner, researchQuery: '' }, prompt, destination);
+    expect(deepPlanner.internalBrief.researchNeeded).toBe(true);
+    expect(deepPlanner.researchQuery).toBe('What recent audience evidence and channel behavior can responsibly improve this campaign for Berry Studio AI?');
+  });
+
   it('builds the requested number of dated entries from real generated assets', () => {
     const calendar = buildCampaignCalendar(pack(), 7, '2026-07-29');
     expect(calendar).toHaveLength(7);
     expect(calendar.slice(0, 5).map((item) => item.type)).toEqual(['socials', 'google-ad', 'meta-ad', 'blogs', 'socials']);
     expect(calendar[0]).toMatchObject({ title: 'Post one', date: '2026-07-29' });
     expect(calendar[6].date).toBe('2026-08-04');
+  });
+
+  it('accepts and trims model over-delivery instead of failing the entire campaign', () => {
+    const input = pack();
+    input.socialPosts = Array.from({ length: 15 }, (_, index) => ({
+      name: `Post ${index + 1}`,
+      topic: `Angle ${index + 1}`,
+      caption: `Publishable caption ${index + 1}`,
+      platforms: ['linkedin'],
+    }));
+    const contract = {
+      socialPosts: 12,
+      googleAds: 1,
+      socialAds: 1,
+      blogOutlines: 1,
+      calendarItems: 12,
+      explicitCounts: true,
+    };
+
+    expect(campaignSectionValidationError({ socialPosts: input.socialPosts }, 'socialPosts', 12)).toBeNull();
+    expect(limitCampaignPackToContract(input, contract).socialPosts).toHaveLength(12);
+  });
+
+  it('rejects model under-delivery early so the next model can retry the section', () => {
+    const socialPosts = Array.from({ length: 11 }, (_, index) => ({
+      caption: `Publishable caption ${index + 1}`,
+      platforms: ['instagram'],
+    }));
+
+    expect(campaignSectionValidationError({ socialPosts }, 'socialPosts', 12))
+      .toBe('Expected at least 12 social posts but generated 11.');
+  });
+
+  it('treats qualitative counts as flexible while enforcing requested Instagram and Facebook channel mapping', () => {
+    const contract = {
+      socialPosts: 4,
+      googleAds: 2,
+      socialAds: 2,
+      blogOutlines: 0,
+      calendarItems: 8,
+      explicitCounts: false,
+    };
+    const input = pack();
+    input.socialPosts = [input.socialPosts[0]];
+    input.socialPosts[0].creativeBrief = 'Turn the Facebook ad and Google Search ad angles into one organic idea.';
+    input.socialPosts[0].visualGuide = 'Responsive search ad companion visual with a clean phone mockup.';
+    input.googleAds = [input.googleAds[0]];
+    input.socialAds = [{ ...input.socialAds[0], platform: 'instagram' }];
+    input.blogOutlines = [];
+    const prompt = 'i want some creative and funny social media campaign with some insta posts, facebook ads and some google ads to promote the berrystudio app';
+
+    expect(campaignSectionMinimumCount(contract, 'socialPosts')).toBe(1);
+    expect(campaignSectionMinimumCount(contract, 'googleAds')).toBe(1);
+    expect(campaignSectionMinimumCount(contract, 'socialAds')).toBe(1);
+    expect(campaignSectionMinimumCount(contract, 'blogOutlines')).toBe(0);
+    expect(campaignCalendarCount(input, contract)).toBe(3);
+    expect(campaignSectionValidationError({ socialPosts: input.socialPosts }, 'socialPosts', campaignSectionMinimumCount(contract, 'socialPosts'))).toBeNull();
+
+    const aligned = alignCampaignPackToRequestedPlatforms(input, prompt);
+    expect(aligned.socialPosts[0].platforms).toEqual(['instagram']);
+    expect(aligned.socialPosts[0].creativeBrief).toBe('Turn the Instagram post and Instagram post angles into one organic idea.');
+    expect(aligned.socialPosts[0].visualGuide).toBe('Instagram post companion visual with a clean phone mockup.');
+    expect(aligned.socialAds[0].platform).toBe('facebook');
+    expect(aligned.blogOutlines).toEqual([]);
   });
 
   it('keeps a useful creative direction when the strategist model times out', () => {

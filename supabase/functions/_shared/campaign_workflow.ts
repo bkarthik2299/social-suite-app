@@ -1,7 +1,9 @@
 import { normalizeCampaignPack, type CampaignPack } from './campaign_pack.ts';
 import type { BrandInstructions, ContentPatch, InternalBrief, QaFinding } from './agent_contracts.ts';
+import { extractRequestedChannelConstraints, type DeliverableContract } from './deliverable_contract.ts';
 
 type CalendarType = CampaignPack['calendar'][number]['type'];
+export type GeneratedCampaignSectionKey = 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines';
 
 const editableFields: Record<ContentPatch['group'], Set<string>> = {
   socialPosts: new Set(['name', 'topic', 'caption', 'platforms', 'creativeBrief', 'visualGuide']),
@@ -42,6 +44,97 @@ export function buildCampaignCalendar(pack: CampaignPack, count: number, startDa
     ...item,
     date: addDays(startDate, index),
   }));
+}
+
+export function limitCampaignPackToContract(pack: CampaignPack, contract: DeliverableContract): CampaignPack {
+  return {
+    ...pack,
+    socialPosts: pack.socialPosts.slice(0, contract.socialPosts),
+    googleAds: pack.googleAds.slice(0, contract.googleAds),
+    socialAds: pack.socialAds.slice(0, contract.socialAds),
+    blogOutlines: pack.blogOutlines.slice(0, contract.blogOutlines),
+    calendar: pack.calendar.slice(0, contract.calendarItems),
+  };
+}
+
+export function campaignSectionMinimumCount(contract: DeliverableContract, key: GeneratedCampaignSectionKey) {
+  const target = contract[key];
+  if (target <= 0) return 0;
+  return contract.explicitCounts ? target : 1;
+}
+
+export function campaignCalendarCount(pack: CampaignPack, contract: DeliverableContract) {
+  if (contract.explicitCounts) return contract.calendarItems;
+  const generatedItems = pack.socialPosts.length
+    + pack.googleAds.length
+    + pack.socialAds.length
+    + pack.blogOutlines.length;
+  return Math.min(contract.calendarItems, generatedItems);
+}
+
+export function alignCampaignPackToRequestedPlatforms(pack: CampaignPack, prompt: string): CampaignPack {
+  const requested = extractRequestedChannelConstraints(prompt);
+  if (!requested.organicSocial.length && !requested.paidSocial.length) return pack;
+
+  return normalizeCampaignPack({
+    ...pack,
+    socialPosts: pack.socialPosts.map((post, index) => {
+      if (!requested.organicSocial.length) return post;
+      const matchingPlatforms = post.platforms.filter((platform) => requested.organicSocial.includes(platform));
+      const platforms = matchingPlatforms.length
+        ? matchingPlatforms
+        : [requested.organicSocial[index % requested.organicSocial.length]];
+      return {
+        ...post,
+        platforms,
+        creativeBrief: alignOrganicChannelText(post.creativeBrief, platforms[0]),
+        visualGuide: alignOrganicChannelText(post.visualGuide, platforms[0]),
+      };
+    }),
+    socialAds: pack.socialAds.map((ad, index) => {
+      if (!requested.paidSocial.length || requested.paidSocial.includes(ad.platform)) return ad;
+      return {
+        ...ad,
+        platform: requested.paidSocial[index % requested.paidSocial.length],
+      };
+    }),
+  });
+}
+
+function alignOrganicChannelText(value: string | undefined, platform: string) {
+  if (!value) return value;
+  const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
+  return value
+    .replace(/\b(?:responsive\s+)?(?:google\s+)?search\s+ads?\b/gi, `${label} post`)
+    .replace(/\bgoogle(?:\s+search)?\s+ads?\b/gi, `${label} post`)
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+(?:paid\s+)?ads?\b/gi, `${label} post`)
+    .replace(/\bpaid\s+social\s+ads?\b/gi, `${label} post`)
+    .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+posts?\b/gi, `${label} post`);
+}
+
+export function campaignSectionValidationError(
+  input: unknown,
+  key: GeneratedCampaignSectionKey,
+  expectedCount: number,
+): string | null {
+  if (expectedCount <= 0) return null;
+
+  const record = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : null;
+  const sectionInput = record && key in record ? record[key] : input;
+  const pack = normalizeCampaignPack({ [key]: sectionInput });
+  const actualCount = pack[key].length;
+
+  if (actualCount >= expectedCount) return null;
+  return `Expected at least ${expectedCount} ${campaignSectionLabel(key)} but generated ${actualCount}.`;
+}
+
+function campaignSectionLabel(key: GeneratedCampaignSectionKey) {
+  if (key === 'socialPosts') return 'social posts';
+  if (key === 'googleAds') return 'Google ads';
+  if (key === 'socialAds') return 'paid social ads';
+  return 'blog outlines';
 }
 
 export function applyContentPatches(pack: CampaignPack, patches: ContentPatch[]): CampaignPack {

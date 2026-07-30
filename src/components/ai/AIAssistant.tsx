@@ -2810,7 +2810,11 @@ function eventDisplayMessage(event: AiRunEvent) {
   if (event.event_type === 'web_sources') return `Research found ${sources.length} useful sources and extracted campaign context.`;
   if (event.event_type === 'web_search_failed') return 'Web research could not be completed. Continuing with the brief and brand guide.';
   if (event.event_type === 'model_call') return 'Draft generation started using the selected AI model.';
-  if (event.event_type === 'model_fallback') return 'Primary generation could not complete. Structured draft placeholders were prepared for review.';
+  if (event.event_type === 'model_section_failed') {
+    const validationError = payloadString(event, 'error');
+    return validationError ? `${event.message} ${validationError}` : sanitizeActivityText(event.message || event.event_type);
+  }
+  if (event.event_type === 'model_fallback') return 'Primary generation could not complete. No incomplete drafts were saved.';
   return sanitizeActivityText(event.message || event.event_type);
 }
 

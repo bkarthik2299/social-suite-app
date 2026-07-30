@@ -1,5 +1,6 @@
 import {
   defaultDeliverableContract,
+  requestedChannelLabels,
   resolveDeliverableContract,
   type DeliverableContract,
 } from './deliverable_contract.ts';
@@ -112,12 +113,12 @@ export function fallbackPlannerOutput(
   const toneText = sentenceMatch(prompt, /\btone\s+should\s+be\s+(.+?)(?=[.!?](?:\s|$))/i);
   const restrictionText = sentenceMatch(prompt, /\bdo\s+not\s+(.+?)(?=[.!?](?:\s|$))/i);
   const researchFocus = sentenceMatch(prompt, /\bresearch\s+(.+?)(?=[.!?](?:\s|$))/i).replace(/^recent\s+/i, '');
-  const requestedChannels = [
+  const explicitChannels = requestedChannelLabels(prompt);
+  const requestedChannels = explicitChannels.length ? explicitChannels : [
     deliverableContract.socialPosts > 0 ? 'organic social' : '',
     deliverableContract.googleAds > 0 ? 'Google Search ads' : '',
     deliverableContract.socialAds > 0 ? 'paid social' : '',
     deliverableContract.blogOutlines > 0 ? 'blog' : '',
-    deliverableContract.calendarItems > 0 ? 'content calendar' : '',
   ].filter(Boolean);
   const keywordTargets = extractKeywordTargets(prompt);
   const confirmedFacts = uniqueStrings([
@@ -188,10 +189,29 @@ export function normalizePlannerOutput(
       ]).slice(0, 50),
       assumptions: uniqueStrings([...fallback.internalBrief.assumptions, ...stringArray(brief.assumptions)]).slice(0, 12),
       criticalQuestions: stringArray(brief.criticalQuestions).slice(0, 5),
-      requestedChannels: stringArray(brief.requestedChannels).slice(0, 12),
+      requestedChannels: uniqueStrings([
+        ...fallback.internalBrief.requestedChannels,
+        ...stringArray(brief.requestedChannels),
+      ]).slice(0, 12),
       tone: uniqueStrings([...fallback.internalBrief.tone, ...stringArray(brief.tone)]).slice(0, 12),
       restrictions: uniqueStrings([...fallback.internalBrief.restrictions, ...stringArray(brief.restrictions)]).slice(0, 16),
       researchNeeded,
+    },
+  };
+}
+
+export function requirePlannerResearch(
+  planner: PlannerOutput,
+  prompt: string,
+  destination: { projectName: string; campaignName: string },
+): PlannerOutput {
+  const fallback = fallbackPlannerOutput(prompt, destination);
+  return {
+    ...planner,
+    researchQuery: compact(planner.researchQuery || fallback.researchQuery, 220),
+    internalBrief: {
+      ...planner.internalBrief,
+      researchNeeded: true,
     },
   };
 }
