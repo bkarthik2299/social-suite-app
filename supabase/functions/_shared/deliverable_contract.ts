@@ -16,6 +16,18 @@ export const defaultDeliverableContract: DeliverableContract = {
   explicitCounts: false,
 };
 
+const suggestedDeliverableCounts = {
+  socialPosts: 4,
+  googleAds: 2,
+  socialAds: 2,
+  blogOutlines: 2,
+} as const;
+
+export type RequestedChannelConstraints = {
+  organicSocial: string[];
+  paidSocial: string[];
+};
+
 const deliverableLimits = {
   socialPosts: 48,
   googleAds: 20,
@@ -26,7 +38,7 @@ const deliverableLimits = {
 
 export function resolveDeliverableContract(prompt: string, modelInput: unknown, fallback: DeliverableContract) {
   const localContract = extractDeliverableContract(prompt);
-  if (localContract.explicitCounts) return localContract;
+  if (localContract.explicitCounts || hasNamedDeliverables(prompt)) return localContract;
 
   const modelContract = normalizeModelDeliverableContract(modelInput);
   if (modelContract?.explicitCounts) return modelContract;
@@ -70,7 +82,24 @@ export function extractDeliverableContract(prompt: string): DeliverableContract 
   if (explicitCalendarItems !== null) explicit.calendarItems = explicitCalendarItems;
 
   const explicitCounts = Object.keys(explicit).length > 0;
-  if (!explicitCounts) return { ...defaultDeliverableContract };
+  if (!explicitCounts) {
+    const requested = namedDeliverableTypes(text);
+    if (!Object.values(requested).some(Boolean)) return { ...defaultDeliverableContract };
+
+    const socialPosts = requested.socialPosts ? suggestedDeliverableCounts.socialPosts : 0;
+    const googleAds = requested.googleAds ? suggestedDeliverableCounts.googleAds : 0;
+    const socialAds = requested.socialAds ? suggestedDeliverableCounts.socialAds : 0;
+    const blogOutlines = requested.blogOutlines ? suggestedDeliverableCounts.blogOutlines : 0;
+    const contentTotal = socialPosts + googleAds + socialAds + blogOutlines;
+    return {
+      socialPosts,
+      googleAds,
+      socialAds,
+      blogOutlines,
+      calendarItems: contentTotal,
+      explicitCounts: false,
+    };
+  }
 
   const contentTotal = (explicit.socialPosts || 0) + (explicit.googleAds || 0) + (explicit.socialAds || 0) + (explicit.blogOutlines || 0);
   return {
@@ -84,13 +113,42 @@ export function extractDeliverableContract(prompt: string): DeliverableContract 
 }
 
 export function formatDeliverableContract(contract: DeliverableContract) {
+  const items = [
+    contract.socialPosts > 0 ? `${contract.socialPosts} social posts` : '',
+    contract.googleAds > 0 ? `${contract.googleAds} Google ads` : '',
+    contract.socialAds > 0 ? `${contract.socialAds} paid social ads` : '',
+    contract.blogOutlines > 0 ? `${contract.blogOutlines} blog outlines` : '',
+    contract.calendarItems > 0 ? `${contract.calendarItems} calendar items` : '',
+  ].filter(Boolean).join(', ');
+  return contract.explicitCounts ? items : `flexible mix targeting up to ${items}`;
+}
+
+export function extractRequestedChannelConstraints(prompt: string): RequestedChannelConstraints {
+  const text = prompt.toLowerCase().replace(/\s+/g, ' ');
+  return {
+    organicSocial: unique([
+      mentionsOrganicPlatform(text, 'instagram|insta') ? 'instagram' : '',
+      mentionsOrganicPlatform(text, 'facebook|fb') ? 'facebook' : '',
+      mentionsOrganicPlatform(text, 'linkedin') ? 'linkedin' : '',
+      mentionsOrganicPlatform(text, 'twitter|x') ? 'x' : '',
+    ]),
+    paidSocial: unique([
+      mentionsPaidPlatform(text, 'instagram|insta') ? 'instagram' : '',
+      mentionsPaidPlatform(text, 'facebook|fb|meta') ? 'facebook' : '',
+      mentionsPaidPlatform(text, 'linkedin') ? 'linkedin' : '',
+      mentionsPaidPlatform(text, 'twitter|x') ? 'x' : '',
+    ]),
+  };
+}
+
+export function requestedChannelLabels(prompt: string) {
+  const channels = extractRequestedChannelConstraints(prompt);
   return [
-    `${contract.socialPosts} social posts`,
-    `${contract.googleAds} Google ads`,
-    `${contract.socialAds} paid social ads`,
-    `${contract.blogOutlines} blog outlines`,
-    `${contract.calendarItems} calendar items`,
-  ].join(', ');
+    ...channels.organicSocial.map((platform) => `${displayPlatform(platform)} organic posts`),
+    ...channels.paidSocial.map((platform) => `${displayPlatform(platform)} paid ads`),
+    /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(prompt) ? 'Google Search ads' : '',
+    /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(prompt) ? 'blog' : '',
+  ].filter(Boolean);
 }
 
 function normalizeModelDeliverableContract(input: unknown): DeliverableContract | null {
@@ -114,6 +172,36 @@ function normalizeModelDeliverableContract(input: unknown): DeliverableContract 
     calendarItems: clampDeliverableCount(calendarItems, 'calendarItems'),
     explicitCounts: true,
   };
+}
+
+function hasNamedDeliverables(prompt: string) {
+  return Object.values(namedDeliverableTypes(prompt.toLowerCase().replace(/\s+/g, ' '))).some(Boolean);
+}
+
+function namedDeliverableTypes(text: string) {
+  return {
+    socialPosts: /\b(?:(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x)\s+(?:organic\s+)?posts?|posts?\s+(?:for|on)\s+(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x))\b/i.test(text),
+    googleAds: /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(text),
+    socialAds: /\b(?:paid\s+social|meta|facebook|instagram|insta|linkedin|twitter|x)\s+(?:ads?|ad\s+sets?|ad\s+copies?)\b/i.test(text),
+    blogOutlines: /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(text),
+  };
+}
+
+function mentionsOrganicPlatform(text: string, platformPattern: string) {
+  return new RegExp(`\\b(?:${platformPattern})\\s+(?:organic\\s+)?posts?\\b|\\bposts?\\s+(?:for|on)\\s+(?:${platformPattern})\\b`, 'i').test(text);
+}
+
+function mentionsPaidPlatform(text: string, platformPattern: string) {
+  return new RegExp(`\\b(?:${platformPattern})\\s+(?:ads?|ad\\s+sets?|ad\\s+copies?)\\b`, 'i').test(text);
+}
+
+function displayPlatform(platform: string) {
+  if (platform === 'x') return 'X';
+  return platform.charAt(0).toUpperCase() + platform.slice(1);
+}
+
+function unique(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function countPrefix() {
