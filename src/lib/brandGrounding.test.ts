@@ -133,6 +133,46 @@ describe('brand grounding', () => {
     expect(JSON.stringify(grounded)).not.toContain(context.desiredAction);
   });
 
+  it('keeps the inferred Learn More CTA valid for a Ceebros-style Google campaign', () => {
+    const ceebrosGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Ceebros',
+        website_url: 'https://ceebros.com',
+        elevator_pitch: 'Premium residential, commercial, and plot developments by Ceebros.',
+        target_audience: 'Premium property buyers seeking residential developments.',
+      },
+      markdown: '',
+    });
+    const input = pack('Promote CEEBROS 174 to generate qualified property inquiries.');
+    input.googleAds = [0, 1].map((index) => ({
+      name: `CEEBROS 174 search ${index + 1}`,
+      topic: 'CEEBROS 174 premium residence',
+      keywords: ['CEEBROS 174', 'premium residence'],
+      headlines: [
+        'CEEBROS 174',
+        'Premium Residential',
+        'Explore CEEBROS 174',
+        'Thoughtful Property Design',
+        'See the Property Details',
+        'A Clearer Property Search',
+        'Premium Living by Ceebros',
+        'Make an Inquiry',
+      ],
+      descriptions: ['Explore CEEBROS 174 and make an inquiry through the official Ceebros website.'],
+    }));
+    const context = {
+      audience: 'Premium property buyers seeking residential developments.',
+      offerOrSubject: 'CEEBROS 174 premium residential property.',
+      desiredAction: 'Explore the property and make an inquiry.',
+    };
+
+    const grounded = applyBrandGroundingDefaults(input, ceebrosGrounding, context);
+    const findings = deterministicQualityFindings(grounded, emptyBrandInstructions(), context);
+
+    expect(grounded.googleAds.every((ad) => ad.headlines.includes('Learn More'))).toBe(true);
+    expect(findings.filter((finding) => finding.problem.includes('unfinished phrase'))).toEqual([]);
+  });
+
   it('does not promote undefined Brand Knowledge placeholders into campaign facts', () => {
     const sparseMarkdown = `# KYRO Construction SaaS — Brand Knowledge Document
 

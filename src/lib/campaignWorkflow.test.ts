@@ -307,6 +307,22 @@ describe('campaign workflow helpers', () => {
     expect(deterministicQualityFindings(repaired, emptyBrandInstructions(), brief).filter((finding) => finding.severity === 'blocking')).toEqual([]);
   });
 
+  it('accepts complete Google ad CTAs while identifying the exact unfinished headline', () => {
+    const input = pack();
+    input.googleAds[0].headlines = ['Learn More', 'Explore More', 'Designed for'];
+
+    const findings = deterministicQualityFindings(input, emptyBrandInstructions());
+    const unfinished = findings.filter((finding) => finding.problem.includes('unfinished phrase'));
+
+    expect(unfinished).toHaveLength(1);
+    expect(unfinished[0]).toMatchObject({
+      group: 'googleAds',
+      index: 0,
+      severity: 'blocking',
+      problem: 'Google ad headline 3 ("Designed for") ends as an unfinished phrase.',
+    });
+  });
+
   it('flags weak keyword coverage in Google Search headlines', () => {
     const input = pack();
     input.googleAds[0] = {
