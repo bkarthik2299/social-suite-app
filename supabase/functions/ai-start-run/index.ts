@@ -64,6 +64,7 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 type RequestBody = {
   prompt: string;
   resumeRunId?: string;
+  resumePhase?: 'copywriter' | 'qa';
   projectId?: string | null;
   folderId?: string | null;
   campaignId?: string | null;
@@ -203,6 +204,7 @@ Deno.serve(async (req) => {
       const completedStepSlugs = (existingSteps || [])
         .map((step, index) => (step.status === 'done' || step.status === 'skipped') ? runStepDefinitions[index]?.slug : '')
         .filter(Boolean);
+      const resumePhase = body.resumePhase === 'qa' ? 'qa' : 'copywriter';
       EdgeRuntime.waitUntil(processMission({
         supabase,
         body: {
@@ -223,7 +225,7 @@ Deno.serve(async (req) => {
         userId,
         agentWorkflow,
         runStepDefinitions,
-        resumeFromCopywriter: true,
+        resumePhase,
         completedStepSlugs,
         authorization: req.headers.get('authorization') || '',
         apiKey: req.headers.get('apikey') || '',
@@ -320,7 +322,7 @@ async function processMission({
   userId,
   agentWorkflow,
   runStepDefinitions,
-  resumeFromCopywriter = false,
+  resumePhase = null,
   completedStepSlugs = [],
   authorization,
   apiKey,
@@ -336,7 +338,7 @@ async function processMission({
   userId: string;
   agentWorkflow: string[];
   runStepDefinitions: RunStepDefinition[];
-  resumeFromCopywriter?: boolean;
+  resumePhase?: 'copywriter' | 'qa' | null;
   completedStepSlugs?: string[];
   authorization: string;
   apiKey: string;
@@ -385,6 +387,9 @@ async function processMission({
   let destination: Awaited<ReturnType<typeof loadDestinationContext>> = { projectName: '', folderName: '', campaignName: '' };
   let agentSkillContext = '';
   let researchSources: TavilySearchResponse['results'] = [];
+  let pack: CampaignPack = normalizeCampaignPack({});
+  let contentGuardrailNotes: string[] = [];
+  const today = new Date().toISOString().slice(0, 10);
   const runObservability: AiObservabilityContext = {
     distinctId: userId,
     traceId: runId,
@@ -564,6 +569,7 @@ async function processMission({
           pack: nextPack,
           plannerOutput,
           brandInstructions,
+          brandGrounding: brandKnowledge.grounding,
           researchBrief,
           deliverableContract: plannerOutput.deliverableContract,
           deadlineAt: missionDeadlineAt,
@@ -612,17 +618,25 @@ async function processMission({
       body.brandGuideId || null,
       body.brandKnowledgeDocumentId || null,
     );
-    if (resumeFromCopywriter) {
-      activeStep = 'Copywriter Agent';
+    if (resumePhase) {
+      activeStep = resumePhase === 'qa' ? 'QA Agent' : 'Copywriter Agent';
       const continuation = await loadMissionContinuationState(supabase, runId, body.prompt, destination, brandKnowledge.title);
       plannerOutput = continuation.plannerOutput;
       brandInstructions = continuation.brandInstructions;
       researchBrief = continuation.researchBrief;
       creativeDirection = continuation.creativeDirection;
       researchSources = continuation.researchSources;
-      await addEvent('Copywriter Agent', 'continuation_started', 'Copywriter resumed in a fresh Edge Function budget using the completed planning handoff.', {
-        selectedModel: selectedModel.id,
-      });
+      if (resumePhase === 'qa') {
+        pack = await loadPreQaCampaignPack(supabase, runId);
+        await addEvent('QA Agent', 'qa_continuation_started', 'QA resumed with the complete draft pack and a fresh Edge Function budget.', {
+          selectedModel: selectedModel.id,
+          counts: packCounts(pack),
+        });
+      } else {
+        await addEvent('Copywriter Agent', 'continuation_started', 'Copywriter resumed in a fresh Edge Function budget using the completed planning handoff.', {
+          selectedModel: selectedModel.id,
+        });
+      }
     } else {
     activeStep = 'Planner Agent';
     await updateStep(activeStep, 'working', `Understanding the brief and preparing ${workMode === 'deep' ? 'a focused research question' : 'campaign guidance'}.`);
@@ -970,10 +984,11 @@ async function processMission({
     await addEvent(activeStep, 'continuation_queued', 'Planning handoff completed. Copywriter is starting with a fresh Edge Function budget.', {
       selectedModel: selectedModel.id,
     });
-    await dispatchMissionContinuation({ runId, authorization, apiKey });
+    await dispatchMissionContinuation({ runId, phase: 'copywriter', authorization, apiKey });
     return;
     }
 
+    if (resumePhase !== 'qa') {
     await assertRunActive();
     activeStep = 'Copywriter Agent';
     const model = selectedModel.id;
@@ -992,9 +1007,6 @@ async function processMission({
       researchSources: researchSources.length,
     });
 
-    const today = new Date().toISOString().slice(0, 10);
-    let pack: CampaignPack;
-    let contentGuardrailNotes: string[] = [];
     try {
       if (remainingMissionMs() < COPYWRITER_MIN_BUDGET_MS) {
         throw new Error(`Copywriter skipped because only ${Math.round(remainingMissionMs() / 1000)}s remained in the Edge Function budget.`);
@@ -1092,14 +1104,24 @@ async function processMission({
     await updateStep(activeStep, 'done', `Mapped ${pack.calendar.length} calendar items and structured every output for its campaign type.`);
     pack = await applyCustomPackStepsBefore('qa', pack);
 
+    await recordRunDocument('pre_qa_pack', { ...pack });
+    await addEvent('QA Agent', 'qa_continuation_queued', 'Draft review handoff completed. QA is starting with a fresh Edge Function budget.', {
+      selectedModel: selectedModel.id,
+      counts: packCounts(pack),
+    });
+    await dispatchMissionContinuation({ runId, phase: 'qa', authorization, apiKey });
+    return;
+    }
+
     await assertRunActive();
     activeStep = 'QA Agent';
     await updateStep(activeStep, 'working', 'Reviewing brief fit, brand tone, repetition, platform fit, completeness, and evidence safety.');
-    const preQaRepair = repairCampaignPack(pack, plannerOutput.internalBrief);
-    pack = applyBrandGroundingDefaults(preQaRepair.pack, brandKnowledge.grounding, {
+    const preQaGroundedPack = applyBrandGroundingDefaults(pack, brandKnowledge.grounding, {
       ...plannerOutput.internalBrief,
       prompt: body.prompt,
     });
+    const preQaRepair = repairCampaignPack(preQaGroundedPack, plannerOutput.internalBrief);
+    pack = preQaRepair.pack;
     let qaRepairCount = preQaRepair.notes.length;
     if (preQaRepair.notes.length) {
       await addEvent(activeStep, 'deterministic_repairs', `Applied ${preQaRepair.notes.length} final consistency repair${preQaRepair.notes.length === 1 ? '' : 's'} before QA.`, {
@@ -1116,7 +1138,9 @@ async function processMission({
     ];
     let reviewedFindings: QaFinding[] = [];
     let reviewedPatches: ContentPatch[] = [];
-    if (remainingMissionMs() > QA_REVIEW_TIMEOUT_MS + 10_000) {
+    let qaModelAttempt = 0;
+    while (qaModelAttempt < 2 && remainingMissionMs() > QA_REVIEW_TIMEOUT_MS + 10_000) {
+      qaModelAttempt += 1;
       try {
         const reviewed = await reviewCampaignPack({
           model: structuredModelId,
@@ -1130,8 +1154,8 @@ async function processMission({
           platformSkill: agentSkills['platform-specialist'] || '',
           observability: withRunObservation(runObservability, 'qa', 'mission-qa-review'),
         });
-        reviewedFindings = reviewed.findings;
-        reviewedPatches = reviewed.patches;
+        reviewedFindings = [...reviewedFindings, ...reviewed.findings].slice(0, 30);
+        reviewedPatches = [...reviewedPatches, ...reviewed.patches].slice(0, 32);
         qaDetailedFindings = [...qaDetailedFindings, ...reviewed.findings].slice(0, 30);
         if (reviewed.patches.length) {
           const patched = applyContentPatches(pack, reviewed.patches);
@@ -1142,19 +1166,40 @@ async function processMission({
           }), body.prompt, plannerOutput.deliverableContract);
           pack = guarded.pack;
           contentGuardrailNotes.push(...guarded.notes);
-          const postQaRepair = repairCampaignPack(pack, plannerOutput.internalBrief);
-          pack = applyBrandGroundingDefaults(postQaRepair.pack, brandKnowledge.grounding, {
+          const postQaGroundedPack = applyBrandGroundingDefaults(pack, brandKnowledge.grounding, {
             ...plannerOutput.internalBrief,
             prompt: body.prompt,
           });
+          const postQaRepair = repairCampaignPack(postQaGroundedPack, plannerOutput.internalBrief);
+          pack = postQaRepair.pack;
           contentGuardrailNotes.push(...postQaRepair.notes);
           qaRepairCount += reviewed.patches.length + postQaRepair.notes.length;
-          await addEvent(activeStep, 'qa_repairs', `QA applied ${reviewed.patches.length} focused copy repair${reviewed.patches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
+          await addEvent(activeStep, 'qa_repairs', `QA repair attempt ${qaModelAttempt} applied ${reviewed.patches.length} focused copy change${reviewed.patches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
+            attempt: qaModelAttempt,
             patches: reviewed.patches.map(({ group, index, field, reason }) => ({ group, index, field, reason })),
           });
         }
+
+        const unresolvedAfterAttempt = [
+          ...validatePack(pack, plannerOutput.deliverableContract).map((problem) => ({ severity: 'blocking' as const, problem })),
+          ...deterministicQualityFindings(pack, brandInstructions, plannerOutput.internalBrief),
+          ...brandGroundingQualityFindings(pack, brandKnowledge.grounding, {
+            ...plannerOutput.internalBrief,
+            prompt: body.prompt,
+          }),
+          ...campaignPlatformConsistencyFindings(pack, body.prompt),
+          ...reviewedFindings.filter((finding) => (
+            reviewFindingAppliesToBrief(finding, plannerOutput)
+            && !reviewFindingResolvedByPatches(finding, reviewedPatches)
+          )),
+        ].filter((finding) => finding.severity === 'blocking');
+        if (!unresolvedAfterAttempt.length) break;
       } catch (error) {
-        await addEvent(activeStep, 'qa_model_skipped', 'The focused AI review could not complete; deterministic QA checks still ran.', {
+        await addEvent(activeStep, qaModelAttempt < 2 ? 'qa_model_retry' : 'qa_model_skipped', qaModelAttempt < 2
+          ? `Focused QA attempt ${qaModelAttempt} could not complete; QA will retry once with the selected model.`
+          : 'The focused AI review could not complete after two attempts; deterministic QA checks still ran.', {
+          attempt: qaModelAttempt,
+          selectedModel: structuredModelId,
           internalError: error instanceof Error ? error.message : 'AI review failed',
         });
       }
@@ -1176,7 +1221,8 @@ async function processMission({
       ...unresolvedReviewedFindings,
     ].slice(0, 30);
     const blockingDetailed = unresolvedDetailed.filter((finding) => finding.severity === 'blocking');
-    await addEvent(activeStep, 'qa_review', qaFindings.length || unresolvedDetailed.length
+    const qaBlocked = qaFindings.length > 0 || blockingDetailed.length > 0;
+    await addEvent(activeStep, qaBlocked ? 'qa_blocked' : 'qa_review', qaFindings.length || unresolvedDetailed.length
       ? `QA completed with ${qaFindings.length + unresolvedDetailed.length} unresolved finding${qaFindings.length + unresolvedDetailed.length === 1 ? '' : 's'} after focused repairs.`
       : discoveredFindings.length
         ? `QA found ${discoveredFindings.length} quality issue${discoveredFindings.length === 1 ? '' : 's'} and repaired them before review.`
@@ -1186,7 +1232,7 @@ async function processMission({
       unresolvedFindings: unresolvedDetailed,
       repairCount: qaRepairCount,
     });
-    if (qaFindings.length || blockingDetailed.length) {
+    if (qaBlocked) {
       throw new Error(`QA blocked the draft pack: ${[...qaFindings, ...blockingDetailed.map((finding) => finding.problem)].join(' ')}`);
     }
     await addHandoffEvent(activeStep, {
@@ -1222,17 +1268,23 @@ async function processMission({
       ...pack,
       calendar: buildCampaignCalendar(pack, campaignCalendarCount(pack, plannerOutput.deliverableContract), today),
     }), body.prompt, plannerOutput.deliverableContract);
-    pack = applyBrandGroundingDefaults(
-      repairCampaignPack(finalGuard.pack, plannerOutput.internalBrief).pack,
+    const finalGroundedPack = applyBrandGroundingDefaults(
+      finalGuard.pack,
       brandKnowledge.grounding,
       {
         ...plannerOutput.internalBrief,
         prompt: body.prompt,
       },
     );
+    const finalRepair = repairCampaignPack(finalGroundedPack, plannerOutput.internalBrief);
+    pack = finalRepair.pack;
+    contentGuardrailNotes.push(...finalRepair.notes);
     contentGuardrailNotes.push(...finalGuard.notes);
     const finalFindings = [
       ...validatePack(pack, plannerOutput.deliverableContract),
+      ...deterministicQualityFindings(pack, brandInstructions, plannerOutput.internalBrief)
+        .filter((finding) => finding.severity === 'blocking')
+        .map((finding) => finding.problem),
       ...brandGroundingQualityFindings(pack, brandKnowledge.grounding, {
         ...plannerOutput.internalBrief,
         prompt: body.prompt,
@@ -1383,17 +1435,19 @@ async function processMission({
 
 async function dispatchMissionContinuation({
   runId,
+  phase,
   authorization,
   apiKey,
 }: {
   runId: string;
+  phase: 'copywriter' | 'qa';
   authorization: string;
   apiKey: string;
 }) {
   const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
   const effectiveApiKey = apiKey || Deno.env.get('SUPABASE_ANON_KEY') || '';
   if (!supabaseUrl || !authorization || !effectiveApiKey) {
-    throw new Error('The copywriter continuation could not authenticate a fresh Edge Function invocation.');
+    throw new Error(`The ${phase} continuation could not authenticate a fresh Edge Function invocation.`);
   }
   const response = await fetch(`${supabaseUrl}/functions/v1/ai-start-run`, {
     method: 'POST',
@@ -1402,11 +1456,11 @@ async function dispatchMissionContinuation({
       apikey: effectiveApiKey,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ resumeRunId: runId }),
+    body: JSON.stringify({ resumeRunId: runId, resumePhase: phase }),
   });
   if (response.ok) return;
   const payload = await response.json().catch(() => ({})) as { error?: string };
-  throw new Error(payload.error || `The copywriter continuation request failed with HTTP ${response.status}.`);
+  throw new Error(payload.error || `The ${phase} continuation request failed with HTTP ${response.status}.`);
 }
 
 async function loadMissionContinuationState(
@@ -1450,6 +1504,23 @@ async function loadMissionContinuationState(
     : [];
 
   return { plannerOutput, brandInstructions, researchBrief, creativeDirection, researchSources };
+}
+
+async function loadPreQaCampaignPack(supabase: SupabaseClient, runId: string) {
+  const { data, error } = await supabase
+    .from('ai_run_documents')
+    .select('content')
+    .eq('run_id', runId)
+    .eq('document_type', 'pre_qa_pack')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  const pack = normalizeCampaignPack(data?.content || {});
+  if (!hasCampaignOutput(pack)) {
+    throw new Error('QA continuation could not load the completed draft pack.');
+  }
+  return pack;
 }
 
 function handoffText(value: string, maxLength = 900) {
@@ -2616,6 +2687,7 @@ async function reviewCampaignPack(args: {
   pack: CampaignPack;
   plannerOutput: PlannerOutput;
   brandInstructions: BrandInstructions;
+  brandGrounding: BrandGrounding;
   researchBrief: ResearchBrief;
   creativeDirection: CreativeDirection;
   qaSkill: string;

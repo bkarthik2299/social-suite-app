@@ -540,15 +540,16 @@ export function deterministicQualityFindings(
         suggestion: 'Replace it with specific, reader-facing information grounded in the brief.',
       });
     }
-    if (ad.headlines.some(looksLikeIncompleteGoogleHeadline)) {
+    ad.headlines.forEach((headline, headlineIndex) => {
+      if (!looksLikeIncompleteGoogleHeadline(headline)) return;
       findings.push({
         group: 'googleAds',
         index,
         severity: 'blocking',
-        problem: 'Contains a Google ad headline that ends as an unfinished phrase.',
+        problem: `Google ad headline ${headlineIndex + 1} ("${headline}") ends as an unfinished phrase.`,
         suggestion: 'Remove or rewrite the fragment as a complete headline within the 30-character limit.',
       });
-    }
+    });
     if (!ad.descriptions.some(looksLikeIncompleteGoogleDescription)) return;
     findings.push({
       group: 'googleAds',
@@ -839,6 +840,7 @@ function searchThemeWords(value: string) {
 
 function looksLikeIncompleteGoogleHeadline(value: string) {
   const headline = value.replace(/[.!?]+$/, '').trim();
+  if (/^(?:learn|discover|explore|see|read|find out) more$/i.test(headline)) return false;
   return /\b(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|before|after|the|a|an|your|our|their|next|less|more|starts?|begins?)$/i.test(headline)
     || /\b(?:helps?|supports?)\s+(?:patients?|practices?|teams?|owners?|people|you|them)$/i.test(headline)
     || /\b(?:for|with|to|before|after)\s+(?:first|better|clearer|easier|faster|more|your|our|their)$/i.test(headline);
