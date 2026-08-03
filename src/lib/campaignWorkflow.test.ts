@@ -496,4 +496,23 @@ describe('campaign workflow helpers', () => {
     ]));
     expect(repairCampaignPack(input, brief).pack.socialAds[0].cta).toBe('learn_more');
   });
+
+  it('reserves a Google headline slot for the verified CTA after keyword rebuilding', () => {
+    const input = pack();
+    input.googleAds[0].keywords = ['orthodontic training'];
+    input.googleAds[0].headlines = [
+      ...Array.from({ length: 15 }, (_, index) => `Orthodontic Training ${index + 1}`),
+      'Contact Us',
+    ];
+    const brief = {
+      desiredAction: 'Contact Us or Book a Demo.',
+      keywordTargets: ['orthodontic training'],
+      confirmedFacts: [],
+      restrictions: [],
+    };
+
+    const repaired = repairCampaignPack(input, brief).pack.googleAds[0];
+    expect(repaired.headlines).toHaveLength(15);
+    expect(repaired.headlines).toContain('Contact Us');
+  });
 });

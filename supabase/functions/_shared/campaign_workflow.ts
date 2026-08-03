@@ -737,6 +737,7 @@ function normalizePreferredAction(value: string) {
 }
 
 function buildGoogleHeadlines(existing: string[], keywords: string[], desiredAction: string) {
+  const preferredCta = preferredGoogleCtaHeadline(desiredAction);
   const keywordHeadlines = existing.filter((headline) => keywords.some((keyword) => keywordMatchesText(keyword, headline)));
   for (const keyword of keywords) {
     if (keywordHeadlines.length >= Math.max(2, Math.min(keywords.length, 12))) break;
@@ -762,7 +763,25 @@ function buildGoogleHeadlines(existing: string[], keywords: string[], desiredAct
     if (headlines.length >= 8) break;
     if (!headlines.some((headline) => headline.toLowerCase() === fallback.toLowerCase())) headlines.push(fallback);
   }
-  return headlines.slice(0, 15);
+  const cappedHeadlines = headlines.slice(0, 15);
+  if (preferredCta && !cappedHeadlines.some((headline) => headline.toLowerCase() === preferredCta.toLowerCase())) {
+    return cappedHeadlines.length >= 15
+      ? [...cappedHeadlines.slice(0, 14), preferredCta]
+      : [...cappedHeadlines, preferredCta];
+  }
+  return cappedHeadlines;
+}
+
+function preferredGoogleCtaHeadline(desiredAction: string) {
+  if (/\bcontact\s+us\b/i.test(desiredAction)) return 'Contact Us';
+  if (/\bdiscovery\s+call\b/i.test(desiredAction)) return 'Book a Discovery Call';
+  if (/\b(?:book|request|schedule)\b[^.!?]{0,30}\bdemo\b|\bdemo\b/i.test(desiredAction)) return 'Book a Demo';
+  if (/\bget\s+started\b/i.test(desiredAction)) return 'Get Started';
+  if (/\bsign[ -]?up\b/i.test(desiredAction)) return 'Sign Up';
+  if (/\bdownload\b/i.test(desiredAction)) return 'Download the App';
+  if (/\bshop\s+now\b|\b(?:buy|purchase|order)\b/i.test(desiredAction)) return 'Shop Now';
+  if (/\blearn\s+more\b/i.test(desiredAction)) return 'Learn More';
+  return '';
 }
 
 function buildGoogleDescriptions(existing: string[], keywords: string[]) {
