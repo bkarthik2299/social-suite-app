@@ -356,6 +356,46 @@ None provided. (No case studies, testimonials, or data points available.)`;
     expect(groundedAgain.campaignGuidance.match(/Verified brand context is authoritative/g)).toHaveLength(1);
   });
 
+  it('does not mistake ordinary product copy containing "apply" for an Apply Now CTA', () => {
+    const contactGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Berrystudio',
+        website_url: 'https://berrystudio.ai',
+        elevator_pitch: 'Practice management software for orthodontic teams.',
+        sample_copy: ['Contact Us'],
+      },
+      markdown: '',
+    });
+    const prompt = 'BerryNerd helps teams watch, listen, read, and apply SOP guidance in real time.';
+    const planner = fallbackPlannerOutput(prompt, { projectName: 'Berry Studio AI', campaignName: 'BerryNerd' });
+    planner.internalBrief.desiredAction = 'Use the action explicitly requested in the client brief.';
+
+    expect(groundPlannerOutputWithBrand(planner, contactGrounding, prompt).internalBrief.desiredAction).toBe('Contact Us');
+  });
+
+  it('accepts a named product capability mapping explicitly supplied in the client brief', () => {
+    const productGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Berrystudio',
+        website_url: 'https://berrystudio.ai',
+        elevator_pitch: 'Practice management software for orthodontic teams.',
+        sample_copy: ['Contact Us'],
+      },
+      markdown: `## Proof Points\n- Products include BerryForms, BerryTasks, BerryPlans, BerryPay, BerryReports, and BerryNerd — purpose-built for modern orthodontic practices.`,
+    });
+    const input = pack('Berrystudio helps orthodontic teams keep learning resources useful.');
+    input.socialPosts[0].caption = 'BerryNerd creates dynamic SOPs and tracks team understanding.';
+    const context = {
+      prompt: 'Help promote BerryNerd product. Here are the details: create dynamic SOPs, assign them, and track competency.',
+      desiredAction: 'Contact Us',
+    };
+
+    const grounded = applyBrandGroundingDefaults(input, productGrounding, context);
+    expect(grounded.socialPosts[0].caption).toContain('BerryNerd');
+    expect(brandGroundingQualityFindings(grounded, productGrounding, context)
+      .filter((finding) => finding.problem.includes('named product'))).toEqual([]);
+  });
+
   it('prevents the Brand Guide Agent from filtering out core identity, audience, offering, and restrictions', () => {
     const filtered = groundBrandInstructionsWithBrand(emptyBrandInstructions('Berry'), grounding());
 
