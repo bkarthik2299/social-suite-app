@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   prefersNativeJsonMode,
+  prefersSectionedCampaignPack,
   supportsTemperatureParameter,
   structuredMissionModelPlan,
   structuredJsonAttemptPlan,
@@ -49,5 +50,11 @@ describe('OpenRouter mission policy', () => {
     expect(structuredOutputReasoning('deepseek/deepseek-v4-pro')).toEqual({ effort: 'none', exclude: true });
     expect(structuredOutputReasoning('deepseek/deepseek-v4-flash')).toEqual({ effort: 'none', exclude: true });
     expect(structuredOutputReasoning('openai/gpt-5.5')).toBeUndefined();
+  });
+
+  it('splits DeepSeek V4 Pro campaign packs into smaller parallel section requests', () => {
+    expect(prefersSectionedCampaignPack('deepseek/deepseek-v4-pro')).toBe(true);
+    expect(prefersSectionedCampaignPack('anthropic/claude-opus-4.7')).toBe(false);
+    expect(prefersSectionedCampaignPack('openai/gpt-5.5')).toBe(false);
   });
 });

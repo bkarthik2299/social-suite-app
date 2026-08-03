@@ -15,6 +15,10 @@ export function structuredJsonAttemptPlan(selectedModelId: string) {
   ] as const;
 }
 
+export function prefersSectionedCampaignPack(modelId: string) {
+  return modelId === 'deepseek/deepseek-v4-pro';
+}
+
 export function prefersNativeJsonMode(modelId: string) {
   return modelId !== PERPLEXITY_RESEARCH_MODEL;
 }
