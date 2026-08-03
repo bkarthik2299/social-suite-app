@@ -102,6 +102,21 @@ describe('campaign workflow helpers', () => {
     expect(calendar[6].date).toBe('2026-08-04');
   });
 
+  it('keeps calendar dates aligned with generated asset schedules', () => {
+    const input = pack();
+    input.socialPosts[0].scheduledDate = '2026-08-05';
+    input.googleAds[0].startDate = '2026-08-06';
+    input.socialAds[0].scheduledDate = '2026-08-07';
+    input.blogOutlines[0].publishDate = '2026-08-08';
+
+    expect(buildCampaignCalendar(input, 4, '2026-08-03').map((item) => item.date)).toEqual([
+      '2026-08-05',
+      '2026-08-06',
+      '2026-08-07',
+      '2026-08-08',
+    ]);
+  });
+
   it('accepts and trims model over-delivery instead of failing the entire campaign', () => {
     const input = pack();
     input.socialPosts = Array.from({ length: 15 }, (_, index) => ({
@@ -435,5 +450,50 @@ describe('campaign workflow helpers', () => {
       expect.objectContaining({ group: 'blogOutlines', severity: 'blocking', problem: expect.stringContaining('body-section heading') }),
       expect.objectContaining({ group: 'blogOutlines', severity: 'blocking', problem: expect.stringContaining('time claim') }),
     ]));
+  });
+
+  it('repairs quantified claims when the client explicitly forbids statistics', () => {
+    const input = pack();
+    input.socialPosts[0].caption = 'Turn your commute into French practice. Learn in as little as 5 minutes a day. Start learning French on Duolingo.';
+    const brief = {
+      desiredAction: 'Start learning French on Duolingo.',
+      keywordTargets: [],
+      confirmedFacts: [],
+      restrictions: ['Do not add statistics, discounts, testimonials, or guarantees'],
+    };
+
+    expect(deterministicQualityFindings(input, emptyBrandInstructions(), brief)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'unsupported_claim', severity: 'blocking', problem: expect.stringContaining('5 minutes') }),
+    ]));
+
+    const repaired = repairCampaignPack(input, brief);
+    expect(repaired.pack.socialPosts[0].caption).toBe('Turn your commute into French practice. Start learning French on Duolingo.');
+    expect(repaired.notes).toEqual(expect.arrayContaining([expect.stringContaining('quantified claim')]));
+    expect(deterministicQualityFindings(repaired.pack, emptyBrandInstructions(), brief).filter((finding) => finding.severity === 'blocking')).toEqual([]);
+  });
+
+  it('extracts an explicit CTA label into the deterministic brief', () => {
+    const planner = fallbackPlannerOutput(
+      'Create 2 Instagram posts. CTA: Start learning French on Duolingo.',
+      { projectName: 'Duolingo', campaignName: '' },
+    );
+
+    expect(planner.internalBrief.desiredAction).toBe('Start learning French on Duolingo.');
+  });
+
+  it('repairs paid-social button enums from the explicit client CTA', () => {
+    const input = pack();
+    input.socialAds[0].cta = 'contact_us';
+    const brief = {
+      desiredAction: 'Start learning French on Duolingo.',
+      keywordTargets: [],
+      confirmedFacts: [],
+      restrictions: [],
+    };
+
+    expect(deterministicQualityFindings(input, emptyBrandInstructions(), brief)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ category: 'cta', severity: 'blocking', problem: expect.stringContaining('learn_more') }),
+    ]));
+    expect(repairCampaignPack(input, brief).pack.socialAds[0].cta).toBe('learn_more');
   });
 });

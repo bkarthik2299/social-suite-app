@@ -72,9 +72,21 @@ export type QaFinding = {
   group: 'strategy' | 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines' | 'calendar';
   index: number;
   severity: 'note' | 'warning' | 'blocking';
+  category?: QaFindingCategory;
   problem: string;
   suggestion: string;
 };
+
+export type QaFindingCategory =
+  | 'deliverable_contract'
+  | 'required_field'
+  | 'unsupported_claim'
+  | 'brand_or_product'
+  | 'safety'
+  | 'platform_limit'
+  | 'cta'
+  | 'creative_example'
+  | 'polish';
 
 export type ContentPatch = {
   group: 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines';
@@ -105,7 +117,8 @@ export function fallbackPlannerOutput(
   const compactPrompt = compact(prompt, 900);
   const audience = sentenceMatch(prompt, /\btarget\s+(.+?)(?=[.!?](?:\s|$))/i);
   const desiredAction = normalizeDesiredAction(
-    sentenceMatch(prompt, /\bgoal\s+is\s+to\s+(.+?)(?=[.!?](?:\s|$))/i)
+    sentenceMatch(prompt, /\bcta\s*:\s*(.+?)(?=[.!?](?:\s|$))/i)
+      || sentenceMatch(prompt, /\bgoal\s+is\s+to\s+(.+?)(?=[.!?](?:\s|$))/i)
       || sentenceMatch(prompt, /\b(?:ask|want)\s+(?:the\s+)?(?:audience|user|customer|reader)s?\s+to\s+(.+?)(?=[.!?](?:\s|$))/i),
   );
   const campaignThought = sentenceMatch(prompt, /\bcampaign\s+around\s+(?:this\s+)?thought:\s*(.+?)(?=[.!?](?:\s|$))/i);
@@ -383,15 +396,69 @@ export function normalizeQaFindings(input: unknown): QaFinding[] {
     const value = asRecord(item);
     const group = stringValue(value.group) as QaFinding['group'];
     if (!['strategy', 'socialPosts', 'googleAds', 'socialAds', 'blogOutlines', 'calendar'].includes(group)) return null;
-    const severity = stringValue(value.severity) as QaFinding['severity'];
+    const requestedSeverity = stringValue(value.severity) as QaFinding['severity'];
+    const problem = compact(stringValue(value.problem), 400);
+    const category = normalizeQaFindingCategory(value.category, problem);
     return {
       group,
       index: numberValue(value.index),
-      severity: ['note', 'warning', 'blocking'].includes(severity) ? severity : 'warning',
-      problem: compact(stringValue(value.problem), 400),
+      severity: normalizeQaFindingSeverity(requestedSeverity, category),
+      category,
+      problem,
       suggestion: compact(stringValue(value.suggestion), 500),
     } satisfies QaFinding;
-  }).filter((item): item is QaFinding => !!item && !!item.problem).slice(0, 30);
+  }).filter((item): item is NonNullable<typeof item> => !!item && !!item.problem).slice(0, 30);
+}
+
+const qaFindingCategories: QaFindingCategory[] = [
+  'deliverable_contract',
+  'required_field',
+  'unsupported_claim',
+  'brand_or_product',
+  'safety',
+  'platform_limit',
+  'cta',
+  'creative_example',
+  'polish',
+];
+
+const blockingQaCategories = new Set<QaFindingCategory>([
+  'deliverable_contract',
+  'required_field',
+  'unsupported_claim',
+  'brand_or_product',
+  'safety',
+  'platform_limit',
+  'cta',
+]);
+
+function normalizeQaFindingCategory(input: unknown, problem: string): QaFindingCategory {
+  const requested = stringValue(input) as QaFindingCategory;
+  const normalized = problem.toLowerCase();
+  const looksIllustrative = /imagined|illustrative|creative example|visual example|daily[- ]life|scene|scenario|situation|mood|metaphor|planning (?:a )?trip|for example/.test(normalized);
+  const assertsFactualRisk = /claims? that|states? that|factual claim|statistic|price|discount|offer|guarantee|testimonial|is located|is available|includes? the|provides? the|measurable outcome/.test(normalized);
+  if (looksIllustrative && !assertsFactualRisk) return 'creative_example';
+  if (qaFindingCategories.includes(requested)) return requested;
+  if (/deliverable|wrong count|count (?:does not|doesn't|fails to) match|required \d+|missing \d+/.test(normalized)) return 'deliverable_contract';
+  if (/missing required|required field|empty required|does not contain the required|no usable keyword list/.test(normalized)) return 'required_field';
+  if (/unsupported|unconfirmed|unverified|invented|fabricated/.test(normalized)
+    && /claim|statistic|number|price|offer|discount|testimonial|guarantee|outcome|availability|benefit|fact/.test(normalized)) return 'unsupported_claim';
+  if (/wrong (?:brand|product|offering)|different (?:brand|product|offering)|unrelated (?:brand|product|business)|brand mismatch|product mismatch/.test(normalized)) return 'brand_or_product';
+  if (/unsafe|safety|medical claim|legal claim|financial claim|identifiable private|privacy/.test(normalized)) return 'safety';
+  if (/character limit|over.{0,20}(?:character|length) limit|aspect ratio|unsupported platform|invalid platform|required platform field|platform limit/.test(normalized)) return 'platform_limit';
+  if (/\bcta\b|call to action|conversion action|requested action|wrong action|next action/.test(normalized)) return 'cta';
+  if (/city|cities|daily[- ]life|scene|scenario|situation|mood|metaphor|illustrative|visual example|creative example/.test(normalized)) return 'creative_example';
+  return 'polish';
+}
+
+function normalizeQaFindingSeverity(
+  input: QaFinding['severity'],
+  category: QaFindingCategory,
+): QaFinding['severity'] {
+  const requested = ['note', 'warning', 'blocking'].includes(input) ? input : 'warning';
+  if (category === 'creative_example' || category === 'polish') return 'note';
+  if (requested === 'blocking' && !blockingQaCategories.has(category)) return 'warning';
+  return requested;
 }
 
 export function normalizeContentPatches(input: unknown): ContentPatch[] {

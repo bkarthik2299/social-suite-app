@@ -63,7 +63,7 @@ export function extractDeliverableContract(prompt: string): DeliverableContract 
   if (googleAds !== null) explicit.googleAds = googleAds;
 
   const socialAds = firstCount(text, [
-    `${countPrefix()}(?:social(?:\\s+media)?|paid\\s+social|meta|facebook|instagram|linkedin)\\s+(?:ads?|ad\\s+sets?|ad\\s+copies?)`,
+    `${countPrefix()}(?:paid\\s+)?(?:social(?:\\s+media)?|meta|facebook|instagram|insta|linkedin)\\s+(?:ads?|ad\\s+sets?|ad\\s+copies?)`,
     `${countPrefix()}paid\\s+ads?`,
     `${countPrefix()}ads?`,
   ]);
@@ -142,12 +142,13 @@ export function extractRequestedChannelConstraints(prompt: string): RequestedCha
 }
 
 export function requestedChannelLabels(prompt: string) {
-  const channels = extractRequestedChannelConstraints(prompt);
+  const positivePrompt = stripNegatedDeliverables(prompt);
+  const channels = extractRequestedChannelConstraints(positivePrompt);
   return [
     ...channels.organicSocial.map((platform) => `${displayPlatform(platform)} organic posts`),
     ...channels.paidSocial.map((platform) => `${displayPlatform(platform)} paid ads`),
-    /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(prompt) ? 'Google Search ads' : '',
-    /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(prompt) ? 'blog' : '',
+    /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(positivePrompt) ? 'Google Search ads' : '',
+    /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(positivePrompt) ? 'blog' : '',
   ].filter(Boolean);
 }
 
@@ -179,11 +180,12 @@ function hasNamedDeliverables(prompt: string) {
 }
 
 function namedDeliverableTypes(text: string) {
+  const positiveText = stripNegatedDeliverables(text);
   return {
-    socialPosts: /\b(?:(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x)\s+(?:organic\s+)?posts?|posts?\s+(?:for|on)\s+(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x))\b/i.test(text),
-    googleAds: /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(text),
-    socialAds: /\b(?:paid\s+social|meta|facebook|instagram|insta|linkedin|twitter|x)\s+(?:ads?|ad\s+sets?|ad\s+copies?)\b/i.test(text),
-    blogOutlines: /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(text),
+    socialPosts: /\b(?:(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x)\s+(?:organic\s+)?posts?|posts?\s+(?:for|on)\s+(?:social(?:\s+media)?|instagram|insta|facebook|linkedin|twitter|x))\b/i.test(positiveText),
+    googleAds: /\b(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/i.test(positiveText),
+    socialAds: /\b(?:paid\s+)?(?:social(?:\s+media)?|meta|facebook|instagram|insta|linkedin|twitter|x)\s+(?:ads?|ad\s+sets?|ad\s+copies?)\b/i.test(positiveText),
+    blogOutlines: /\b(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/i.test(positiveText),
   };
 }
 
@@ -192,7 +194,14 @@ function mentionsOrganicPlatform(text: string, platformPattern: string) {
 }
 
 function mentionsPaidPlatform(text: string, platformPattern: string) {
-  return new RegExp(`\\b(?:${platformPattern})\\s+(?:ads?|ad\\s+sets?|ad\\s+copies?)\\b`, 'i').test(text);
+  return new RegExp(`\\b(?:paid\\s+)?(?:${platformPattern})\\s+(?:ads?|ad\\s+sets?|ad\\s+copies?)\\b`, 'i').test(text);
+}
+
+function stripNegatedDeliverables(text: string) {
+  return text
+    .replace(/\b(?:no|without)\s+(?:any\s+)?(?:google|search)\s+(?:search\s+)?(?:ads?|ad\s+groups?|ad\s+copies?)\b/gi, '')
+    .replace(/\b(?:no|without)\s+(?:any\s+)?(?:blog\s+posts?|blogs?|articles?|blog\s+outlines?)\b/gi, '')
+    .replace(/\b(?:no|without)\s+(?:any\s+)?(?:paid\s+)?(?:social(?:\s+media)?|meta|facebook|instagram|insta|linkedin|twitter|x)\s+(?:ads?|ad\s+sets?|ad\s+copies?)\b/gi, '');
 }
 
 function displayPlatform(platform: string) {

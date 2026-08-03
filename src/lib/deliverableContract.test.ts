@@ -35,6 +35,23 @@ describe('deliverable contract extraction', () => {
     });
   });
 
+  it('understands paid-platform phrasing and ignores explicitly excluded outputs', () => {
+    const prompt = 'Create 2 organic Instagram posts and 1 paid Instagram ad. No Google ads and no blog.';
+
+    expect(extractDeliverableContract(prompt)).toEqual({
+      socialPosts: 2,
+      googleAds: 0,
+      socialAds: 1,
+      blogOutlines: 0,
+      calendarItems: 3,
+      explicitCounts: true,
+    });
+    expect(requestedChannelLabels(prompt)).toEqual([
+      'Instagram organic posts',
+      'Instagram paid ads',
+    ]);
+  });
+
   it('honors an explicitly requested day count for the calendar', () => {
     expect(extractDeliverableContract('Create 4 posts, 2 Google ads, 2 paid social ads, 1 blog and a 7-day content calendar')).toEqual({
       socialPosts: 4,
