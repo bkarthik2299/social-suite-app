@@ -8,6 +8,13 @@ export function structuredMissionModelPlan(selectedModelId: string, _fallbackMod
   return [selectedModelId];
 }
 
+export function structuredJsonAttemptPlan(selectedModelId: string) {
+  return [
+    { model: selectedModelId, temperature: 0.2, strictRecovery: false },
+    { model: selectedModelId, temperature: 0.05, strictRecovery: true },
+  ] as const;
+}
+
 export function prefersNativeJsonMode(modelId: string) {
   return modelId !== PERPLEXITY_RESEARCH_MODEL;
 }

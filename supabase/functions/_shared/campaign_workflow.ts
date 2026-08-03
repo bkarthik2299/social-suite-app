@@ -13,16 +13,16 @@ const editableFields: Record<ContentPatch['group'], Set<string>> = {
 };
 
 export function buildCampaignCalendar(pack: CampaignPack, count: number, startDate: string): CampaignPack['calendar'] {
-  const groups: Array<Array<{ title: string; type: CalendarType }>> = [
-    pack.socialPosts.map((item, index) => ({ title: item.name || item.topic || `Social post ${index + 1}`, type: 'socials' as CalendarType })),
-    pack.googleAds.map((item, index) => ({ title: item.name || item.headlines[0] || `Google ad ${index + 1}`, type: 'google-ad' as CalendarType })),
-    pack.socialAds.map((item, index) => ({ title: item.name || item.headline || `Paid social ad ${index + 1}`, type: 'meta-ad' as CalendarType })),
-    pack.blogOutlines.map((item, index) => ({ title: item.title || `Blog outline ${index + 1}`, type: 'blogs' as CalendarType })),
+  const groups: Array<Array<{ title: string; type: CalendarType; date?: string }>> = [
+    pack.socialPosts.map((item, index) => ({ title: item.name || item.topic || `Social post ${index + 1}`, type: 'socials' as CalendarType, date: item.scheduledDate })),
+    pack.googleAds.map((item, index) => ({ title: item.name || item.headlines[0] || `Google ad ${index + 1}`, type: 'google-ad' as CalendarType, date: item.startDate })),
+    pack.socialAds.map((item, index) => ({ title: item.name || item.headline || `Paid social ad ${index + 1}`, type: 'meta-ad' as CalendarType, date: item.scheduledDate })),
+    pack.blogOutlines.map((item, index) => ({ title: item.title || `Blog outline ${index + 1}`, type: 'blogs' as CalendarType, date: item.publishDate })),
   ].filter((group) => group.length > 0);
 
   if (count <= 0 || groups.length === 0) return [];
 
-  const ordered: Array<{ title: string; type: CalendarType }> = [];
+  const ordered: Array<{ title: string; type: CalendarType; date?: string }> = [];
   const cursors = groups.map(() => 0);
   while (ordered.length < count && groups.some((group, index) => cursors[index] < group.length)) {
     for (let groupIndex = 0; groupIndex < groups.length && ordered.length < count; groupIndex += 1) {
@@ -41,8 +41,9 @@ export function buildCampaignCalendar(pack: CampaignPack, count: number, startDa
   }
 
   return ordered.map((item, index) => ({
-    ...item,
-    date: addDays(startDate, index),
+    title: item.title,
+    type: item.type,
+    date: /^\d{4}-\d{2}-\d{2}$/.test(item.date || '') ? item.date! : addDays(startDate, index),
   }));
 }
 
@@ -312,14 +313,16 @@ export function reviewFindingResolvedByPatches(finding: QaFinding, patches: Cont
 
 export function repairCampaignPack(
   pack: CampaignPack,
-  brief: Pick<InternalBrief, 'desiredAction'> & Partial<Pick<InternalBrief, 'keywordTargets' | 'confirmedFacts'>>,
+  brief: Pick<InternalBrief, 'desiredAction'> & Partial<Pick<InternalBrief, 'keywordTargets' | 'confirmedFacts' | 'restrictions'>>,
 ): { pack: CampaignPack; notes: string[] } {
   const draft = structuredClone(pack) as CampaignPack;
   const notes: string[] = [];
   const repair = (value: string | undefined, location: string) => {
     if (!value) return value;
-    const repaired = repairUnsupportedAttribution(repairActionLanguage(repairAwkwardActionPhrase(value), brief.desiredAction));
-    if (repaired !== value) notes.push(`${location}: aligned the wording with the requested action.`);
+    const claimSafe = removeForbiddenQuantifiedClaims(value, brief.restrictions || []);
+    if (claimSafe !== value) notes.push(`${location}: removed a quantified claim forbidden by the brief.`);
+    const repaired = repairUnsupportedAttribution(repairActionLanguage(repairAwkwardActionPhrase(claimSafe), brief.desiredAction));
+    if (repaired !== claimSafe) notes.push(`${location}: aligned the wording with the requested action.`);
     return repaired;
   };
 
@@ -360,12 +363,17 @@ export function repairCampaignPack(
       callouts: item.callouts?.map((value) => repair(value, `Google ad ${index + 1} callout`) || value),
     };
   });
-  draft.socialAds = draft.socialAds.map((item, index) => ({
-    ...item,
-    primaryText: repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText,
-    headline: repair(item.headline, `Paid social ad ${index + 1} headline`) || item.headline,
-    description: repair(item.description, `Paid social ad ${index + 1} description`),
-  }));
+  draft.socialAds = draft.socialAds.map((item, index) => {
+    const cta = expectedSocialAdCta(brief.desiredAction);
+    if (item.cta !== cta) notes.push(`Paid social ad ${index + 1}: aligned the button with the requested action.`);
+    return {
+      ...item,
+      primaryText: repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText,
+      headline: repair(item.headline, `Paid social ad ${index + 1} headline`) || item.headline,
+      description: repair(item.description, `Paid social ad ${index + 1} description`),
+      cta,
+    };
+  });
   draft.blogOutlines = draft.blogOutlines.map((item, index) => ({
     ...item,
     title: repair(item.title, `Blog ${index + 1} title`) || item.title,
@@ -388,7 +396,7 @@ export function repairCampaignPack(
 export function deterministicQualityFindings(
   pack: CampaignPack,
   brand: BrandInstructions,
-  brief?: Pick<InternalBrief, 'desiredAction'> & Partial<Pick<InternalBrief, 'keywordTargets' | 'confirmedFacts'>>,
+  brief?: Pick<InternalBrief, 'desiredAction'> & Partial<Pick<InternalBrief, 'keywordTargets' | 'confirmedFacts' | 'restrictions'>>,
 ): QaFinding[] {
   const findings: QaFinding[] = [];
   const copyItems = [
@@ -446,6 +454,36 @@ export function deterministicQualityFindings(
       severity: 'blocking',
       problem: 'Uses an unsupported customer or audience attribution as if it were a verified testimonial or research finding.',
       suggestion: 'State the audience problem directly without claiming that customers or users reported it.',
+    });
+  }
+
+  if (forbidsStatistics(brief?.restrictions || [])) {
+    for (const item of copyItems) {
+      const quantifiedClaim = item.value.match(quantifiedClaimPattern)?.[0];
+      if (!quantifiedClaim) continue;
+      findings.push({
+        group: item.group,
+        index: item.index,
+        category: 'unsupported_claim',
+        severity: 'blocking',
+        problem: `Uses a quantified claim ("${quantifiedClaim}") even though the client brief forbids statistics.`,
+        suggestion: 'Remove the number and express the benefit without a quantified claim.',
+      });
+    }
+  }
+
+  if (desiredAction) {
+    const expectedCta = expectedSocialAdCta(desiredAction);
+    pack.socialAds.forEach((ad, index) => {
+      if (ad.cta === expectedCta) return;
+      findings.push({
+        group: 'socialAds',
+        index,
+        category: 'cta',
+        severity: 'blocking',
+        problem: `Uses the ${ad.cta} button instead of the ${expectedCta} button required by the requested action.`,
+        suggestion: 'Map the paid-social button deterministically from the client CTA.',
+      });
     });
   }
 
@@ -635,6 +673,27 @@ function repairAwkwardActionPhrase(value: string) {
 }
 
 const unsupportedAttributionPattern = /\b(?:customers?|clients?|users?|patients?|practice managers?|clinic owners?|teams?)\s+(?:often\s+)?(?:tell us|say|report|agree|love)\b/i;
+
+const quantifiedClaimPattern = /(?:[$€£₹]\s*\d[\d,.]*|\b\d+(?:\.\d+)?\s*%|\b(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|a)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?|times?|users?|customers?|people|students?|professionals?|lessons?|languages?)\b)/i;
+
+function forbidsStatistics(restrictions: string[]) {
+  return restrictions.some((restriction) => /\b(?:do not|don't|avoid|no)\b[^.]{0,100}\b(?:statistics?|stats?|numbers?|numerical|quantified)\b/i.test(restriction));
+}
+
+function removeForbiddenQuantifiedClaims(value: string, restrictions: string[]) {
+  if (!forbidsStatistics(restrictions) || !quantifiedClaimPattern.test(value)) return value;
+  const sentences = value.match(/[^.!?]+[.!?]?/g) || [value];
+  const safe = sentences.filter((sentence) => !quantifiedClaimPattern.test(sentence)).join(' ').replace(/\s+/g, ' ').trim();
+  return safe || value;
+}
+
+function expectedSocialAdCta(desiredAction: string) {
+  if (/\b(?:contact|book|schedule|request|demo|appointment|consultation|call)\b/i.test(desiredAction)) return 'contact_us';
+  if (/\b(?:download|install|get the app)\b/i.test(desiredAction)) return 'download';
+  if (/\b(?:shop|buy|order|purchase)\b/i.test(desiredAction)) return 'shop_now';
+  if (/\b(?:sign[ -]?up|register|enrol|enroll|join)\b/i.test(desiredAction)) return 'sign_up';
+  return 'learn_more';
+}
 
 function repairUnsupportedAttribution(value: string) {
   const repaired = value.replace(

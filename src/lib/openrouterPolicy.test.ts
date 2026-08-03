@@ -3,6 +3,7 @@ import {
   prefersNativeJsonMode,
   supportsTemperatureParameter,
   structuredMissionModelPlan,
+  structuredJsonAttemptPlan,
   structuredOutputReasoning,
   structuredOutputModelId,
 } from '../../supabase/functions/_shared/openrouter_policy';
@@ -15,6 +16,13 @@ describe('OpenRouter mission policy', () => {
       'anthropic/claude-haiku-4.5',
     ])).toEqual([
       'deepseek/deepseek-v4-pro',
+    ]);
+  });
+
+  it('retries malformed structured output with the same selected model and stricter settings', () => {
+    expect(structuredJsonAttemptPlan('deepseek/deepseek-v4-pro')).toEqual([
+      { model: 'deepseek/deepseek-v4-pro', temperature: 0.2, strictRecovery: false },
+      { model: 'deepseek/deepseek-v4-pro', temperature: 0.05, strictRecovery: true },
     ]);
   });
 

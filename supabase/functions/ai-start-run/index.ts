@@ -1,5 +1,6 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
 import { openRouterJson, openRouterTextWithCitations } from '../_shared/openrouter.ts';
+import { structuredJsonAttemptPlan } from '../_shared/openrouter_policy.ts';
 import { captureAiTrace, type AiObservabilityContext } from '../_shared/posthog_ai.ts';
 import { hasCampaignOutput, normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pack.ts';
 import { campaignTopic, safeBlogOutline, safeCalendarItem, safeGoogleAd, safeSocialAd, safeSocialPost, safeStrategy } from '../_shared/campaign_recovery.ts';
@@ -1003,6 +1004,8 @@ async function processMission({
       provider: generationPrimaryOption?.provider || 'OpenRouter',
       selectedModel: model,
       fallbackModels: generationModelIds.slice(1),
+      structuredOutputAttempts: 2,
+      retryPolicy: 'selected-model-strict-json',
       workMode,
       researchSources: researchSources.length,
     });
@@ -1222,10 +1225,12 @@ async function processMission({
     ].slice(0, 30);
     const blockingDetailed = unresolvedDetailed.filter((finding) => finding.severity === 'blocking');
     const qaBlocked = qaFindings.length > 0 || blockingDetailed.length > 0;
-    await addEvent(activeStep, qaBlocked ? 'qa_blocked' : 'qa_review', qaFindings.length || unresolvedDetailed.length
-      ? `QA completed with ${qaFindings.length + unresolvedDetailed.length} unresolved finding${qaFindings.length + unresolvedDetailed.length === 1 ? '' : 's'} after focused repairs.`
+    await addEvent(activeStep, qaBlocked ? 'qa_blocked' : 'qa_review', qaBlocked
+      ? `QA found ${qaFindings.length + blockingDetailed.length} blocking issue${qaFindings.length + blockingDetailed.length === 1 ? '' : 's'} after repair.`
+      : unresolvedDetailed.length
+        ? `QA polished the draft and left ${unresolvedDetailed.length} optional note${unresolvedDetailed.length === 1 ? '' : 's'}.`
       : discoveredFindings.length
-        ? `QA found ${discoveredFindings.length} quality issue${discoveredFindings.length === 1 ? '' : 's'} and repaired them before review.`
+        ? 'QA polished the draft and resolved the detected issues.'
       : 'QA passed: the pack matches the brief, brand rules, required counts, and platform fields.', {
       findings: qaFindings,
       discoveredFindings,
@@ -1238,17 +1243,17 @@ async function processMission({
     await addHandoffEvent(activeStep, {
       title: 'QA handoff',
       summary: unresolvedDetailed.length
-        ? `QA completed with ${unresolvedDetailed.length} unresolved quality note${unresolvedDetailed.length === 1 ? '' : 's'} after focused repairs.`
+        ? `QA polished the draft and left ${unresolvedDetailed.length} optional note${unresolvedDetailed.length === 1 ? '' : 's'}.`
         : discoveredFindings.length
-          ? `QA found ${discoveredFindings.length} quality issue${discoveredFindings.length === 1 ? '' : 's'} and repaired all of them before review.`
-        : 'QA passed brief fit, brand rules, output groups, platform fields, and calendar readiness checks.',
+          ? 'QA polished the draft and resolved the detected issues.'
+          : 'QA passed brief fit, brand rules, output groups, platform fields, and calendar readiness checks.',
       sections: [
         {
-          title: unresolvedDetailed.length ? 'Unresolved QA notes' : 'QA result',
+          title: unresolvedDetailed.length ? 'Optional QA notes' : 'QA result',
           body: unresolvedDetailed.length
             ? unresolvedDetailed.map((finding) => `${finding.group} ${finding.index + 1}: ${finding.problem}`)
             : discoveredFindings.length
-              ? `All ${discoveredFindings.length} detected quality issues were repaired. No blocking QA notes remain.`
+              ? 'The draft was polished and no blocking QA issues remain.'
               : 'No blocking QA notes were recorded.',
         },
       ],
@@ -1262,7 +1267,11 @@ async function processMission({
     await recordRunDocument('qa_report', { discoveredFindings, unresolvedFindings: unresolvedDetailed, deterministicFindings: qaFindings, repairCount: qaRepairCount });
     qaDetailedFindings = unresolvedDetailed;
     await snapshotStep(activeStep, { counts: packCounts(pack) }, { findings: qaDetailedFindings, counts: packCounts(pack) }, structuredModelId);
-    await updateStep(activeStep, 'done', discoveredFindings.length ? `QA repaired ${discoveredFindings.length} quality issues; ${qaDetailedFindings.length} non-blocking notes remain.` : 'QA passed brief fit, brand rules, platform fit, and calendar readiness.');
+    await updateStep(activeStep, 'done', qaDetailedFindings.length
+      ? `QA polished the draft and left ${qaDetailedFindings.length} optional note${qaDetailedFindings.length === 1 ? '' : 's'}.`
+      : discoveredFindings.length
+        ? 'QA polished and approved the draft.'
+        : 'QA passed brief fit, brand rules, platform fit, and calendar readiness.');
     pack = await applyCustomPackStepsBefore('output-mapper', pack);
     const finalGuard = guardCampaignPack(normalizeCampaignPack({
       ...pack,
@@ -2466,28 +2475,61 @@ async function generateCompactCampaignPack({
     return total + 1_600;
   }, 0)));
 
-  return await openRouterJson<unknown>({
-    model,
-    temperature: 0.25,
-    maxTokens,
-    timeoutMs,
-    observability,
-    messages: [
-      {
-        role: 'system',
-        content: campaignSafetyInstructions([
-          'You are Social Suite Mission Mode. Return only one complete, valid JSON object with no markdown or commentary.',
-          `The object must contain exactly these root keys: ${rootKeys.join(', ')}. Generate every requested section in this single response.`,
-          'Keep the response focused enough to finish within the request. Never omit a section, return partial JSON, or add unrequested content types.',
-          ...sectionRequirements,
-        ].join(' ')),
-      },
-      {
-        role: 'user',
-        content: `Create the complete campaign pack in one response.\n\n${commonContext}`,
-      },
-    ],
-  });
+  const attemptPlan = structuredJsonAttemptPlan(model);
+  const attemptTimeoutMs = Math.max(8_000, Math.min(58_000, Math.floor(timeoutMs / attemptPlan.length)));
+  let lastError = '';
+  for (const [attemptIndex, attempt] of attemptPlan.entries()) {
+    const recoveryInstruction = attempt.strictRecovery
+      ? [
+          'The previous response was not usable JSON. Regenerate the complete object from scratch.',
+          'Your response must begin with { and end with }. Do not use code fences, prose, comments, trailing commas, or partial objects.',
+          `Include every required root key exactly once: ${rootKeys.join(', ')}.`,
+        ].join(' ')
+      : '';
+    try {
+      const value = await openRouterJson<unknown>({
+        model: attempt.model,
+        temperature: attempt.temperature,
+        maxTokens,
+        timeoutMs: attemptTimeoutMs,
+        observability: withRunObservation(observability, 'copywriter-campaign-pack', 'mission-copywriter', {
+          socialsuite_section: 'Complete campaign pack',
+          socialsuite_model_attempt: attemptIndex + 1,
+          socialsuite_json_recovery: attempt.strictRecovery,
+        }),
+        messages: [
+          {
+            role: 'system',
+            content: campaignSafetyInstructions([
+              'You are Social Suite Mission Mode. Return only one complete, valid JSON object with no markdown or commentary.',
+              `The object must contain exactly these root keys: ${rootKeys.join(', ')}. Generate every requested section in this single response.`,
+              'Keep the response focused enough to finish within the request. Never omit a section, return partial JSON, or add unrequested content types.',
+              recoveryInstruction,
+              ...sectionRequirements,
+            ].filter(Boolean).join(' ')),
+          },
+          {
+            role: 'user',
+            content: `Create the complete campaign pack in one response.\n\n${commonContext}`,
+          },
+        ],
+      });
+      const validationErrors = sections
+        .map((section) => campaignSectionValidationError(value, section.key, section.expectedCount))
+        .filter(Boolean);
+      if (validationErrors.length) throw new Error(validationErrors.join(' '));
+      return value;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Unknown model error';
+      console.warn('[ai-start-run] Copywriter structured-output attempt failed', {
+        model: attempt.model,
+        attempt: attemptIndex + 1,
+        strictRecovery: attempt.strictRecovery,
+        error: lastError,
+      });
+    }
+  }
+  throw new Error(lastError || 'Compact campaign generation failed');
 }
 
 async function generateCampaignSection({
@@ -2509,28 +2551,30 @@ async function generateCampaignSection({
   timeoutMs: number;
   observability?: AiObservabilityContext;
 }) {
-  const modelPlan = models.slice(0, 1);
-  if (!modelPlan.length) throw new Error('No selected generation model was supplied.');
-  const attemptTimeoutMs = Math.max(5_000, Math.min(35_000, Math.floor(timeoutMs / modelPlan.length)));
+  const selectedModel = models[0];
+  if (!selectedModel) throw new Error('No selected generation model was supplied.');
+  const attemptPlan = structuredJsonAttemptPlan(selectedModel);
+  const attemptTimeoutMs = Math.max(5_000, Math.min(21_000, Math.floor(timeoutMs / attemptPlan.length)));
   let lastError = '';
-  for (const [modelIndex, model] of modelPlan.entries()) {
-    const retryPrefix = modelIndex === 0
-      ? ''
-      : [
-          'A previous provider did not return usable output. Produce the complete section now.',
-          'Return one valid JSON object only, with no markdown, commentary, or partial JSON.',
-          `The required root key or keys for ${section.label} must be present.`,
-        ].join('\n');
+  for (const [attemptIndex, attempt] of attemptPlan.entries()) {
+    const retryPrefix = attempt.strictRecovery
+      ? [
+          'The previous response was invalid or failed the required schema. Regenerate this section from scratch.',
+          'Return exactly one complete JSON object. Begin with { and end with }. Do not use markdown, prose, comments, trailing commas, or partial JSON.',
+          `The required root key for ${section.label} must be present exactly once.`,
+        ].join('\n')
+      : '';
     try {
       const value = await openRouterJson<unknown>({
-        model,
-        temperature: modelIndex === 0 ? 0.25 : 0.1,
+        model: attempt.model,
+        temperature: attempt.temperature,
         maxTokens: section.maxTokens || 2200,
         timeoutMs: attemptTimeoutMs,
         observability: withRunObservation(observability, `copywriter-${section.key}`, 'mission-copywriter', {
           socialsuite_section: section.label,
-          socialsuite_model_attempt: modelIndex + 1,
-          socialsuite_is_fallback: modelIndex > 0,
+          socialsuite_model_attempt: attemptIndex + 1,
+          socialsuite_json_recovery: attempt.strictRecovery,
+          socialsuite_is_fallback: false,
         }),
         messages: [
           { role: 'system', content: campaignSafetyInstructions(section.system) },
@@ -2539,23 +2583,51 @@ async function generateCampaignSection({
       });
       const validationError = campaignSectionValidationError(value, section.key, section.expectedCount);
       if (validationError) {
-        lastError = `${model}: ${validationError}`;
+        lastError = `${attempt.model}: ${validationError}`;
+        console.warn('[ai-start-run] Copywriter section schema validation failed', {
+          model: attempt.model,
+          section: section.label,
+          attempt: attemptIndex + 1,
+          strictRecovery: attempt.strictRecovery,
+          error: lastError,
+        });
         continue;
       }
       const alignedValue = alignCampaignSectionPlatforms(value, section.key, section.brief);
       const alignedValidationError = campaignSectionValidationError(alignedValue, section.key, section.expectedCount);
       if (alignedValidationError) {
-        lastError = `${model}: ${alignedValidationError}`;
+        lastError = `${attempt.model}: ${alignedValidationError}`;
+        console.warn('[ai-start-run] Copywriter aligned section validation failed', {
+          model: attempt.model,
+          section: section.label,
+          attempt: attemptIndex + 1,
+          strictRecovery: attempt.strictRecovery,
+          error: lastError,
+        });
         continue;
       }
       const platformError = campaignSectionPlatformError(alignedValue, section.key, section.brief);
       if (platformError) {
-        lastError = `${model}: ${platformError}`;
+        lastError = `${attempt.model}: ${platformError}`;
+        console.warn('[ai-start-run] Copywriter platform validation failed', {
+          model: attempt.model,
+          section: section.label,
+          attempt: attemptIndex + 1,
+          strictRecovery: attempt.strictRecovery,
+          error: lastError,
+        });
         continue;
       }
       return alignedValue;
     } catch (error) {
-      lastError = `${model}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
+      lastError = `${attempt.model}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
+      console.warn('[ai-start-run] Copywriter section attempt failed', {
+        model: attempt.model,
+        section: section.label,
+        attempt: attemptIndex + 1,
+        strictRecovery: attempt.strictRecovery,
+        error: lastError,
+      });
     }
   }
 
@@ -2718,11 +2790,16 @@ async function reviewCampaignPack(args: {
           'For Google ads, review the keywords array rather than assuming topic is a primary keyword. Preserve every client keyword exactly, keep close intents grouped, require keyword use in at least two headlines and one description, and retain at least three non-keyword headlines.',
           'Every conversion CTA must use the next action requested in the internal brief; do not substitute a demo, consultation, purchase, sign-up, or other action.',
           'Social Suite encodes a visible “Book a Demo” action as socialAds.cta="contact_us". Treat that enum as correct when the reader-facing ad copy says Book a Demo; do not flag or patch the enum merely because its internal value differs from the visible wording.',
+          'Calendar type "meta-ad" is the correct internal type for Instagram, Facebook, LinkedIn, and other paid-social ads. Never flag it as a platform mismatch.',
           'A blog excerpt must summarize the article naturally. Do not force the conversion CTA into an awkward phrase.',
-          'A finding is { group, index, severity, problem, suggestion }. Severity is note, warning, or blocking.',
+          'A finding is { group, index, category, severity, problem, suggestion }. Category must be deliverable_contract, required_field, unsupported_claim, brand_or_product, safety, platform_limit, cta, creative_example, or polish.',
+          'Reserve blocking only for wrong deliverable counts, missing required fields, unsupported factual claims or statistics, wrong brand or product, unsafe claims, broken hard platform limits, or the wrong CTA.',
+          'Distinguish factual claims from illustrative creative examples. A city used as a verified business location is factual; a city used in an imagined travel example is illustrative. Daily-life scenes, generic situations, mood, visual metaphors, and illustrative settings are normally creative_example notes, not warnings or blockers.',
+          'Use polish notes for optional improvements such as generic wording, repetition, tone nuance, or a stronger hook. Do not block on taste or preference.',
           'A patch is { group, index, field, value, reason }. Use zero-based indices.',
           'Only patch socialPosts, googleAds, socialAds, or blogOutlines. Never patch strategy or calendar.',
           'Make focused field edits only; never return or rewrite the full campaign pack. Use no more than 16 patches.',
+          'Repair minor, safely editable issues with focused patches before leaving a note. Pass the campaign whenever no true blocker remains.',
           'Do not introduce facts, statistics, offers, testimonials, or guarantees. Evidence marked caution is not safe for a public numerical claim.',
           'Do not report an issue merely to fill the list. An empty findings or patches array is valid.',
         ].join(' '),
