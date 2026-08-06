@@ -43,14 +43,22 @@ export function safeSocialPost(
     `The best campaigns make the subject useful and relevant. Discover the key ideas behind ${topic} and continue the conversation.`,
     `Ready to learn more about ${topic}? Review the details, share the idea with someone it may help, and follow the campaign for the next update.`,
   ];
+  const platform = platforms[0] || 'social';
+  const formats = [
+    'single-image insight card',
+    'four-panel swipe carousel',
+    'photo-led feed post with a designed headline zone',
+    'two-column explainer card',
+  ];
+  const format = formats[index % formats.length];
   return {
     name: `${titleCase(topic)} Post ${index + 1}`,
     topic,
     caption: captions[index % captions.length],
     platforms,
     scheduledDate,
-    creativeBrief: `Create a clear, brand-aligned visual focused on ${topic} and the audience described in the active brief.`,
-    visualGuide: `Editorial campaign visual centered on ${topic}; use the active brand guide for subject, setting, palette, and tone; establish one clear focal point, generous negative space, a square or 4:5 crop, and minimal text overlay; do not introduce products, people, locations, claims, or industry cues absent from the brief.`,
+    creativeBrief: `Create a clear, brand-aligned ${platform} post focused on ${topic} and the audience described in the active brief.`,
+    visualGuide: `Format & placement: ${platform} ${format}. Content concept: make “${topic}” the unmistakable idea of this specific post without inventing a person, product, location, or outcome. Layout: use one dominant focal area and a clear reading path designed for the chosen format; if it is a carousel, give every panel one job and reserve the final panel for the requested next step. On-creative copy: use one short hook derived from the topic, maximum seven words, and no unsupported claim. Brand execution: apply the active brand guide’s palette, typography, logo rules, and approved visual motifs without changing the concept into a generic brand image. Production notes: use a platform-native square or 4:5 crop, protect interface safe zones, maintain accessible contrast, and keep the final asset legible at feed size.`,
   };
 }
 
@@ -95,7 +103,7 @@ export function safeSocialAd(
     primaryText: `Discover ${topic} through a message built around the audience and objective in this campaign brief. Explore the details and take the next step when you are ready.`,
     headline: `Explore ${titleCase(topic)}`,
     description: 'Clear, relevant information from the active campaign brief.',
-    visualGuide: `Paid social visual centered on ${topic}; follow the active brand guide for palette and tone, use one clear focal subject and a simple composition with room for an optional short headline, and avoid any product, person, place, claim, or industry cue not supplied in the brief.`,
+    visualGuide: `Format & placement: ${platform} ${index % 2 ? 'carousel ad with a clear end card' : 'single-image feed ad with a CTA-safe footer'}. Content concept: make “${topic}” the specific paid-social idea and show only subjects or situations supported by the brief. Layout: lead with one immediate visual hook, keep the headline hierarchy separate from supporting imagery, and reserve an uncluttered CTA area. On-creative copy: use a short headline derived from the ad topic, maximum seven words, with no invented benefit or urgency. Brand execution: follow the active brand guide for palette, typography, logo placement, and approved motifs while keeping this execution distinct from the organic posts. Production notes: use a platform-native 1:1 or 4:5 crop, respect feed and CTA safe zones, maintain accessible contrast, and avoid dense body copy inside the artwork.`,
     cta: 'learn_more',
   };
 }

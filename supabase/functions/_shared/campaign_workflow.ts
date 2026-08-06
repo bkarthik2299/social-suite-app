@@ -285,6 +285,99 @@ export function campaignSectionValidationError(
   return `Expected at least ${expectedCount} ${campaignSectionLabel(key)} but generated ${actualCount}.`;
 }
 
+export function campaignSectionVisualGuidanceError(
+  input: unknown,
+  key: GeneratedCampaignSectionKey,
+): string | null {
+  if (key !== 'socialPosts' && key !== 'socialAds') return null;
+
+  const record = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : null;
+  const sectionInput = record && key in record ? record[key] : input;
+  const pack = normalizeCampaignPack({ [key]: sectionInput });
+  const items = pack[key];
+  if (!items.length) return null;
+
+  const requiredSections: Array<[string, RegExp]> = [
+    ['Format & placement', /\bformat\s*(?:&|and)\s*placement\s*:/i],
+    ['Content concept', /\bcontent\s+concept\s*:/i],
+    ['Layout', /\blayout\s*:/i],
+    ['On-creative copy', /\bon[- ]creative\s+copy\s*:/i],
+    ['Brand execution', /\bbrand\s+execution\s*:/i],
+    ['Production notes', /\bproduction\s+notes\s*:/i],
+  ];
+
+  for (const [index, item] of items.entries()) {
+    const guide = item.visualGuide || '';
+    const missing = requiredSections.filter(([, pattern]) => !pattern.test(guide)).map(([label]) => label);
+    if (missing.length) {
+      return `${campaignSectionLabel(key)} item ${index + 1} has an image-prompt-style visual guide. Add these production-brief sections: ${missing.join(', ')}.`;
+    }
+
+    if (key === 'socialPosts') {
+      const subject = `${item.name || ''} ${item.topic || ''} ${item.caption || ''}`;
+      const needsExplanatoryFormat = /\b(?:eligib\w*|application|process|steps?|tips?|documents?|checklist|guide|how\s+to|myth|facts?|timeline|explainer)\b/i.test(subject);
+      const usesExplanatoryFormat = /\b(?:carousel|document\s+post|infographic|checklist|explainer|step[- ]by[- ]step|comparison|flowchart|timeline|swipe|slides?|panels?)\b/i.test(guide);
+      if (needsExplanatoryFormat && !usesExplanatoryFormat) {
+        return `social posts item ${index + 1} explains a process, eligibility point, or practical guidance but uses a generic image-led visual. Use a carousel, checklist, infographic, document post, or other explanatory social format.`;
+      }
+    }
+  }
+
+  if (key === 'socialPosts' && items.length >= 3) {
+    const photoLedSingleImages = items.filter((item) => {
+      const guide = item.visualGuide || '';
+      return /\bsingle[- ]image\b/i.test(guide) && /\b(?:photo|photograph|photography|image-led)\b/i.test(guide);
+    }).length;
+    if (photoLedSingleImages > Math.ceil(items.length / 2)) {
+      return `social posts rely on photo-led single images for ${photoLedSingleImages} of ${items.length} items. Use a more useful platform-native mix such as carousels, checklists, explainers, data cards, testimonial cards, or typographic posts.`;
+    }
+  }
+
+  for (let left = 0; left < items.length; left += 1) {
+    for (let right = left + 1; right < items.length; right += 1) {
+      const leftGuide = visualConceptPortion(items[left].visualGuide || '');
+      const rightGuide = visualConceptPortion(items[right].visualGuide || '');
+      if (jaccard(leftGuide, rightGuide) < 0.72) continue;
+      return `${campaignSectionLabel(key)} items ${left + 1} and ${right + 1} repeat substantially the same visual concept or layout.`;
+    }
+  }
+
+  for (let left = 0; left < items.length; left += 1) {
+    for (let right = left + 1; right < items.length; right += 1) {
+      const leftStructure = visualStructurePortion(items[left].visualGuide || '');
+      const rightStructure = visualStructurePortion(items[right].visualGuide || '');
+      if (jaccard(leftStructure, rightStructure) < 0.58) continue;
+      return `${campaignSectionLabel(key)} items ${left + 1} and ${right + 1} reuse substantially the same asset format and layout despite having different copy angles.`;
+    }
+  }
+
+  return null;
+}
+
+function visualConceptPortion(value: string) {
+  return value
+    .split(/\bbrand\s+execution\s*:/i)[0]
+    .replace(/\bformat\s*(?:&|and)\s*placement\s*:/gi, '')
+    .replace(/\bcontent\s+concept\s*:/gi, '')
+    .replace(/\blayout\s*:/gi, '')
+    .replace(/\bon[- ]creative\s+copy\s*:/gi, '');
+}
+
+function visualStructurePortion(value: string) {
+  return [
+    visualBriefSection(value, 'format\\s*(?:&|and)\\s*placement'),
+    visualBriefSection(value, 'layout'),
+    visualBriefSection(value, 'production\\s+notes'),
+  ].join(' ');
+}
+
+function visualBriefSection(value: string, labelPattern: string) {
+  const nextLabel = '(?:format\\s*(?:&|and)\\s*placement|content\\s+concept|layout|on[- ]creative\\s+copy|brand\\s+execution|production\\s+notes)';
+  return value.match(new RegExp(`\\b${labelPattern}\\s*:\\s*([\\s\\S]*?)(?=\\b${nextLabel}\\s*:|$)`, 'i'))?.[1] || '';
+}
+
 function campaignSectionLabel(key: GeneratedCampaignSectionKey) {
   if (key === 'socialPosts') return 'social posts';
   if (key === 'googleAds') return 'Google ads';
