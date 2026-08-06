@@ -1837,7 +1837,7 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
         if (!domain) domain = 'example.com';
 
         return (
-            <div className="flex items-center gap-1.5 text-xs text-[#202124] mb-2">
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-[#202124] mb-2">
                 {/* Favicon Placeholder */}
                 <div className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
                     <img
@@ -1847,15 +1847,15 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
                         onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
                     />
                 </div>
-                <div className="flex flex-col leading-tight">
+                <div className="flex min-w-0 flex-1 flex-col leading-tight">
                     <span className="font-semibold text-[13px] text-[#202124]">Sponsored</span>
-                    <div className="flex items-center text-[12px] text-[#202124] gap-1">
+                    <div className="min-w-0 truncate whitespace-nowrap text-[12px] text-[#202124]" title={`${domain}${ad.path1 ? `/${ad.path1}` : ''}${ad.path2 ? `/${ad.path2}` : ''}`}>
                         <span>{domain}</span>
                         {ad.path1 && <span className="text-[#5f6368]">/{ad.path1}</span>}
                         {ad.path2 && <span className="text-[#5f6368]">/{ad.path2}</span>}
                     </div>
                 </div>
-                <MoreVertical className="w-4 h-4 text-slate-500 ml-auto" />
+                <MoreVertical className="ml-auto h-4 w-4 shrink-0 text-slate-500" />
             </div>
         );
     };
