@@ -68,6 +68,11 @@ import { useToast } from '@/components/ui/use-toast';
 import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiCredits, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
 import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, sanitizeActivityText, type HandoffDisplayDetails } from '@/lib/aiActivityTrail';
+import {
+  deepWorkAiModels,
+  instantAiModels,
+  type AiModelProvider,
+} from '../../../supabase/functions/_shared/ai_model_catalog.ts';
 import { normalizeBriefToCampaignArtifact } from '@/lib/aiCampaignPack';
 import { aiCreditCost } from '@/lib/aiCredits';
 import { folderPath, projectPath } from '@/lib/routes';
@@ -91,7 +96,7 @@ const agentActivity = [
 type DestinationKind = 'project' | 'folder' | 'campaign';
 type DraftSelectionKind = keyof AiDraftSelection;
 type WorkMode = 'instant' | 'deep';
-type AiProvider = 'DeepSeek' | 'OpenAI' | 'Anthropic';
+type AiProvider = AiModelProvider;
 type AiModelOption = {
   id: string;
   name: string;
@@ -111,54 +116,18 @@ type ResearchProviderOption = {
 };
 
 const aiModelOptions: Record<WorkMode, AiModelOption[]> = {
-  instant: [
-    {
-      id: 'deepseek/deepseek-v4-flash',
-      name: 'DeepSeek V4 Flash',
-      provider: 'DeepSeek',
-      logoSrc: 'https://www.deepseek.com/favicon.ico',
-      logoFallback: 'D',
-      default: true,
-    },
-    {
-      id: 'openai/gpt-5.4-mini',
-      name: 'GPT-5.4 mini',
-      provider: 'OpenAI',
-      logoSrc: 'https://openai.com/favicon.ico',
-      logoFallback: 'O',
-    },
-    {
-      id: 'anthropic/claude-haiku-4.5',
-      name: 'Claude Haiku 4.5',
-      provider: 'Anthropic',
-      logoSrc: 'https://www.anthropic.com/favicon.ico',
-      logoFallback: 'A',
-    },
-  ],
-  deep: [
-    {
-      id: 'deepseek/deepseek-v4-pro',
-      name: 'DeepSeek V4 Pro',
-      provider: 'DeepSeek',
-      logoSrc: 'https://www.deepseek.com/favicon.ico',
-      logoFallback: 'D',
-      default: true,
-    },
-    {
-      id: 'anthropic/claude-opus-4.7',
-      name: 'Claude Opus 4.7',
-      provider: 'Anthropic',
-      logoSrc: 'https://www.anthropic.com/favicon.ico',
-      logoFallback: 'A',
-    },
-    {
-      id: 'openai/gpt-5.5',
-      name: 'GPT-5.5',
-      provider: 'OpenAI',
-      logoSrc: 'https://openai.com/favicon.ico',
-      logoFallback: 'O',
-    },
-  ],
+  instant: instantAiModels.map((model, index) => ({
+    ...model,
+    logoSrc: model.provider === 'DeepSeek' ? 'https://www.deepseek.com/favicon.ico' : 'https://www.anthropic.com/favicon.ico',
+    logoFallback: model.provider === 'DeepSeek' ? 'D' : 'A',
+    default: index === 0,
+  })),
+  deep: deepWorkAiModels.map((model, index) => ({
+    ...model,
+    logoSrc: model.provider === 'DeepSeek' ? 'https://www.deepseek.com/favicon.ico' : 'https://www.anthropic.com/favicon.ico',
+    logoFallback: model.provider === 'DeepSeek' ? 'D' : 'A',
+    default: index === 0,
+  })),
 };
 
 const researchProviderOptions: ResearchProviderOption[] = [

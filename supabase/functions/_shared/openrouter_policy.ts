@@ -26,10 +26,10 @@ export function prefersNativeJsonMode(modelId: string) {
 export function supportsTemperatureParameter(modelId: string) {
   if (modelId.startsWith('openai/gpt-5')) return false;
 
-  const claudeVersion = modelId.match(/^anthropic\/claude-(?:(?:opus|sonnet|haiku)-)?(\d+)\.(\d+)/i);
+  const claudeVersion = modelId.match(/^anthropic\/claude-(?:(?:opus|sonnet|haiku)-)?(\d+)(?:\.(\d+))?/i);
   if (!claudeVersion) return true;
   const major = Number(claudeVersion[1]);
-  const minor = Number(claudeVersion[2]);
+  const minor = Number(claudeVersion[2] || 0);
   return major < 4 || (major === 4 && minor < 7);
 }
 
@@ -40,7 +40,9 @@ export function shouldRetryOpenRouterWithoutJsonMode(status: number, message: st
 }
 
 export function structuredOutputReasoning(modelId: string) {
-  return modelId === 'deepseek/deepseek-v4-pro' || modelId === 'deepseek/deepseek-v4-flash'
+  return modelId === 'deepseek/deepseek-v4-pro'
+    || modelId === 'deepseek/deepseek-v4-flash'
+    || modelId === 'anthropic/claude-sonnet-5'
     ? { effort: 'none' as const, exclude: true }
     : undefined;
 }

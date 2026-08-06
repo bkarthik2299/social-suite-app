@@ -1,4 +1,5 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
+import { deepWorkAiModels, instantAiModels, type AiModelDefinition } from '../_shared/ai_model_catalog.ts';
 import { openRouterJson, openRouterTextWithCitations } from '../_shared/openrouter.ts';
 import { prefersSectionedCampaignPack, structuredJsonAttemptPlan } from '../_shared/openrouter_policy.ts';
 import { captureAiTrace, type AiObservabilityContext } from '../_shared/posthog_ai.ts';
@@ -66,7 +67,7 @@ declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void };
 type RequestBody = {
   prompt: string;
   resumeRunId?: string;
-  resumePhase?: 'copywriter' | 'qa';
+  resumePhase?: 'copywriter' | 'humanizer' | 'qa';
   projectId?: string | null;
   folderId?: string | null;
   campaignId?: string | null;
@@ -89,11 +90,7 @@ type LoadedBrandKnowledge = {
   compiledMarkdown: string;
   grounding: BrandGrounding;
 };
-type AiModelOption = {
-  id: string;
-  name: string;
-  provider: 'DeepSeek' | 'OpenAI' | 'Anthropic';
-};
+type AiModelOption = AiModelDefinition;
 type ResearchProviderOption = {
   id: 'tavily' | 'perplexity';
   name: string;
@@ -127,17 +124,8 @@ class MissionCanceledError extends Error {
   }
 }
 
-const instantModels: AiModelOption[] = [
-  { id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash', provider: 'DeepSeek' },
-  { id: 'openai/gpt-5.4-mini', name: 'GPT-5.4 mini', provider: 'OpenAI' },
-  { id: 'anthropic/claude-haiku-4.5', name: 'Claude Haiku 4.5', provider: 'Anthropic' },
-];
-
-const deepWorkModels: AiModelOption[] = [
-  { id: 'deepseek/deepseek-v4-pro', name: 'DeepSeek V4 Pro', provider: 'DeepSeek' },
-  { id: 'anthropic/claude-opus-4.7', name: 'Claude Opus 4.7', provider: 'Anthropic' },
-  { id: 'openai/gpt-5.5', name: 'GPT-5.5', provider: 'OpenAI' },
-];
+const instantModels = instantAiModels;
+const deepWorkModels = deepWorkAiModels;
 
 const researchProviders: ResearchProviderOption[] = [
   { id: 'tavily', name: 'Tavily' },
@@ -158,7 +146,7 @@ const BRAND_FILTER_TIMEOUT_MS = 14_000;
 const CREATIVE_DIRECTION_TIMEOUT_MS = 16_000;
 const QA_REVIEW_TIMEOUT_MS = 30_000;
 const CUSTOM_AGENT_MIN_BUDGET_MS = 36_000;
-const CUSTOM_AGENT_TIMEOUT_MS = 26_000;
+const CUSTOM_AGENT_TIMEOUT_MS = 40_000;
 
 const stepDefinitions = [
   { slug: 'planner', agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -209,7 +197,11 @@ Deno.serve(async (req) => {
       const completedStepSlugs = (existingSteps || [])
         .map((step, index) => (step.status === 'done' || step.status === 'skipped') ? runStepDefinitions[index]?.slug : '')
         .filter(Boolean);
-      const resumePhase = body.resumePhase === 'qa' ? 'qa' : 'copywriter';
+      const resumePhase = body.resumePhase === 'qa'
+        ? 'qa'
+        : body.resumePhase === 'humanizer'
+          ? 'humanizer'
+          : 'copywriter';
       EdgeRuntime.waitUntil(processMission({
         supabase,
         body: {
@@ -343,7 +335,7 @@ async function processMission({
   userId: string;
   agentWorkflow: string[];
   runStepDefinitions: RunStepDefinition[];
-  resumePhase?: 'copywriter' | 'qa' | null;
+  resumePhase?: 'copywriter' | 'humanizer' | 'qa' | null;
   completedStepSlugs?: string[];
   authorization: string;
   apiKey: string;
@@ -442,12 +434,13 @@ async function processMission({
   };
 
   const recordRunDocument = async (documentType: string, content: Record<string, unknown>) => {
-    await supabase.from('ai_run_documents').insert({
+    const { error } = await supabase.from('ai_run_documents').insert({
       run_id: runId,
       document_type: documentType,
       version: 1,
       content,
     });
+    if (error) throw error;
   };
 
   const addEvent = async (name: StepName, eventType: string, message: string, payload: Record<string, unknown> = {}) => {
@@ -624,7 +617,11 @@ async function processMission({
       body.brandKnowledgeDocumentId || null,
     );
     if (resumePhase) {
-      activeStep = resumePhase === 'qa' ? 'QA Agent' : 'Copywriter Agent';
+      activeStep = resumePhase === 'qa'
+        ? 'QA Agent'
+        : resumePhase === 'humanizer'
+          ? 'Humanizer Agent'
+          : 'Copywriter Agent';
       const continuation = await loadMissionContinuationState(supabase, runId, body.prompt, destination, brandKnowledge.title);
       plannerOutput = continuation.plannerOutput;
       brandInstructions = continuation.brandInstructions;
@@ -634,6 +631,12 @@ async function processMission({
       if (resumePhase === 'qa') {
         pack = await loadPreQaCampaignPack(supabase, runId);
         await addEvent('QA Agent', 'qa_continuation_started', 'QA resumed with the complete draft pack and a fresh Edge Function budget.', {
+          selectedModel: selectedModel.id,
+          counts: packCounts(pack),
+        });
+      } else if (resumePhase === 'humanizer') {
+        pack = await loadPreHumanizerCampaignPack(supabase, runId);
+        await addEvent('Humanizer Agent', 'humanizer_continuation_started', 'Humanizer resumed with the platform-ready draft pack and a fresh Edge Function budget.', {
           selectedModel: selectedModel.id,
           counts: packCounts(pack),
         });
@@ -993,6 +996,17 @@ async function processMission({
     return;
     }
 
+    if (resumePhase === 'humanizer') {
+      pack = await applyCustomPackStepsBefore('qa', pack);
+      await recordRunDocument('pre_qa_pack', { ...pack });
+      await addEvent('QA Agent', 'qa_continuation_queued', 'Humanizer handoff completed. QA is starting with a fresh Edge Function budget.', {
+        selectedModel: selectedModel.id,
+        counts: packCounts(pack),
+      });
+      await dispatchMissionContinuation({ runId, phase: 'qa', authorization, apiKey });
+      return;
+    }
+
     if (resumePhase !== 'qa') {
     await assertRunActive();
     activeStep = 'Copywriter Agent';
@@ -1109,7 +1123,16 @@ async function processMission({
       metrics: packCounts(pack),
     });
     await updateStep(activeStep, 'done', `Mapped ${pack.calendar.length} calendar items and structured every output for its campaign type.`);
-    pack = await applyCustomPackStepsBefore('qa', pack);
+    const pendingCustomReviewSteps = customStepsBefore('qa');
+    if (pendingCustomReviewSteps.length) {
+      await recordRunDocument('pre_humanizer_pack', { ...pack });
+      await addEvent(pendingCustomReviewSteps[0].slug, 'humanizer_continuation_queued', `${pendingCustomReviewSteps[0].agent_name} is starting with a fresh Edge Function budget.`, {
+        selectedModel: selectedModel.id,
+        counts: packCounts(pack),
+      });
+      await dispatchMissionContinuation({ runId, phase: 'humanizer', authorization, apiKey });
+      return;
+    }
 
     await recordRunDocument('pre_qa_pack', { ...pack });
     await addEvent('QA Agent', 'qa_continuation_queued', 'Draft review handoff completed. QA is starting with a fresh Edge Function budget.', {
@@ -1455,7 +1478,7 @@ async function dispatchMissionContinuation({
   apiKey,
 }: {
   runId: string;
-  phase: 'copywriter' | 'qa';
+  phase: 'copywriter' | 'humanizer' | 'qa';
   authorization: string;
   apiKey: string;
 }) {
@@ -1522,18 +1545,31 @@ async function loadMissionContinuationState(
 }
 
 async function loadPreQaCampaignPack(supabase: SupabaseClient, runId: string) {
+  return loadCampaignPackDocument(supabase, runId, 'pre_qa_pack', 'QA');
+}
+
+async function loadPreHumanizerCampaignPack(supabase: SupabaseClient, runId: string) {
+  return loadCampaignPackDocument(supabase, runId, 'pre_humanizer_pack', 'Humanizer');
+}
+
+async function loadCampaignPackDocument(
+  supabase: SupabaseClient,
+  runId: string,
+  documentType: 'pre_humanizer_pack' | 'pre_qa_pack',
+  continuationLabel: 'Humanizer' | 'QA',
+) {
   const { data, error } = await supabase
     .from('ai_run_documents')
     .select('content')
     .eq('run_id', runId)
-    .eq('document_type', 'pre_qa_pack')
+    .eq('document_type', documentType)
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
   const pack = normalizeCampaignPack(data?.content || {});
   if (!hasCampaignOutput(pack)) {
-    throw new Error('QA continuation could not load the completed draft pack.');
+    throw new Error(`${continuationLabel} continuation could not load the completed draft pack.`);
   }
   return pack;
 }
