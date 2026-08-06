@@ -25,6 +25,7 @@ import {
 import {
   alignCampaignPackToRequestedPlatforms,
   applyContentPatches,
+  applicableContentPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
   campaignPlatformConsistencyFindings,
@@ -155,7 +156,7 @@ const DEEP_WORK_BATCH_TIMEOUT_MS = 112_000;
 const DEEP_WORK_ATTEMPT_TIMEOUT_MS = 50_000;
 const BRAND_FILTER_TIMEOUT_MS = 14_000;
 const CREATIVE_DIRECTION_TIMEOUT_MS = 16_000;
-const QA_REVIEW_TIMEOUT_MS = 16_000;
+const QA_REVIEW_TIMEOUT_MS = 30_000;
 const CUSTOM_AGENT_MIN_BUDGET_MS = 36_000;
 const CUSTOM_AGENT_TIMEOUT_MS = 26_000;
 
@@ -1161,10 +1162,11 @@ async function processMission({
           observability: withRunObservation(runObservability, 'qa', 'mission-qa-review'),
         });
         reviewedFindings = [...reviewedFindings, ...reviewed.findings].slice(0, 30);
-        reviewedPatches = [...reviewedPatches, ...reviewed.patches].slice(0, 32);
         qaDetailedFindings = [...qaDetailedFindings, ...reviewed.findings].slice(0, 30);
-        if (reviewed.patches.length) {
-          const patched = applyContentPatches(pack, reviewed.patches);
+        const applicablePatches = applicableContentPatches(pack, reviewed.patches);
+        reviewedPatches = [...reviewedPatches, ...applicablePatches].slice(0, 32);
+        if (applicablePatches.length) {
+          const patched = applyContentPatches(pack, applicablePatches);
           const guarded = guardCampaignPack(normalizeCampaignPack({
             ...patched,
             strategy: pack.strategy,
@@ -1179,10 +1181,11 @@ async function processMission({
           const postQaRepair = repairCampaignPack(postQaGroundedPack, plannerOutput.internalBrief);
           pack = postQaRepair.pack;
           contentGuardrailNotes.push(...postQaRepair.notes);
-          qaRepairCount += reviewed.patches.length + postQaRepair.notes.length;
-          await addEvent(activeStep, 'qa_repairs', `QA repair attempt ${qaModelAttempt} applied ${reviewed.patches.length} focused copy change${reviewed.patches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
+          qaRepairCount += applicablePatches.length + postQaRepair.notes.length;
+          await addEvent(activeStep, 'qa_repairs', `QA repair attempt ${qaModelAttempt} applied ${applicablePatches.length} focused copy change${applicablePatches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
             attempt: qaModelAttempt,
-            patches: reviewed.patches.map(({ group, index, field, reason }) => ({ group, index, field, reason })),
+            patches: applicablePatches.map(({ group, index, field, reason }) => ({ group, index, field, reason })),
+            rejectedPatchCount: reviewed.patches.length - applicablePatches.length,
           });
         }
 

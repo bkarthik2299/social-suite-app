@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CampaignPack } from '../../supabase/functions/_shared/campaign_pack';
 import {
   alignCampaignPackToRequestedPlatforms,
+  applicableContentPatches,
   applyContentPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
@@ -264,6 +265,68 @@ describe('campaign workflow helpers', () => {
     expect(result.socialPosts[0].caption).toBe('A warmer opening.');
     expect(result.socialPosts[0].scheduledDate).toBeUndefined();
     expect(result.socialPosts).toHaveLength(2);
+  });
+
+  it('applies indexed Google ad QA patches and reports invalid patch targets', () => {
+    const input = pack();
+    input.googleAds[0].descriptions = ['First line.', 'Second line.'];
+    input.googleAds[0].callouts = ['Original', 'Serving Semi-Urban &'];
+    const patches = [
+      { group: 'googleAds' as const, index: 0, field: 'descriptions[1]', value: 'A complete second line.', reason: 'Complete the sentence.' },
+      { group: 'googleAds' as const, index: 0, field: 'callouts[1]', value: 'Serving Semi-Urban Areas', reason: 'Complete the callout.' },
+      { group: 'googleAds' as const, index: 0, field: 'descriptions[9]', value: 'Out of range.', reason: 'Invalid index.' },
+      { group: 'googleAds' as const, index: 0, field: 'finalUrl', value: 'https://example.com', reason: 'Disallowed field.' },
+    ];
+
+    expect(applicableContentPatches(input, patches)).toHaveLength(2);
+    const result = applyContentPatches(input, patches);
+    expect(result.googleAds[0].descriptions[1]).toBe('A complete second line.');
+    expect(result.googleAds[0].callouts?.[1]).toBe('Serving Semi-Urban Areas');
+    expect(reviewFindingResolvedByPatches({
+      group: 'googleAds', index: 0, severity: 'blocking', problem: 'The description is incomplete.', suggestion: 'Complete it.',
+    }, patches)).toBe(true);
+  });
+
+  it('repairs Google ad text clipped at platform limits into complete copy', () => {
+    const input = pack();
+    input.googleAds[0].descriptions = [
+      'Aptus is your one-stop solution for a dream home. We understand your needs and make.',
+      'Get a home loan designed for you. Aptus serves self-employed families with an easy.',
+      'Your long-awaited dream home is possible. We offer a clear financial solution for families',
+    ];
+    input.googleAds[0].callouts = ['Serving Semi-Urban &'];
+
+    const repaired = repairCampaignPack(input, { desiredAction: 'Drive to website or phone number for inquiries.' }).pack.googleAds[0];
+    expect(repaired.descriptions).toContain('Aptus is your one-stop solution for a dream home.');
+    expect(repaired.descriptions).toContain('Get a home loan designed for you.');
+    expect(repaired.descriptions).toContain('Your long-awaited dream home is possible. We offer a clear financial solution.');
+    expect(repaired.descriptions.every((description) => description.length <= 90 && /[.!?]$/.test(description))).toBe(true);
+    expect(repaired.callouts).toContain('Serving Semi-Urban');
+  });
+
+  it('removes an unverified phone number while preserving an explicitly confirmed one', () => {
+    const unverified = pack();
+    unverified.socialPosts[0].caption = 'A clear conversation is all it takes. Call us at +91 87544 00008 or visit our website.';
+    const cleaned = repairCampaignPack(unverified, {
+      desiredAction: 'Drive to website or phone number for inquiries.',
+      confirmedFacts: [],
+    });
+    expect(cleaned.pack.socialPosts[0].caption).toBe('A clear conversation is all it takes. Visit our website.');
+    expect(cleaned.notes).toEqual(expect.arrayContaining([expect.stringContaining('unverified phone number')]));
+
+    const verified = pack();
+    verified.socialPosts[0].caption = 'Call us at +91 87544 00008 or visit our website.';
+    expect(repairCampaignPack(verified, {
+      desiredAction: 'Call +91 87544 00008 for inquiries.',
+      confirmedFacts: [],
+    }).pack.socialPosts[0].caption).toContain('+91 87544 00008');
+  });
+
+  it('uses a concise presentable title when the creative strategist falls back', () => {
+    const planner = fallbackPlannerOutput('Create a campaign for Aptus.', { projectName: 'Aptus', campaignName: '' });
+    planner.internalBrief.offerOrSubject = 'Aptus Value Housing Finance India Ltd is a Home Loan Company. Aptus serves self-employed families across semi-urban markets.';
+    planner.internalBrief.confirmedFacts = ['Brand name: Aptus.'];
+    expect(fallbackCreativeDirection(planner).title).toBe('Aptus Campaign Direction');
   });
 
   it('flags prohibited wording without silently rewriting it', () => {

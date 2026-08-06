@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   prefersNativeJsonMode,
   prefersSectionedCampaignPack,
+  shouldRetryOpenRouterWithoutJsonMode,
   supportsTemperatureParameter,
   structuredMissionModelPlan,
   structuredJsonAttemptPlan,
@@ -40,10 +41,20 @@ describe('OpenRouter mission policy', () => {
     expect(prefersNativeJsonMode('openai/gpt-5.4-mini')).toBe(true);
   });
 
-  it('omits temperature for OpenAI GPT-5 models under strict provider routing', () => {
+  it('omits unsupported sampling parameters under strict provider routing', () => {
     expect(supportsTemperatureParameter('openai/gpt-5.4-mini')).toBe(false);
     expect(supportsTemperatureParameter('openai/gpt-5.5')).toBe(false);
+    expect(supportsTemperatureParameter('anthropic/claude-opus-4.7')).toBe(false);
+    expect(supportsTemperatureParameter('anthropic/claude-opus-4.7-fast')).toBe(false);
+    expect(supportsTemperatureParameter('anthropic/claude-haiku-4.5')).toBe(true);
     expect(supportsTemperatureParameter('deepseek/deepseek-v4-pro')).toBe(true);
+  });
+
+  it('retries the same model without native JSON routing when parameters have no eligible endpoint', () => {
+    expect(shouldRetryOpenRouterWithoutJsonMode(404, 'OpenRouter request failed: 404 No endpoints found that can handle the requested parameters.')).toBe(true);
+    expect(shouldRetryOpenRouterWithoutJsonMode(422, 'response_format is not supported')).toBe(true);
+    expect(shouldRetryOpenRouterWithoutJsonMode(404, 'Model not found')).toBe(false);
+    expect(shouldRetryOpenRouterWithoutJsonMode(500, 'Provider unavailable')).toBe(false);
   });
 
   it('reserves DeepSeek V4 structured-output tokens for the final JSON response', () => {

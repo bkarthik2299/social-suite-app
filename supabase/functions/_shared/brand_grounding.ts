@@ -325,7 +325,7 @@ export function brandGroundingQualityFindings(
   if (!grounding.requiredFacts.length) return [];
   const findings = brandStrategyGroundingFindings(pack.strategy, grounding);
   const packText = normalizeSearchText(JSON.stringify(pack));
-  const requiredCta = campaignCta(grounding, context);
+  const requiredCta = requiredCampaignCta(grounding, context);
   if (requiredCta && !containsNormalizedPhrase(packText, requiredCta)) {
     findings.push(groundingFinding(`Campaign omits the verified campaign CTA “${requiredCta}”.`, 'Use the approved campaign CTA naturally in at least one relevant asset.'));
   }
@@ -848,6 +848,11 @@ function canonicalCta(value: string, inferIntent = false) {
 function campaignCta(grounding: BrandGrounding, context: BrandCampaignContext) {
   return canonicalCta(grounding.primaryCta)
     || canonicalCta(context.desiredAction || '', true);
+}
+
+function requiredCampaignCta(grounding: BrandGrounding, context: BrandCampaignContext) {
+  return canonicalCta(grounding.primaryCta)
+    || canonicalCta(context.desiredAction || '');
 }
 
 function domainFromUrl(value: string) {

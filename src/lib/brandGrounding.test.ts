@@ -173,6 +173,37 @@ describe('brand grounding', () => {
     expect(findings.filter((finding) => finding.problem.includes('unfinished phrase'))).toEqual([]);
   });
 
+  it('does not hard-block broad website and phone intent as an invented literal CTA', () => {
+    const aptusGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Aptus',
+        website_url: 'https://www.aptusindia.com',
+        elevator_pitch: 'A home loan company serving self-employed low and middle-income families.',
+        target_audience: 'Self-employed low and middle-income families in semi-urban and rural markets.',
+      },
+      markdown: '',
+    });
+    const input = pack('Aptus supports self-employed families exploring housing finance for a home of their own.');
+    input.googleAds = [{
+      name: 'Aptus home loans',
+      topic: 'Housing finance for self-employed families',
+      keywords: ['home loans for self employed'],
+      headlines: ['Aptus Home Loans', 'Housing Finance Guidance', 'Explore Your Home Options', 'Aptus India', 'For Self Employed Families', 'A Clear Next Step', 'Visit Aptus India', 'Home Finance Information'],
+      descriptions: ['Explore home loan information for self-employed families on the official Aptus website.', 'Visit Aptus India or call to make an inquiry about housing finance.'],
+      finalUrl: 'https://www.aptusindia.com',
+    }];
+    const context = {
+      audience: 'Aspiring and existing homeowners across South India.',
+      offerOrSubject: 'Aptus housing finance.',
+      desiredAction: 'Drive to website/phone number for inquiries.',
+    };
+
+    const ctaFindings = brandGroundingQualityFindings(input, aptusGrounding, context)
+      .filter((finding) => /campaign CTA|reader-facing verified CTA/i.test(finding.problem));
+
+    expect(ctaFindings).toEqual([]);
+  });
+
   it('does not promote undefined Brand Knowledge placeholders into campaign facts', () => {
     const sparseMarkdown = `# KYRO Construction SaaS — Brand Knowledge Document
 

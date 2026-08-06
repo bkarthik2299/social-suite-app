@@ -296,7 +296,6 @@ export function normalizeResearchBrief(input: unknown, question = ''): ResearchB
 export function fallbackCreativeDirection(planner: PlannerOutput): CreativeDirection {
   const roughLineFact = planner.internalBrief.confirmedFacts.find((fact) => /rough line|client line|campaign line/i.test(fact)) || '';
   const roughLine = roughLineFact.match(/[“"]([^”"]+)[”"]/)?.[1]?.trim() || '';
-  const title = roughLine || planner.internalBrief.offerOrSubject || 'Campaign Direction';
   const desiredAction = planner.internalBrief.desiredAction || 'take the requested next step';
   const audience = planner.internalBrief.audience || 'the stated audience';
   const primaryAudience = audience.split(';')[0]?.trim() || audience;
@@ -306,6 +305,12 @@ export function fallbackCreativeDirection(planner: PlannerOutput): CreativeDirec
       || planner.internalBrief.offerOrSubject
       || 'the verified offering',
   );
+  const brandName = planner.internalBrief.confirmedFacts
+    .find((fact) => /^\s*brand name\s*:/i.test(fact))
+    ?.replace(/^\s*brand name\s*:\s*/i, '')
+    .replace(/[.!?]+$/, '')
+    .trim();
+  const title = roughLine || (brandName ? `${brandName} Campaign Direction` : compact(subject, 72)) || 'Campaign Direction';
   const proofPoint = planner.internalBrief.confirmedFacts.find((fact) => (
     !/^\s*(?:brand name|business and offering|primary audience|official website|primary (?:brand )?cta|verified brand colors)\s*:/i.test(fact)
   ));
@@ -541,7 +546,7 @@ function asRecord(input: unknown): Record<string, unknown> {
 }
 
 function stringValue(input: unknown): string {
-  if (typeof input === 'string') return input.trim();
+  if (typeof input === 'string') return repairMojibake(input.trim());
   if (typeof input === 'number' || typeof input === 'boolean') return String(input);
   return '';
 }
@@ -635,3 +640,4 @@ function sentenceMatch(input: string, pattern: RegExp) {
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
+import { repairMojibake } from './text_encoding.ts';
