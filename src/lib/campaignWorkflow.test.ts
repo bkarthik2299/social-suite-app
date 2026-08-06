@@ -13,6 +13,7 @@ import {
   deterministicQualityFindings,
   limitCampaignPackToContract,
   repairCampaignPack,
+  repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
 } from '../../supabase/functions/_shared/campaign_workflow';
 import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection, requirePlannerResearch } from '../../supabase/functions/_shared/agent_contracts';
@@ -73,6 +74,61 @@ describe('campaign workflow helpers', () => {
       }],
     };
     expect(campaignSectionVisualGuidanceError(input, 'socialPosts')).toContain('explanatory social format');
+  });
+
+  it('repairs practical social visual guides into explanatory formats', () => {
+    const input = {
+      socialPosts: [{
+        name: 'Execution checklist',
+        topic: 'Daily task process tips',
+        caption: 'See the steps that help a team keep daily execution on track.',
+        platforms: ['linkedin'],
+        visualGuide: 'Format & placement: LinkedIn single-image feed post. Content concept: a smiling team in an office. Layout: full-bleed photograph with the subject centered. On-creative copy: No overlay text. Brand execution: verified purple palette and approved logo. Production notes: 4:5 crop, safe margins, and accessible contrast.',
+      }],
+    };
+    const repaired = repairCampaignSectionVisualGuidance(input, 'socialPosts');
+
+    expect(campaignSectionVisualGuidanceError(repaired, 'socialPosts')).toBeNull();
+    expect(JSON.stringify(repaired)).toContain('four-slide carousel');
+  });
+
+  it('repairs a full practical social set without repeated visual failures', () => {
+    const input = {
+      socialPosts: [
+        {
+          name: 'Daily execution gap',
+          topic: 'Manual task process',
+          caption: 'A simple workflow helps the team see what needs action before anything falls through.',
+          platforms: ['linkedin'],
+          visualGuide: 'Format & placement: LinkedIn single-image post. Content concept: a team in a clinic. Layout: full-bleed photo. On-creative copy: No overlay. Brand execution: use brand colors. Production notes: 4:5 crop.',
+        },
+        {
+          name: 'Task handoff guide',
+          topic: 'Team handoff steps',
+          caption: 'Turn every follow-up into a visible next step that the right person can own.',
+          platforms: ['instagram'],
+          visualGuide: 'Format & placement: Instagram single-image post. Content concept: a laptop on a desk. Layout: centered photo. On-creative copy: No overlay. Brand execution: use brand colors. Production notes: square crop.',
+        },
+        {
+          name: 'Tracking tips',
+          topic: 'Task tracking tips',
+          caption: 'When the task list is clear, the day feels calmer for the whole practice team.',
+          platforms: ['facebook'],
+          visualGuide: 'Format & placement: Facebook single-image post. Content concept: smiling staff. Layout: photo background. On-creative copy: No overlay. Brand execution: use brand colors. Production notes: square crop.',
+        },
+        {
+          name: 'Follow-up checklist',
+          topic: 'Patient follow-up checklist',
+          caption: 'Use BerryTasks to keep follow-ups visible from intake to the next action.',
+          platforms: ['linkedin'],
+          visualGuide: 'Format & placement: LinkedIn single-image post. Content concept: office photograph. Layout: lower-third text band. On-creative copy: Follow up clearly. Brand execution: use brand colors. Production notes: 4:5 crop.',
+        },
+      ],
+    };
+    const repaired = repairCampaignSectionVisualGuidance(input, 'socialPosts');
+
+    expect(campaignSectionVisualGuidanceError(repaired, 'socialPosts')).toBeNull();
+    expect(JSON.stringify(repaired)).toContain('document post');
   });
 
   it('rejects different ad subjects placed into the same finished template', () => {

@@ -356,6 +356,134 @@ export function campaignSectionVisualGuidanceError(
   return null;
 }
 
+export function repairCampaignSectionVisualGuidance(
+  input: unknown,
+  key: GeneratedCampaignSectionKey,
+): unknown {
+  if (key !== 'socialPosts' && key !== 'socialAds') return input;
+
+  const pack = normalizeCampaignPack({ [key]: unwrapSectionInput(input, key) });
+  const items = pack[key];
+  if (!items.length) return input;
+
+  const repairedItems = items.map((item, index) => ({
+    ...item,
+    visualGuide: repairedVisualGuide(item, key, index),
+  }));
+
+  return { [key]: repairedItems };
+}
+
+function unwrapSectionInput(input: unknown, key: GeneratedCampaignSectionKey) {
+  const record = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : null;
+  return record && key in record ? record[key] : input;
+}
+
+function repairedVisualGuide(
+  item: CampaignPack['socialPosts'][number] | CampaignPack['socialAds'][number],
+  key: 'socialPosts' | 'socialAds',
+  index: number,
+) {
+  const isSocialPost = key === 'socialPosts';
+  const platform = isSocialPost
+    ? ((item as CampaignPack['socialPosts'][number]).platforms?.[0] || 'social')
+    : ((item as CampaignPack['socialAds'][number]).platform || 'paid social');
+  const topic = compactVisualText(item.topic || item.name || (isSocialPost ? 'the organic post idea' : 'the ad idea'), 80);
+  const copy = compactVisualText(
+    isSocialPost
+      ? (item as CampaignPack['socialPosts'][number]).caption
+      : `${(item as CampaignPack['socialAds'][number]).headline || ''} ${(item as CampaignPack['socialAds'][number]).primaryText || ''}`,
+    120,
+  );
+  const hook = compactVisualText(
+    isSocialPost
+      ? ((item as CampaignPack['socialPosts'][number]).caption || item.topic || item.name)
+      : ((item as CampaignPack['socialAds'][number]).headline || item.topic || item.name),
+    48,
+  );
+  const postFormats = [
+    'four-slide carousel',
+    'checklist card',
+    'infographic post',
+    'document post',
+    'two-column explainer card',
+  ];
+  const adFormats = [
+    'carousel ad with a clear end card',
+    'comparison ad card',
+    'proof-led typographic ad',
+    'step-by-step story ad',
+    'single-image ad with a structured CTA footer',
+  ];
+  const format = (isSocialPost ? postFormats : adFormats)[index % (isSocialPost ? postFormats.length : adFormats.length)];
+  const layoutPlan = visualLayoutPlan(format, index);
+  const productionPlan = visualProductionPlan(format);
+
+  return [
+    `Format & placement: ${platform} ${format}.`,
+    `Content concept: make "${topic}" the unmistakable subject, grounded in the item copy${copy ? `: ${copy}` : ''}.`,
+    `Layout: ${layoutPlan}`,
+    `On-creative copy: use a short hook derived from the item, such as "${hook || topic}", and avoid unsupported claims.`,
+    'Brand execution: apply the verified Brand Knowledge palette, typography, logo rules, visual direction, and approved motifs without inventing new brand elements.',
+    `Production notes: ${productionPlan}`,
+  ].join(' ');
+}
+
+function visualLayoutPlan(format: string, index: number) {
+  if (format.includes('four-slide carousel')) {
+    return 'Use four numbered slides: tension, task visibility, team ownership, and CTA. Put the logo in a quiet corner, use a large slide number marker, and make each slide text-led with one simple supporting visual.';
+  }
+  if (format.includes('checklist')) {
+    return 'Use a compact checklist hierarchy with a bold header, three ticked rows, and a bottom CTA strip. Pair each row with a small brand-style icon so the asset reads as a saved reference, not a photo.';
+  }
+  if (format.includes('infographic')) {
+    return 'Use a vertical infographic with three stacked modules connected by a thin path line. Place the strongest takeaway at the top, supporting details in blocks, and a small action cue at the bottom.';
+  }
+  if (format.includes('document post')) {
+    return 'Use a document-style multi-page composition with a cover, two inner cards, and a closing page. Treat the headline like a guide title, use wide margins, and place CTA details on the final page only.';
+  }
+  if (format.includes('two-column')) {
+    return 'Use a split explainer: left column shows the common messy workflow, right column shows the calmer organized version. Keep the CTA below the columns with a clear visual divider.';
+  }
+  if (format.includes('comparison')) {
+    return 'Use a side-by-side comparison grid with a problem column and a better-path column. Reserve the bottom band for the CTA and keep the headline above the grid.';
+  }
+  if (format.includes('proof-led')) {
+    return 'Use a typographic proof card with a large statement, one supporting line, and a restrained proof area. Keep imagery secondary and use contrast to make the headline the hero.';
+  }
+  if (format.includes('step-by-step')) {
+    return 'Use a three-frame sequence with arrows between frames, each frame showing one action. Put the CTA in the final frame instead of repeating it throughout.';
+  }
+  if (format.includes('single-image')) {
+    return `Use a structured single-image layout with the subject offset ${index % 2 === 0 ? 'left' : 'right'}, a dedicated headline zone, and a separate CTA footer so it is not just a generic lifestyle image.`;
+  }
+  return 'Use a clear hierarchy with one focal idea, a short support line, a distinct CTA area, and enough spacing for feed-size readability.';
+}
+
+function visualProductionPlan(format: string) {
+  if (format.includes('carousel')) return 'export all slides in a platform-native square or 4:5 ratio, keep slide numbers and CTA inside safe zones, and preserve readable text at mobile feed size.';
+  if (format.includes('document post')) return 'export as a multi-page document-style social asset, keep margins generous, repeat only essential navigation cues, and avoid dense body text.';
+  if (format.includes('checklist')) return 'use a square or 4:5 crop, keep checklist rows tall enough for tap-size legibility, and maintain strong contrast for tick marks and row labels.';
+  if (format.includes('infographic')) return 'use a 4:5 vertical crop, keep module labels short, align blocks to a strict grid, and test that the smallest label stays readable on mobile.';
+  if (format.includes('two-column') || format.includes('comparison')) return 'use a square or 4:5 crop, keep both columns balanced, preserve a center gutter, and avoid shrinking either side below readable size.';
+  return 'use a platform-native square or 4:5 crop, preserve safe zones, maintain accessible contrast, and keep all text legible at feed size.';
+}
+
+function compactVisualText(value: string | undefined, maxLength: number) {
+  const cleaned = (value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/["“”]/g, '')
+    .trim();
+  if (cleaned.length <= maxLength) return cleaned;
+  return cleaned
+    .slice(0, maxLength)
+    .replace(/\s+\S*$/, '')
+    .replace(/[,\s.;:]+$/, '')
+    .trim();
+}
+
 function visualConceptPortion(value: string) {
   return value
     .split(/\bbrand\s+execution\s*:/i)[0]

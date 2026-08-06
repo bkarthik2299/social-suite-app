@@ -36,6 +36,7 @@ import {
   deterministicQualityFindings,
   limitCampaignPackToContract,
   repairCampaignPack,
+  repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
   type GeneratedCampaignSectionKey,
 } from '../_shared/campaign_workflow.ts';
@@ -2412,16 +2413,26 @@ async function buildCampaignPackInParts({
         }),
       });
       const alignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(value), prompt);
+      const visualRepairedValue = activeSections.reduce<unknown>((current, section) => {
+        if (!campaignSectionVisualGuidanceError(current, section.key)) return current;
+        return {
+          ...(current && typeof current === 'object' && !Array.isArray(current) ? current as Record<string, unknown> : {}),
+          ...repairCampaignSectionVisualGuidance(current, section.key) as Record<string, unknown>,
+        };
+      }, alignedValue);
+      const visuallyAlignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(visualRepairedValue), prompt);
       const sectionFailures = activeSections.flatMap((section) => {
         const validationError = campaignSectionValidationError(value, section.key, section.expectedCount);
         if (validationError) return [{ section: section.label, error: `${models[0]}: ${validationError}` }];
-        const alignedValidationError = campaignSectionValidationError(alignedValue, section.key, section.expectedCount);
+        const alignedValidationError = campaignSectionValidationError(visuallyAlignedValue, section.key, section.expectedCount);
         if (alignedValidationError) return [{ section: section.label, error: `${models[0]}: ${alignedValidationError}` }];
-        const platformError = campaignSectionPlatformError(alignedValue, section.key, section.brief);
+        const visualError = campaignSectionVisualGuidanceError(visuallyAlignedValue, section.key);
+        if (visualError) return [{ section: section.label, error: `${models[0]}: ${visualError}` }];
+        const platformError = campaignSectionPlatformError(visuallyAlignedValue, section.key, section.brief);
         return platformError ? [{ section: section.label, error: `${models[0]}: ${platformError}` }] : [];
       });
       const rawPack = normalizeCampaignPack({
-        ...alignedValue,
+        ...visuallyAlignedValue,
         strategy: creativeDirection.strategy,
         calendar: [],
       });
@@ -2658,7 +2669,11 @@ async function generateCampaignSection({
         continue;
       }
       const alignedValue = alignCampaignSectionPlatforms(value, section.key, section.brief);
-      const visualGuidanceError = campaignSectionVisualGuidanceError(alignedValue, section.key);
+      const initialVisualGuidanceError = campaignSectionVisualGuidanceError(alignedValue, section.key);
+      const visuallyAlignedValue = initialVisualGuidanceError
+        ? alignCampaignSectionPlatforms(repairCampaignSectionVisualGuidance(alignedValue, section.key), section.key, section.brief)
+        : alignedValue;
+      const visualGuidanceError = campaignSectionVisualGuidanceError(visuallyAlignedValue, section.key);
       if (visualGuidanceError) {
         lastError = `${attempt.model}: ${visualGuidanceError}`;
         console.warn('[ai-start-run] Copywriter visual guidance validation failed', {
@@ -2670,7 +2685,7 @@ async function generateCampaignSection({
         });
         continue;
       }
-      const alignedValidationError = campaignSectionValidationError(alignedValue, section.key, section.expectedCount);
+      const alignedValidationError = campaignSectionValidationError(visuallyAlignedValue, section.key, section.expectedCount);
       if (alignedValidationError) {
         lastError = `${attempt.model}: ${alignedValidationError}`;
         console.warn('[ai-start-run] Copywriter aligned section validation failed', {
@@ -2682,7 +2697,7 @@ async function generateCampaignSection({
         });
         continue;
       }
-      const platformError = campaignSectionPlatformError(alignedValue, section.key, section.brief);
+      const platformError = campaignSectionPlatformError(visuallyAlignedValue, section.key, section.brief);
       if (platformError) {
         lastError = `${attempt.model}: ${platformError}`;
         console.warn('[ai-start-run] Copywriter platform validation failed', {
@@ -2694,7 +2709,7 @@ async function generateCampaignSection({
         });
         continue;
       }
-      return alignedValue;
+      return visuallyAlignedValue;
     } catch (error) {
       lastError = `${attempt.model}: ${error instanceof Error ? error.message : 'Unknown model error'}`;
       console.warn('[ai-start-run] Copywriter section attempt failed', {
