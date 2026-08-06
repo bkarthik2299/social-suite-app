@@ -200,6 +200,7 @@ export type BrandGuide = {
     photography_style: string | null;
     illustration_style: string | null;
     iconography_rules: string | null;
+    layout_composition: string | null;
     social_rules: string | null;
     ad_rules: string | null;
     custom_sections: Json | null;
@@ -1721,6 +1722,7 @@ const createLocalBrandGuide = (orgId: string, projectId?: string | null, brandNa
         photography_style: null,
         illustration_style: null,
         iconography_rules: null,
+        layout_composition: null,
         social_rules: null,
         ad_rules: null,
         custom_sections: [],
@@ -1767,6 +1769,7 @@ const resetBrandGuideFields = (): Partial<BrandGuide> => ({
     photography_style: null,
     illustration_style: null,
     iconography_rules: null,
+    layout_composition: null,
     social_rules: null,
     ad_rules: null,
     custom_sections: [],

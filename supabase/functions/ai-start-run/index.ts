@@ -32,6 +32,7 @@ import {
   campaignPlatformConsistencyFindings,
   campaignSectionValidationError,
   campaignSectionMinimumCount,
+  campaignSectionVisualGuidanceError,
   deterministicQualityFindings,
   limitCampaignPackToContract,
   repairCampaignPack,
@@ -1757,7 +1758,7 @@ async function loadBrandKnowledge(
   if (guideId) {
     const { data } = await supabase
       .from('brand_guides')
-      .select('id,brand_name,website_url,industry,elevator_pitch,target_audience,personality,writing_dos,writing_donts,preferred_terms,avoided_terms,sample_copy,content_pillars,photography_style,illustration_style,iconography_rules,social_rules,ad_rules,custom_sections,updated_at')
+      .select('id,brand_name,website_url,industry,elevator_pitch,target_audience,personality,writing_dos,writing_donts,preferred_terms,avoided_terms,sample_copy,content_pillars,photography_style,illustration_style,iconography_rules,layout_composition,social_rules,ad_rules,custom_sections,updated_at')
       .eq('id', guideId)
       .maybeSingle();
     guide = data as (BrandGuideSnapshot & { id?: string }) | null;
@@ -2060,6 +2061,7 @@ async function buildCreativeDirection(args: {
             'Return only valid JSON with title, centralIdea, audienceProblem, promise, keyMessages, callsToAction, contentAngles, platformGuidance, and strategy.',
             'strategy must contain title, summary, objectives, and contentPillars.',
             'Create enough genuinely different contentAngles for the requested deliverables so writers do not repeat the same thought.',
+            'Give each content angle a distinct visual territory or social-content format. Do not default every angle to the same lifestyle photograph, setting, lighting treatment, or composition merely because the brand system is shared.',
             'The central idea must be brief-specific, useful, memorable, and consistent with the brand rules.',
             'The client brief is the highest priority. If it supplies a campaign thought or rough line, preserve or improve that idea instead of replacing it with general brand positioning.',
             'Verified brand grounding is mandatory. The strategy must explicitly communicate the real business or offering and its verified audience; never recast the brand as a generic app or different product category.',
@@ -2312,7 +2314,12 @@ async function buildCampaignPackInParts({
         'Give every post a different content angle from the shared creative direction. Do not merely paraphrase the same opening, argument, or call to action.',
         'Write for the named platform behavior: LinkedIn should reward professional insight, Instagram should be visually led and concise, Facebook should feel conversational, and X should be compact. Do not copy one caption across platforms.',
         'Format longer captions as 2 to 4 short, natural paragraphs separated by blank lines: a strong opening, a useful body, and a final next step when appropriate. Keep genuinely short captions in one paragraph. Do not add section labels or headings inside publishable copy.',
-        'For every item, visualGuide must describe image composition, subject, setting, mood, color direction, aspect ratio cue, and text overlay rule. Do not generate an image URL.',
+        'For every item, visualGuide is a production-ready brief for the complete social post creative, not merely an image-generation prompt. Write it as one string with these exact labeled sections: “Format & placement:”, “Content concept:”, “Layout:”, “On-creative copy:”, “Brand execution:”, and “Production notes:”.',
+        'Format & placement must name the requested platform and choose the most suitable final asset type, such as a single-image post, carousel, document post, infographic, reel cover, checklist card, or typographic post. Layout must describe the final hierarchy or give a slide-by-slide plan for a carousel. On-creative copy must provide the exact short hook or explicitly say no overlay and explain why.',
+        'Make the content concept unmistakably about that item’s topic, caption hook, and audience takeaway. Across the section, vary the subject, situation, format, layout, visual metaphor, and on-creative hook; sharing brand colors and motifs is not enough to count as a distinct visual. Do not reuse a generic golden-hour lifestyle photo recipe for every item.',
+        'Choose the asset format for the communication job: process, eligibility, tips, documents, myths, or how-to content should normally become a carousel, checklist, infographic, document post, comparison, or step-by-step explainer rather than a decorative lifestyle photograph. Customer proof can become a testimonial card or story sequence; an emotional brand idea can be photo-led. When creating 3 or more posts, no more than half may be photo-led single images.',
+        'Do not reuse the same final hierarchy with only a new subject. Vary how the brand system appears across the set—for example photography on one asset, typography or data on another, illustration or icon-led explanation on another, and a carousel story where appropriate—while remaining inside verified Brand Knowledge.',
+        'Brand execution must apply verified colors, typography, logo rules, photography or illustration style, and approved motifs from Brand Knowledge without inventing new brand elements. Production notes must include aspect ratio, safe zones, accessibility/contrast, and any platform crop behavior. Do not generate an image URL.',
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.socialPosts}` : `Create exactly ${deliverableContract.socialPosts}`} organic social posts only.\n\n${commonContext}`,
@@ -2352,7 +2359,11 @@ async function buildCampaignPackInParts({
         'Use the verified primary CTA and official website from Brand Knowledge when supplied. Do not invent an app-download action or landing page.',
         'Every ad must communicate the real offering to the verified audience; generic awareness copy that could describe an unrelated app is invalid.',
         'Format longer primaryText as 2 to 4 short, natural paragraphs separated by blank lines so the hook, supporting message, and CTA are easy to scan. Keep headline and description as separate single-line fields, and do not add labels inside primaryText.',
-        'For every item, visualGuide must describe image composition, subject, setting, mood, color direction, aspect ratio cue, and text overlay rule. Do not generate an image URL.',
+        'For every item, visualGuide is a production-ready brief for the complete paid-social ad creative, not merely an image-generation prompt. Write it as one string with these exact labeled sections: “Format & placement:”, “Content concept:”, “Layout:”, “On-creative copy:”, “Brand execution:”, and “Production notes:”.',
+        'Format & placement must name the requested platform, placement, and final asset type. Layout must describe the finished ad hierarchy, including the headline area and a CTA-safe zone, or give a frame/slide plan for video or carousel. On-creative copy must give the exact short ad hook and must stay consistent with primaryText, headline, and CTA.',
+        'Every paid visual must dramatize that ad’s particular promise or audience situation. Across the section, vary the hook, subject, setting, format, composition, and interaction; do not reuse the same family-at-home, golden-hour, product-on-desk, or generic lifestyle image with only minor wording changes.',
+        'Do not give two ads the same single-image template, logo position, lower-third headline band, and CTA-safe layout with only a different photograph. Give each ad a distinct conversion idea and finished hierarchy; vary static, carousel, story/reel, comparison, proof-led, or typographic executions when the platform and brief allow it.',
+        'Brand execution must apply verified colors, typography, logo rules, photography or illustration style, and approved motifs from Brand Knowledge. Production notes must include aspect ratio, safe zones, accessibility/contrast, and crop behavior. Do not generate an image URL.',
         'Do not return markdown. Do not use snake_case keys.',
       ].join(' '),
       user: `${flexibleContract ? `Create a focused set of up to ${deliverableContract.socialAds}` : `Create exactly ${deliverableContract.socialAds}`} paid social ads only.\n\n${commonContext}`,
@@ -2562,7 +2573,10 @@ async function generateCompactCampaignPack({
         ],
       });
       const validationErrors = sections
-        .map((section) => campaignSectionValidationError(value, section.key, section.expectedCount))
+        .flatMap((section) => [
+          campaignSectionValidationError(value, section.key, section.expectedCount),
+          campaignSectionVisualGuidanceError(value, section.key),
+        ])
         .filter(Boolean);
       if (validationErrors.length) throw new Error(validationErrors.join(' '));
       return value;
@@ -2644,6 +2658,18 @@ async function generateCampaignSection({
         continue;
       }
       const alignedValue = alignCampaignSectionPlatforms(value, section.key, section.brief);
+      const visualGuidanceError = campaignSectionVisualGuidanceError(alignedValue, section.key);
+      if (visualGuidanceError) {
+        lastError = `${attempt.model}: ${visualGuidanceError}`;
+        console.warn('[ai-start-run] Copywriter visual guidance validation failed', {
+          model: attempt.model,
+          section: section.label,
+          attempt: attemptIndex + 1,
+          strictRecovery: attempt.strictRecovery,
+          error: lastError,
+        });
+        continue;
+      }
       const alignedValidationError = campaignSectionValidationError(alignedValue, section.key, section.expectedCount);
       if (alignedValidationError) {
         lastError = `${attempt.model}: ${alignedValidationError}`;
@@ -2836,6 +2862,11 @@ async function reviewCampaignPack(args: {
           'Verify platform fit against the Platform Specialist requirements supplied in the user message. Treat a broken hard limit or missing required platform field as blocking.',
           'For organic posts, topic, platforms, creativeBrief, and visualGuide must all describe the same organic platform. Never allow a Facebook or Google ad concept to remain inside an Instagram post.',
           'For paid social ads, the name, topic, platform, and visualGuide must describe the same paid social placement. Never leave search-ad or asset-extension instructions inside a Facebook, Instagram, LinkedIn, or X ad.',
+          'Treat visualGuide as the production brief for the complete social creative, not an image prompt. It should specify format and placement, the item-specific content concept, final layout or slide/frame plan, exact on-creative copy rule, brand execution, and production notes.',
+          'Compare all organic and paid-social visual guides. When multiple items repeat substantially the same subject, situation, lifestyle-photo recipe, setting, or layout, quietly patch each affected visualGuide into a distinct platform-native execution that expresses its own topic and copy angle while preserving the shared brand system.',
+          'Match the visual format to the information job. Quietly convert educational, eligibility, process, tips, or how-to posts that use a decorative single photograph into a useful carousel, checklist, infographic, document post, comparison, or step-by-step explainer. Across 3 or more organic posts, keep photo-led single images to no more than half of the set.',
+          'When two ads reuse the same single-image template, logo position, headline band, and CTA-safe hierarchy, redesign at least one into a genuinely different conversion execution instead of merely swapping the photograph.',
+          'A vague or repetitive visual direction is a polish issue, not a blocker. Repair it with a focused visualGuide patch whenever the safe creative correction is clear.',
           'Treat a dropped client keyword, missing Google keyword list, inadequate keyword coverage, incomplete ad fragment, generic workflow filler, or broken platform limit as blocking. Patch it when the safe correction is clear.',
           'For Google ads, review the keywords array rather than assuming topic is a primary keyword. Preserve every client keyword exactly, keep close intents grouped, require keyword use in at least two headlines and one description, and retain at least three non-keyword headlines.',
           'Every conversion CTA must use the next action requested in the internal brief; do not substitute a demo, consultation, purchase, sign-up, or other action.',

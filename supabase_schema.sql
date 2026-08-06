@@ -322,6 +322,7 @@ CREATE TABLE brand_guides (
     photography_style   text,
     illustration_style  text,
     iconography_rules   text,
+    layout_composition  text,
 
     -- Section: Application Rules
     social_rules    text,

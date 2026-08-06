@@ -17,6 +17,7 @@ export type BrandGuideSnapshot = {
   photography_style?: unknown;
   illustration_style?: unknown;
   iconography_rules?: unknown;
+  layout_composition?: unknown;
   social_rules?: unknown;
   ad_rules?: unknown;
   custom_sections?: unknown;
@@ -128,6 +129,7 @@ export function buildBrandGrounding({
     stringValue(currentGuide.photography_style),
     stringValue(currentGuide.illustration_style),
     stringValue(currentGuide.iconography_rules),
+    stringValue(currentGuide.layout_composition),
     stringValue(currentGuide.social_rules),
     stringValue(currentGuide.ad_rules),
   ]).slice(0, 12);

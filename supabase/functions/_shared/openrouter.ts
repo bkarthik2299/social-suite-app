@@ -7,9 +7,16 @@ import {
 } from './openrouter_policy.ts';
 import { captureOpenRouterGeneration, type AiObservabilityContext } from './posthog_ai.ts';
 
+type ChatMessageContent =
+  | string
+  | Array<
+    | { type: 'text'; text: string }
+    | { type: 'image_url'; image_url: { url: string } }
+  >;
+
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: ChatMessageContent;
 };
 
 type OpenRouterResponse = Record<string, unknown> & {

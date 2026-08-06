@@ -8,6 +8,7 @@ import {
   campaignCalendarCount,
   campaignPlatformConsistencyFindings,
   campaignSectionMinimumCount,
+  campaignSectionVisualGuidanceError,
   campaignSectionValidationError,
   deterministicQualityFindings,
   limitCampaignPackToContract,
@@ -29,6 +30,61 @@ const pack = (): CampaignPack => ({
 });
 
 describe('campaign workflow helpers', () => {
+  it('requires social visual guides to be complete production briefs', () => {
+    const incomplete = {
+      socialPosts: [{
+        name: 'Aptus eligibility post',
+        topic: 'Self-employed eligibility',
+        caption: 'A useful caption.',
+        platforms: ['instagram'],
+        visualGuide: 'Candid golden-hour photo of a shopkeeper with navy brand treatment.',
+      }],
+    };
+    expect(campaignSectionVisualGuidanceError(incomplete, 'socialPosts')).toContain('image-prompt-style');
+
+    const complete = {
+      socialPosts: [{
+        ...incomplete.socialPosts[0],
+        visualGuide: 'Format & placement: Instagram four-slide carousel. Content concept: explain how self-employed income can be presented clearly. Layout: slide 1 is the myth, slides 2 and 3 clarify the idea, slide 4 gives the next step. On-creative copy: “Income is more than a payslip.” Brand execution: use the verified navy palette, approved type, and subtle line motif. Production notes: 4:5 crop, safe margins, large accessible type, and strong contrast.',
+      }],
+    };
+    expect(campaignSectionVisualGuidanceError(complete, 'socialPosts')).toBeNull();
+  });
+
+  it('rejects substantially repeated visual concepts within one social section', () => {
+    const guide = 'Format & placement: Facebook single-image feed post. Content concept: show a family approaching a warm home at dusk. Layout: family centered below a short headline zone. On-creative copy: “A place to belong.” Brand execution: use verified navy with the approved white line motif. Production notes: 4:5 crop, safe margins, accessible contrast.';
+    const input = {
+      socialPosts: [
+        { name: 'One', topic: 'Belonging', caption: 'First caption.', platforms: ['facebook'], visualGuide: guide },
+        { name: 'Two', topic: 'Trust', caption: 'Second caption.', platforms: ['facebook'], visualGuide: guide },
+      ],
+    };
+    expect(campaignSectionVisualGuidanceError(input, 'socialPosts')).toContain('repeat substantially');
+  });
+
+  it('requires explanatory social formats for eligibility and process content', () => {
+    const input = {
+      socialPosts: [{
+        name: 'Eligibility explained',
+        topic: 'Home loan eligibility tips',
+        caption: 'Understand which documents can help explain self-employed income.',
+        platforms: ['instagram'],
+        visualGuide: 'Format & placement: Instagram single-image feed post. Content concept: a shopkeeper at work. Layout: full-bleed photograph with the subject centered. On-creative copy: No overlay text. Brand execution: verified navy palette and approved logo. Production notes: 4:5 crop, safe margins, and accessible contrast.',
+      }],
+    };
+    expect(campaignSectionVisualGuidanceError(input, 'socialPosts')).toContain('explanatory social format');
+  });
+
+  it('rejects different ad subjects placed into the same finished template', () => {
+    const sharedStructure = (concept: string, hook: string) => `Format & placement: Instagram feed single-image ad, 1:1 aspect ratio. Content concept: ${concept}. Layout: Full-bleed photograph with a navy duotone. Put the headline in the lower third on a blue band and the logo in the top-left. On-creative copy: ${hook}. Brand execution: verified navy palette and approved wordmark. Production notes: Export at 1080x1080. Keep text and logo in safe zones and preserve high contrast.`;
+    const input = {
+      socialAds: [
+        { name: 'Artisan ad', topic: 'Self-employed applicants', platform: 'instagram', primaryText: 'Built around your work.', headline: 'A loan that understands', cta: 'contact_us', visualGuide: sharedStructure('Show an artisan working at dusk', 'Your work tells a story') },
+        { name: 'Family ad', topic: 'Home ownership', platform: 'instagram', primaryText: 'A place to belong.', headline: 'Home for all', cta: 'contact_us', visualGuide: sharedStructure('Show a family entering a home at dusk', 'Come home to more') },
+      ],
+    };
+    expect(campaignSectionVisualGuidanceError(input, 'socialAds')).toContain('same asset format and layout');
+  });
   it('recognizes a patched LinkedIn opening and CTA as resolving the item-level QA finding', () => {
     const finding = {
       group: 'socialPosts' as const,
