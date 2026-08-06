@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS brand_guides (
     photography_style text,
     illustration_style text,
     iconography_rules text,
+    layout_composition text,
     social_rules text,
     ad_rules text,
     custom_sections jsonb DEFAULT '[]',

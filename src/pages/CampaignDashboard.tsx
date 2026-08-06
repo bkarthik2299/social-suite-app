@@ -471,6 +471,7 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
         assets.guide.photography_style ? `Photography: ${assets.guide.photography_style}` : '',
         assets.guide.illustration_style ? `Illustration: ${assets.guide.illustration_style}` : '',
         assets.guide.iconography_rules ? `Iconography: ${assets.guide.iconography_rules}` : '',
+        assets.guide.layout_composition ? `Layout & composition: ${assets.guide.layout_composition}` : '',
         assets.guide.social_rules ? `Social rules: ${assets.guide.social_rules}` : '',
         assets.guide.ad_rules ? `Ad rules: ${assets.guide.ad_rules}` : '',
     ].filter(Boolean).join('; ');

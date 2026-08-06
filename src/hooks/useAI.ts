@@ -61,6 +61,11 @@ const invokeOrThrow = async <T>(name: string, body: Record<string, unknown>): Pr
   return payload;
 };
 
+type BrandAiAction = 'brand_research' | 'brand_knowledge' | 'visual_analysis';
+
+const chargeBrandAiAction = async (guideId: string, action: BrandAiAction) =>
+  invokeOrThrow<{ balanceAfter: number; charged: number }>('brand-charge-ai-action', { guideId, action });
+
 export function useBrandKnowledge(guideId: string) {
   const qc = useQueryClient();
   const { organization } = useAuth();
@@ -84,8 +89,15 @@ export function useBrandKnowledge(guideId: string) {
   });
 
   const compileKnowledge = useMutation({
-    mutationFn: async () => invokeOrThrow<{ document: BrandKnowledgeDocument }>('brand-compile-knowledge', { guideId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, guideId] }),
+    mutationFn: async () => {
+      const result = await invokeOrThrow<{ document: BrandKnowledgeDocument }>('brand-compile-knowledge', { guideId });
+      await chargeBrandAiAction(guideId, 'brand_knowledge');
+      return result;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, guideId] });
+      qc.invalidateQueries({ queryKey: ['ai_credit_account', orgId] });
+    },
   });
 
   const updateMarkdown = useMutation({
@@ -116,15 +128,18 @@ export function useBrandResearch(guideId: string) {
   const orgId = organization?.id || '';
 
   return useMutation({
-    mutationFn: async ({ brandName, websiteUrl }: { brandName: string; websiteUrl: string }) =>
-      invokeOrThrow<{
+    mutationFn: async ({ brandName, websiteUrl }: { brandName: string; websiteUrl: string }) => {
+      const result = await invokeOrThrow<{
         guide: BrandGuide;
         sourceCount: number;
         fieldsUpdated: string[];
         colorsInserted?: number;
         fontsInserted?: number;
         logosInserted?: number;
-      }>('brand-research-website', { guideId, brandName, websiteUrl }),
+      }>('brand-research-website', { guideId, brandName, websiteUrl });
+      await chargeBrandAiAction(guideId, 'brand_research');
+      return result;
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['brand_guides', orgId] });
       void qc.invalidateQueries({ queryKey: ['brand_guide', orgId, guideId] });
@@ -132,6 +147,42 @@ export function useBrandResearch(guideId: string) {
       void qc.invalidateQueries({ queryKey: ['brand_fonts', guideId] });
       void qc.invalidateQueries({ queryKey: ['brand_logos', guideId] });
       void qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, guideId] });
+      void qc.invalidateQueries({ queryKey: ['ai_credit_account', orgId] });
+    },
+  });
+}
+
+export type VisualDirectionAnalysis = {
+  fields: {
+    photography_style: string;
+    illustration_style: string;
+    iconography_rules: string;
+    layout_composition: string;
+  };
+  pattern_notes: {
+    consistent_patterns: string[];
+    recurring_patterns: string[];
+    one_off_treatments: string[];
+  };
+};
+
+export function useBrandVisualDirectionAnalysis(guideId: string) {
+  const qc = useQueryClient();
+  const { organization } = useAuth();
+  const orgId = organization?.id || '';
+
+  return useMutation({
+    mutationFn: async () => {
+      const result = await invokeOrThrow<{
+        analysis: VisualDirectionAnalysis;
+        imageCount: number;
+        model: string;
+      }>('brand-analyze-visual-direction', { guideId });
+      await chargeBrandAiAction(guideId, 'visual_analysis');
+      return result;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['ai_credit_account', orgId] });
     },
   });
 }

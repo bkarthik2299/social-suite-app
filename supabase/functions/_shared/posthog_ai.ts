@@ -1,6 +1,6 @@
 type ChatMessage = {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: unknown;
 };
 
 export type AiObservabilityContext = {
@@ -188,10 +188,22 @@ async function capture(payload: Record<string, unknown>) {
 function sanitizeMessages(messages: ChatMessage[]) {
   let remaining = 60_000;
   return messages.slice(0, 20).map((message) => {
-    const content = truncate(message.content, Math.max(0, Math.min(remaining, 30_000)));
+    const content = truncate(sanitizeMessageContent(message.content), Math.max(0, Math.min(remaining, 30_000)));
     remaining -= content.length;
     return { role: message.role, content };
   });
+}
+
+function sanitizeMessageContent(content: unknown) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.map((part) => {
+    if (!part || typeof part !== 'object') return '';
+    const record = part as Record<string, unknown>;
+    if (record.type === 'text') return stringValue(record.text) || '';
+    if (record.type === 'image_url') return '[image]';
+    return '';
+  }).filter(Boolean).join('\n');
 }
 
 function compact(properties: Record<string, unknown>) {

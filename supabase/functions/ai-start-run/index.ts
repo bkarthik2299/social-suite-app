@@ -1758,7 +1758,7 @@ async function loadBrandKnowledge(
   if (guideId) {
     const { data } = await supabase
       .from('brand_guides')
-      .select('id,brand_name,website_url,industry,elevator_pitch,target_audience,personality,writing_dos,writing_donts,preferred_terms,avoided_terms,sample_copy,content_pillars,photography_style,illustration_style,iconography_rules,social_rules,ad_rules,custom_sections,updated_at')
+      .select('id,brand_name,website_url,industry,elevator_pitch,target_audience,personality,writing_dos,writing_donts,preferred_terms,avoided_terms,sample_copy,content_pillars,photography_style,illustration_style,iconography_rules,layout_composition,social_rules,ad_rules,custom_sections,updated_at')
       .eq('id', guideId)
       .maybeSingle();
     guide = data as (BrandGuideSnapshot & { id?: string }) | null;

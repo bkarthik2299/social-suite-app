@@ -160,6 +160,7 @@ type ResearchExtraction = {
   photography_style?: string;
   illustration_style?: string;
   iconography_rules?: string;
+  layout_composition?: string;
   social_rules?: string;
   ad_rules?: string;
   research_summary?: string;
@@ -1747,6 +1748,10 @@ const compactGuideForModel = (guide: Record<string, unknown>) => ({
   avoided_terms: guide.avoided_terms,
   sample_copy: guide.sample_copy,
   content_pillars: guide.content_pillars,
+  photography_style: guide.photography_style,
+  illustration_style: guide.illustration_style,
+  iconography_rules: guide.iconography_rules,
+  layout_composition: guide.layout_composition,
 });
 
 const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown>, brandName: string, websiteUrl: string, pages: ScrapedPage[]) => {
@@ -1765,6 +1770,7 @@ const toUpdates = (extraction: ResearchExtraction, guide: Record<string, unknown
     ['photography_style', 1200],
     ['illustration_style', 1200],
     ['iconography_rules', 1200],
+    ['layout_composition', 1400],
     ['social_rules', 1200],
     ['ad_rules', 1200],
   ];
@@ -2034,6 +2040,7 @@ Deno.serve(async (req) => {
                 photography_style: 'string',
                 illustration_style: 'string',
                 iconography_rules: 'string',
+                layout_composition: 'string',
                 social_rules: 'string',
                 ad_rules: 'string',
                 research_summary: 'string',

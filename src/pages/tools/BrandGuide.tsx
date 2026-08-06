@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
     BadgeInfo,
@@ -19,6 +19,7 @@ import {
     Sparkles,
     Trash2,
     Type,
+    Upload,
 } from 'lucide-react';
 
 import { AppLayout } from '@/components/layout/AppLayout';
@@ -30,7 +31,6 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import {
     Dialog,
     DialogContent,
@@ -61,7 +61,7 @@ import {
     useBrandGuide,
     useProjects,
 } from '@/hooks/useDatabase';
-import { useBrandKnowledge, useBrandResearch } from '@/hooks/useAI';
+import { useBrandKnowledge, useBrandResearch, useBrandVisualDirectionAnalysis, VisualDirectionAnalysis } from '@/hooks/useAI';
 import { cn } from '@/lib/utils';
 import { useLocation, useNavigate } from 'react-router-dom';
 
@@ -87,6 +87,8 @@ type DeleteConfirm = {
     action: () => void;
 };
 
+type VisualDirectionDraft = VisualDirectionAnalysis['fields'];
+
 const sections = [
     { id: 'identity', label: 'Brand Identity', icon: BadgeInfo },
     { id: 'knowledge', label: 'Knowledge Base', icon: FileText },
@@ -95,12 +97,16 @@ const sections = [
     { id: 'colors', label: 'Colors', icon: Palette },
     { id: 'typography', label: 'Typography', icon: Type },
     { id: 'voice', label: 'Voice & Tone', icon: Mic2 },
+    { id: 'visual', label: 'Visual Direction', icon: ImageIcon },
 ];
 
 const colorRoles: BrandColor['role'][] = ['primary', 'secondary', 'accent', 'neutral', 'background'];
 const fontCategories: BrandFont['category'][] = ['heading', 'body', 'accent', 'code'];
 const logoVariants: BrandLogo['variant'][] = ['primary', 'secondary', 'icon', 'monochrome', 'reversed'];
 const logoFormats: NonNullable<BrandLogo['format']>[] = ['svg', 'png', 'jpg', 'webp'];
+const minAnalysisImages = 3;
+const recommendedAnalysisImages = 5;
+const maxMoodImages = 15;
 
 const socialPlatforms = [
     { id: 'instagram', label: 'Instagram', placeholder: 'instagram.com/brand' },
@@ -147,13 +153,6 @@ const emptyLogoForm: Omit<BrandLogo, 'id' | 'created_at'> = {
     file_url: '',
     format: 'svg',
     dimensions: '',
-    sort_order: 0,
-};
-
-const emptyMoodImageForm: Omit<BrandMoodImage, 'id' | 'created_at'> = {
-    guide_id: '',
-    image_url: '',
-    caption: '',
     sort_order: 0,
 };
 
@@ -210,11 +209,14 @@ export default function BrandGuidePage() {
 
     const [draft, setDraft] = useState<Partial<BrandGuide>>({});
     const [knowledgeDraft, setKnowledgeDraft] = useState('');
-    const [moodOpen, setMoodOpen] = useState(false);
+    const [visualAnalysisOpen, setVisualAnalysisOpen] = useState(false);
+    const [visualAnalysisDraft, setVisualAnalysisDraft] = useState<VisualDirectionDraft | null>(null);
+    const [visualPatternNotes, setVisualPatternNotes] = useState<VisualDirectionAnalysis['pattern_notes'] | null>(null);
+    const [hasVisualAnalysis, setHasVisualAnalysis] = useState(false);
 
     const [colorForm, setColorForm] = useState(emptyColorForm);
     const [logoForm, setLogoForm] = useState(emptyLogoForm);
-    const [moodImageForm, setMoodImageForm] = useState(emptyMoodImageForm);
+    const moodUploadInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
         if (selectedGuideId && guides.length > 0 && !guides.some((item) => item.id === selectedGuideId)) {
@@ -247,6 +249,7 @@ export default function BrandGuidePage() {
         updateMarkdown,
     } = useBrandKnowledge(guideId);
     const researchWebsite = useBrandResearch(guideId);
+    const analyseVisualDirection = useBrandVisualDirectionAnalysis(guideId);
 
     useEffect(() => {
         setKnowledgeDraft(brandKnowledgeDocument?.markdown || '');
@@ -369,6 +372,7 @@ export default function BrandGuidePage() {
                         photography_style: null,
                         illustration_style: null,
                         iconography_rules: null,
+                        layout_composition: null,
                         social_rules: null,
                         ad_rules: null,
                         custom_sections: [],
@@ -490,24 +494,78 @@ export default function BrandGuidePage() {
         });
     };
 
-    const openMoodSheet = () => {
-        setMoodImageForm({ ...emptyMoodImageForm, guide_id: guideId, sort_order: moodImages.length });
-        setMoodOpen(true);
+    const uploadMoodImages = async (files: FileList | File[] | null) => {
+        if (!guideId || !files) return;
+        const imageFiles = Array.from(files).filter((file) => file.type.startsWith('image/'));
+        if (!imageFiles.length) return;
+        const availableSlots = Math.max(0, maxMoodImages - moodImages.length);
+        if (!availableSlots) {
+            toast({ title: 'Mood board is full', description: `Remove an image before adding more. The maximum is ${maxMoodImages}.`, variant: 'destructive' });
+            return;
+        }
+        const filesToUpload = imageFiles.slice(0, availableSlots);
+        try {
+            await Promise.all(filesToUpload.map(async (file, index) => {
+                const fileUrl = await imageFileToMoodDataUrl(file);
+                return addMoodImage.mutateAsync({
+                    guide_id: guideId,
+                    image_url: fileUrl,
+                    caption: null,
+                    sort_order: moodImages.length + index,
+                });
+            }));
+            if (imageFiles.length > availableSlots) {
+                toast({ title: 'Mood images added', description: `Added ${filesToUpload.length}. The mood board allows up to ${maxMoodImages} images.` });
+            } else {
+                toast({ title: 'Mood images added', description: `${filesToUpload.length} reference ${filesToUpload.length === 1 ? 'image was' : 'images were'} added.` });
+            }
+        } catch (error) {
+            toast({ title: 'Could not upload mood images', description: errorMessage(error), variant: 'destructive' });
+        }
     };
 
-    const submitMoodImage = async () => {
-        if (!guideId || !moodImageForm.image_url.trim()) return;
+    const replaceMoodImage = async (imageId: string, file: File | null) => {
+        if (!file || !file.type.startsWith('image/')) return;
         try {
-            await addMoodImage.mutateAsync({
-                ...moodImageForm,
-                guide_id: guideId,
-                image_url: moodImageForm.image_url.trim(),
-                caption: moodImageForm.caption || null,
-            });
-            setMoodOpen(false);
-            toast({ title: 'Mood image added', description: 'The mood board has a new reference.' });
+            const fileUrl = await imageFileToMoodDataUrl(file);
+            await updateMoodImage.mutateAsync({ id: imageId, updates: { image_url: fileUrl } });
+            toast({ title: 'Mood image replaced', description: 'The reference image was updated.' });
         } catch (error) {
-            toast({ title: 'Could not add mood image', description: errorMessage(error), variant: 'destructive' });
+            toast({ title: 'Could not replace mood image', description: errorMessage(error), variant: 'destructive' });
+        }
+    };
+
+    const runVisualAnalysis = async () => {
+        if (!guideId || moodImages.length < minAnalysisImages) return;
+        try {
+            const result = await analyseVisualDirection.mutateAsync();
+            setVisualAnalysisDraft(result.analysis.fields);
+            setVisualPatternNotes(result.analysis.pattern_notes);
+            setHasVisualAnalysis(true);
+            setVisualAnalysisOpen(true);
+            toast({ title: 'Visual direction analysed', description: `Drafted visual rules from ${result.imageCount} moodboard images.` });
+        } catch (error) {
+            toast({ title: 'Could not analyse visual direction', description: errorMessage(error), variant: 'destructive' });
+        }
+    };
+
+    const applyVisualAnalysis = async () => {
+        if (!guide || !visualAnalysisDraft) return;
+        try {
+            await updateGuide.mutateAsync({
+                id: guide.id,
+                updates: {
+                    photography_style: visualAnalysisDraft.photography_style,
+                    illustration_style: visualAnalysisDraft.illustration_style,
+                    iconography_rules: visualAnalysisDraft.iconography_rules,
+                    layout_composition: visualAnalysisDraft.layout_composition,
+                },
+            });
+            setDraft((current) => ({ ...current, ...visualAnalysisDraft }));
+            setVisualAnalysisOpen(false);
+            toast({ title: 'Visual direction applied', description: 'The four editable fields were updated.' });
+        } catch (error) {
+            toast({ title: 'Could not apply visual direction', description: errorMessage(error), variant: 'destructive' });
         }
     };
 
@@ -947,7 +1005,7 @@ export default function BrandGuidePage() {
                             </AccordionItem>
 
                             <AccordionItem value="voice" id="voice" className="tool-surface scroll-mt-24 rounded-xl px-6">
-                                <SectionTrigger icon={Mic2} title="Voice and Tone" description="Capture how the brand should sound and the visual mood it should keep." />
+                                <SectionTrigger icon={Mic2} title="Voice and Tone" description="Capture how the brand should sound." />
                                 <AccordionContent className="space-y-7 pb-6 pt-2">
                                     <ToneSpectrumEditor
                                         value={safeToneSpectrum(draft.tone_spectrum)}
@@ -961,35 +1019,79 @@ export default function BrandGuidePage() {
                                             <TextArrayEditor label="Sample Captions / Headlines" values={safeStringArrayFromJson(draft.sample_copy)} disabled={false} placeholder="Add examples that already sound right for this brand." onChange={(values) => saveGuideValue('sample_copy', values)} />
                                         </div>
                                     </div>
+                                </AccordionContent>
+                            </AccordionItem>
 
-                                    <div className="space-y-5 rounded-xl bg-slate-50/70 p-5">
-                                        <div>
-                                            <h3 className="text-sm font-semibold text-slate-900">Visual Direction</h3>
-                                            <p className="text-sm text-slate-500">The look and feel for images, graphics, icons, and references.</p>
-                                        </div>
-                                        <div className="grid gap-5 lg:grid-cols-3">
-                                            <GuideTextField label="Photo Style" value={stringValue(draft.photography_style)} disabled={false} textarea placeholder="Bright and natural, studio product shots, candid people, bold close-ups..." onChange={(value) => updateDraft('photography_style', value)} onBlur={() => commitGuideField('photography_style')} />
-                                            <GuideTextField label="Graphic / Illustration Style" value={stringValue(draft.illustration_style)} disabled={false} textarea placeholder="Minimal line art, soft gradients, editorial collage, no illustrations..." onChange={(value) => updateDraft('illustration_style', value)} onBlur={() => commitGuideField('illustration_style')} />
-                                            <GuideTextField label="Icon Style" value={stringValue(draft.iconography_rules)} disabled={false} textarea placeholder="Outline icons, simple filled icons, rounded corners, avoid detailed icons..." onChange={(value) => updateDraft('iconography_rules', value)} onBlur={() => commitGuideField('iconography_rules')} />
-                                        </div>
-                                        <SectionActions title="Mood Board" actionLabel="Add Image" disabled={moodImages.length >= 12} onAction={openMoodSheet} />
-                                        <div className="columns-1 gap-4 sm:columns-2 lg:columns-3">
-                                            {moodImages.length === 0 ? (
-                                                <MutedState text="No mood board images yet." />
-                                            ) : moodImages.map((image) => (
-                                                <MoodImageCard
-                                                    key={image.id}
-                                                    image={image}
-                                                    disabled={false}
-                                                    onUpdate={(updates) => updateMoodImage.mutate({ id: image.id, updates })}
-                                                    onDelete={() => setDeleteConfirm({
-                                                        title: 'Delete mood image?',
-                                                        description: 'This removes the reference image from the mood board.',
-                                                        action: () => deleteMoodImage.mutate(image.id),
-                                                    })}
+                            <AccordionItem value="visual" id="visual" className="tool-surface scroll-mt-24 rounded-xl px-6">
+                                <SectionTrigger icon={ImageIcon} title="Visual Direction" description="The look and feel for images, graphics, icons, and references." />
+                                <AccordionContent className="space-y-7 pb-6 pt-2">
+                                    <div className="grid gap-5 lg:grid-cols-2">
+                                        <GuideTextField label="Photo Style" value={stringValue(draft.photography_style)} disabled={false} textarea placeholder="Bright and natural, studio product shots, candid people, bold close-ups..." onChange={(value) => updateDraft('photography_style', value)} onBlur={() => commitGuideField('photography_style')} />
+                                        <GuideTextField label="Graphic / Illustration Style" value={stringValue(draft.illustration_style)} disabled={false} textarea placeholder="Minimal line art, soft gradients, editorial collage, no illustrations..." onChange={(value) => updateDraft('illustration_style', value)} onBlur={() => commitGuideField('illustration_style')} />
+                                        <GuideTextField label="Icon Style" value={stringValue(draft.iconography_rules)} disabled={false} textarea placeholder="Outline icons, simple filled icons, rounded corners, avoid detailed icons..." onChange={(value) => updateDraft('iconography_rules', value)} onBlur={() => commitGuideField('iconography_rules')} />
+                                        <GuideTextField label="Layout & Composition" value={stringValue(draft.layout_composition)} disabled={false} textarea placeholder="Logo placement, footer bars, text hierarchy, CTA zones, overlays, frames, contact details..." onChange={(value) => updateDraft('layout_composition', value)} onBlur={() => commitGuideField('layout_composition')} />
+                                    </div>
+                                    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                            <div className="min-w-0">
+                                                <h3 className="text-sm font-semibold text-slate-800">Mood Board</h3>
+                                                <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500">
+                                                    Upload 3-5 posts that define the look. Analysis unlocks at {recommendedAnalysisImages}; max {maxMoodImages}.
+                                                </p>
+                                            </div>
+                                            <div className="flex shrink-0 items-center gap-2">
+                                                <input
+                                                    ref={moodUploadInputRef}
+                                                    type="file"
+                                                    accept="image/*"
+                                                    multiple
+                                                    className="hidden"
+                                                    onChange={(event) => {
+                                                        void uploadMoodImages(event.target.files);
+                                                        event.target.value = '';
+                                                    }}
                                                 />
-                                            ))}
+                                                <Button
+                                                    variant="outline"
+                                                    className="h-10 gap-2 rounded-xl bg-white px-3"
+                                                    disabled={moodImages.length >= maxMoodImages || addMoodImage.isPending}
+                                                    onClick={() => moodUploadInputRef.current?.click()}
+                                                >
+                                                    <Upload className="h-4 w-4" />
+                                                    Upload Images
+                                                </Button>
+                                                <Button
+                                                    className="h-10 gap-2 rounded-xl bg-primary px-3 text-white hover:bg-primary/90"
+                                                    disabled={moodImages.length < recommendedAnalysisImages || analyseVisualDirection.isPending}
+                                                    onClick={runVisualAnalysis}
+                                                >
+                                                    {analyseVisualDirection.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                                    {analyseVisualDirection.isPending ? 'Analysing...' : hasVisualAnalysis ? 'Re-analyse' : 'Analyse Images'}
+                                                </Button>
+                                            </div>
                                         </div>
+                                        {moodImages.length > 0 && moodImages.length < recommendedAnalysisImages && (
+                                            <p className="mt-3 text-xs font-medium text-slate-500">
+                                                {recommendedAnalysisImages - moodImages.length} more {recommendedAnalysisImages - moodImages.length === 1 ? 'image' : 'images'} needed to analyse. The AI works best with recurring patterns across multiple posts.
+                                            </p>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5">
+                                        {moodImages.length === 0 ? (
+                                            <MutedState text="No mood board images yet." />
+                                        ) : moodImages.map((image) => (
+                                            <MoodImageCard
+                                                key={image.id}
+                                                image={image}
+                                                disabled={false}
+                                                onReplace={(file) => replaceMoodImage(image.id, file)}
+                                                onDelete={() => setDeleteConfirm({
+                                                    title: 'Delete mood image?',
+                                                    description: 'This removes the reference image from the mood board.',
+                                                    action: () => deleteMoodImage.mutate(image.id),
+                                                })}
+                                            />
+                                        ))}
                                     </div>
                                 </AccordionContent>
                             </AccordionItem>
@@ -1037,22 +1139,29 @@ export default function BrandGuidePage() {
                 </DialogContent>
             </Dialog>
 
-            <Sheet open={moodOpen} onOpenChange={setMoodOpen}>
-                <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-                    <SheetHeader>
-                        <SheetTitle>Add Mood Board Image</SheetTitle>
-                        <SheetDescription>Add a reference image for the brand's visual style.</SheetDescription>
-                    </SheetHeader>
-                    <div className="mt-6 space-y-5">
-                        <GuideTextField label="Image Link" value={moodImageForm.image_url} placeholder="Paste an image URL" onChange={(value) => setMoodImageForm((form) => ({ ...form, image_url: value }))} />
-                        <GuideTextField label="Why this image fits" value={stringValue(moodImageForm.caption)} placeholder="Bright product shot, warm lifestyle feel, bold editorial angle..." onChange={(value) => setMoodImageForm((form) => ({ ...form, caption: value }))} />
-                        <Button className="w-full gap-2 bg-primary text-white hover:bg-primary/90" onClick={submitMoodImage}>
-                            <Plus className="h-4 w-4" />
-                            Add Image
+            <Dialog open={visualAnalysisOpen} onOpenChange={setVisualAnalysisOpen}>
+                <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-4xl">
+                    <DialogHeader>
+                        <DialogTitle>Review Visual Direction Draft</DialogTitle>
+                        <DialogDescription>
+                            Edit the AI draft before applying it to the Brand Guide. Existing fields are not changed until you click Apply.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {visualAnalysisDraft && (
+                        <VisualDirectionDraftEditor
+                            value={visualAnalysisDraft}
+                            patternNotes={visualPatternNotes}
+                            onChange={setVisualAnalysisDraft}
+                        />
+                    )}
+                    <DialogFooter>
+                        <Button variant="outline" onClick={() => setVisualAnalysisOpen(false)}>Cancel</Button>
+                        <Button className="bg-primary text-white hover:bg-primary/90" onClick={applyVisualAnalysis} disabled={updateGuide.isPending || !visualAnalysisDraft}>
+                            {updateGuide.isPending ? 'Applying...' : 'Apply'}
                         </Button>
-                    </div>
-                </SheetContent>
-            </Sheet>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
             <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
                 <AlertDialogContent>
@@ -1094,18 +1203,6 @@ function SectionTrigger({ icon: Icon, title, description }: { icon: typeof Palet
     );
 }
 
-function SectionActions({ title, actionLabel, disabled, onAction }: { title: string; actionLabel: string; disabled?: boolean; onAction: () => void }) {
-    return (
-        <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-            <Button variant="outline" size="sm" className="gap-2 rounded-xl bg-white px-3" disabled={disabled} onClick={onAction}>
-                <Plus className="h-4 w-4" />
-                {actionLabel}
-            </Button>
-        </div>
-    );
-}
-
 function GuideTextField({
     label,
     value,
@@ -1144,6 +1241,53 @@ function GuideTextField({
                     onBlur={onBlur}
                     className="h-12 rounded-xl bg-white px-4 disabled:opacity-100"
                 />
+            )}
+        </div>
+    );
+}
+
+function VisualDirectionDraftEditor({
+    value,
+    patternNotes,
+    onChange,
+}: {
+    value: VisualDirectionDraft;
+    patternNotes: VisualDirectionAnalysis['pattern_notes'] | null;
+    onChange: (value: VisualDirectionDraft) => void;
+}) {
+    const update = (field: keyof VisualDirectionDraft, nextValue: string) => {
+        onChange({ ...value, [field]: nextValue });
+    };
+
+    return (
+        <div className="space-y-5 py-2">
+            <div className="grid gap-4 md:grid-cols-2">
+                <GuideTextField label="Photo Style" value={value.photography_style} textarea onChange={(nextValue) => update('photography_style', nextValue)} />
+                <GuideTextField label="Graphic / Illustration Style" value={value.illustration_style} textarea onChange={(nextValue) => update('illustration_style', nextValue)} />
+                <GuideTextField label="Icon Style" value={value.iconography_rules} textarea onChange={(nextValue) => update('iconography_rules', nextValue)} />
+                <GuideTextField label="Layout & Composition" value={value.layout_composition} textarea onChange={(nextValue) => update('layout_composition', nextValue)} />
+            </div>
+            {patternNotes && (
+                <div className="grid gap-3 rounded-xl bg-slate-50/80 p-4 md:grid-cols-3">
+                    <PatternNoteList title="Consistent Patterns" values={patternNotes.consistent_patterns} />
+                    <PatternNoteList title="Recurring Patterns" values={patternNotes.recurring_patterns} />
+                    <PatternNoteList title="One-off Treatments" values={patternNotes.one_off_treatments} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+function PatternNoteList({ title, values }: { title: string; values: string[] }) {
+    return (
+        <div className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h3>
+            {values.length ? (
+                <ul className="space-y-1.5 text-sm leading-5 text-slate-600">
+                    {values.map((value) => <li key={value}>- {value}</li>)}
+                </ul>
+            ) : (
+                <p className="text-sm text-slate-400">No clear examples found.</p>
             )}
         </div>
     );
@@ -1785,28 +1929,54 @@ function LogoUsageRulesTextarea({
     );
 }
 
-function MoodImageCard({ image, disabled, onUpdate, onDelete }: { image: BrandMoodImage; disabled?: boolean; onUpdate: (updates: Partial<BrandMoodImage>) => void; onDelete: () => void }) {
-    const [caption, setCaption] = useState(image.caption || '');
-
-    useEffect(() => {
-        setCaption(image.caption || '');
-    }, [image.id, image.caption]);
+function MoodImageCard({
+    image,
+    disabled,
+    onReplace,
+    onDelete,
+}: {
+    image: BrandMoodImage;
+    disabled?: boolean;
+    onReplace: (file: File | null) => void;
+    onDelete: () => void;
+}) {
+    const replaceInputRef = useRef<HTMLInputElement | null>(null);
 
     return (
-        <div className="tool-surface tool-surface-interactive group relative mb-4 break-inside-avoid overflow-hidden rounded-xl">
-            <img src={image.image_url} alt={caption || 'Mood board reference'} className="w-full bg-slate-100 object-cover" />
-            <div className="p-4">
-                {disabled ? (
-                    <p className="text-sm font-medium text-slate-700">{caption}</p>
-                ) : (
-                    <div className="flex gap-2">
-                        <Input value={caption} placeholder="Caption" className="h-9 text-sm" onChange={(event) => setCaption(event.target.value)} onBlur={() => onUpdate({ caption })} />
-                        <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" onClick={onDelete}>
-                            <Trash2 className="h-4 w-4" />
-                        </Button>
-                    </div>
-                )}
+        <div className="tool-surface tool-surface-interactive group relative overflow-hidden rounded-lg">
+            <div className="aspect-square bg-slate-100">
+                <img src={image.image_url} alt="Mood board reference" className="h-full w-full object-cover" />
             </div>
+            {!disabled && (
+                <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                    <input
+                        ref={replaceInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                            onReplace(event.target.files?.[0] || null);
+                            event.target.value = '';
+                        }}
+                    />
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button aria-label="Replace mood image" variant="secondary" size="icon" className="h-8 w-8 rounded-lg bg-white/95 text-slate-700 shadow-sm hover:bg-white" onClick={() => replaceInputRef.current?.click()}>
+                                <Upload className="h-4 w-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Replace image</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <Button aria-label="Delete mood image" variant="secondary" size="icon" className="h-8 w-8 rounded-lg bg-white/95 text-slate-500 shadow-sm hover:bg-red-50 hover:text-red-600" onClick={onDelete}>
+                                <Trash2 className="h-4 w-4" />
+                            </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Remove image</TooltipContent>
+                    </Tooltip>
+                </div>
+            )}
         </div>
     );
 }
@@ -2043,6 +2213,36 @@ function fileToDataUrl(file: File): Promise<string> {
         reader.onerror = () => reject(reader.error || new Error('Could not read file.'));
         reader.readAsDataURL(file);
     });
+}
+
+async function imageFileToMoodDataUrl(file: File): Promise<string> {
+    if (file.type === 'image/svg+xml' || file.type === 'image/gif') return fileToDataUrl(file);
+    const sourceUrl = URL.createObjectURL(file);
+    try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const element = new Image();
+            element.onload = () => resolve(element);
+            element.onerror = () => reject(new Error('Could not load image.'));
+            element.src = sourceUrl;
+        });
+        const maxDimension = 1400;
+        const scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+        const width = Math.max(1, Math.round(image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        if (!context) return fileToDataUrl(file);
+        context.fillStyle = '#ffffff';
+        context.fillRect(0, 0, width, height);
+        context.drawImage(image, 0, 0, width, height);
+        return canvas.toDataURL('image/jpeg', 0.84);
+    } catch {
+        return fileToDataUrl(file);
+    } finally {
+        URL.revokeObjectURL(sourceUrl);
+    }
 }
 
 function linesToArray(value: string): string[] {
