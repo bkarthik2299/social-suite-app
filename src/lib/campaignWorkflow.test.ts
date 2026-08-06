@@ -236,6 +236,36 @@ describe('campaign workflow helpers', () => {
     expect(campaignPlatformConsistencyFindings(input, 'Create Twitter posts and Twitter ads.')).toEqual([]);
   });
 
+  it('repairs generated platform labels even when the brief only names general platforms', () => {
+    const input = pack();
+    input.socialPosts[0] = {
+      ...input.socialPosts[0],
+      platforms: ['linkedin'],
+      creativeBrief: 'Design an Instagram carousel for the home-loan journey.',
+    };
+    input.socialAds[0] = {
+      ...input.socialAds[0],
+      platform: 'facebook',
+      name: 'Instagram home-for-all ad',
+      topic: 'Instagram lead campaign',
+      visualGuide: 'Use an Instagram feed composition.',
+    };
+
+    const aligned = alignCampaignPackToRequestedPlatforms(
+      input,
+      'Platforms: Instagram, Facebook, and LinkedIn. CTA: Drive to the website or phone number.',
+    );
+
+    expect(aligned.socialPosts[0].creativeBrief).toBe('Design a LinkedIn carousel for the home-loan journey.');
+    expect(aligned.socialAds[0]).toEqual(expect.objectContaining({
+      platform: 'facebook',
+      name: 'Facebook home-for-all ad',
+      topic: 'Facebook lead campaign',
+      visualGuide: 'Use a Facebook feed composition.',
+    }));
+    expect(campaignPlatformConsistencyFindings(aligned, 'Platforms: Instagram, Facebook, and LinkedIn.')).toEqual([]);
+  });
+
   it('keeps a useful creative direction when the strategist model times out', () => {
     const planner = fallbackPlannerOutput(
       'Target independent dental practice owners. The goal is to make practice owners book a discovery call. Create 4 social posts, 2 Google ads, 2 paid social ads, 1 blog and a 7-day content calendar. The rough line is “Your waiting room starts online”.',

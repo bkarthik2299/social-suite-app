@@ -1,6 +1,7 @@
 import { normalizeCampaignPack, type CampaignPack } from './campaign_pack.ts';
 import type { BrandInstructions, ContentPatch, InternalBrief, QaFinding } from './agent_contracts.ts';
 import { extractRequestedChannelConstraints, type DeliverableContract } from './deliverable_contract.ts';
+import { formatPublishableCopy } from './publishable_copy.ts';
 
 type CalendarType = CampaignPack['calendar'][number]['type'];
 export type GeneratedCampaignSectionKey = 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines';
@@ -75,24 +76,28 @@ export function campaignCalendarCount(pack: CampaignPack, contract: DeliverableC
 
 export function alignCampaignPackToRequestedPlatforms(pack: CampaignPack, prompt: string): CampaignPack {
   const requested = extractRequestedChannelConstraints(prompt);
-  if (!requested.organicSocial.length && !requested.paidSocial.length) return pack;
 
   return normalizeCampaignPack({
     ...pack,
     socialPosts: pack.socialPosts.map((post, index) => {
-      if (!requested.organicSocial.length) return post;
-      const matchingPlatforms = post.platforms.filter((platform) => requested.organicSocial.includes(platform));
+      const matchingPlatforms = requested.organicSocial.length
+        ? post.platforms.filter((platform) => requested.organicSocial.includes(platform))
+        : post.platforms;
       const platforms = matchingPlatforms.length
         ? matchingPlatforms
-        : [requested.organicSocial[index % requested.organicSocial.length]];
+        : requested.organicSocial.length
+          ? [requested.organicSocial[index % requested.organicSocial.length]]
+          : post.platforms;
+      const primaryPlatform = platforms[0];
+      if (!primaryPlatform) return post;
       return {
         ...post,
         platforms,
-        name: alignOrganicChannelText(post.name, platforms[0]) || post.name,
-        topic: alignOrganicTopic(post.topic, platforms[0]),
-        caption: alignOrganicChannelText(post.caption, platforms[0]) || post.caption,
-        creativeBrief: alignOrganicChannelText(post.creativeBrief, platforms[0]),
-        visualGuide: alignOrganicChannelText(post.visualGuide, platforms[0]),
+        name: alignOrganicChannelText(post.name, primaryPlatform) || post.name,
+        topic: alignOrganicTopic(post.topic, primaryPlatform),
+        caption: alignOrganicChannelText(post.caption, primaryPlatform) || post.caption,
+        creativeBrief: alignOrganicChannelText(post.creativeBrief, primaryPlatform),
+        visualGuide: alignOrganicChannelText(post.visualGuide, primaryPlatform),
       };
     }),
     socialAds: pack.socialAds.map((ad, index) => {
@@ -115,8 +120,8 @@ export function alignCampaignPackToRequestedPlatforms(pack: CampaignPack, prompt
 
 function alignOrganicChannelText(value: string | undefined, platform: string) {
   if (!value) return value;
-  const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
-  return value
+  const label = socialPlatformLabel(platform);
+  return repairPlatformArticle(value
     .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+organic\s+posts?\b/gi, `${label} organic post`)
     .replace(/\b(?:responsive\s+)?(?:google\s+)?search[- ]style\s+ads?\b/gi, `${label} organic post`)
     .replace(/\b(?:responsive\s+)?(?:google\s+)?search\s+ads?\b/gi, `${label} post`)
@@ -126,13 +131,13 @@ function alignOrganicChannelText(value: string | undefined, platform: string) {
     .replace(/\b(?:facebook|instagram|insta|linkedin|twitter|x)\s+posts?\b/gi, `${label} post`)
     .replace(/\bsearch[- ]focused\b/gi, `${label}-focused`)
     .replace(/\b(?:facebook|instagram|insta|linkedin|twitter)\b/gi, label)
-    .replace(/\bX\b(?=\s+(?:post|thread|organic|feed|content|first|friendly)\b)/g, label);
+    .replace(/\bX\b(?=\s+(?:post|thread|organic|feed|content|first|friendly)\b)/g, label));
 }
 
 function alignPaidSocialChannelText(value: string | undefined, platform: string) {
   if (!value) return value;
-  const label = platform === 'x' ? 'X' : platform.charAt(0).toUpperCase() + platform.slice(1);
-  return value
+  const label = socialPlatformLabel(platform);
+  return repairPlatformArticle(value
     .replace(
       /\bn\/?a\s+for\s+(?:a\s+)?(?:google\s+)?search\s+ads?\s*;?\s*(?:if\s+used\s+in\s+asset\s+extensions,?\s*)?/gi,
       `For the ${label} feed, `,
@@ -143,7 +148,20 @@ function alignPaidSocialChannelText(value: string | undefined, platform: string)
     .replace(/\b(?:facebook|instagram|insta|linkedin|twitter)\b/gi, label)
     .replace(/\bX\b(?=\s+(?:post|thread|organic|feed|content|first|friendly|ad)\b)/g, label)
     .replace(/\s{2,}/g, ' ')
-    .trim();
+    .trim());
+}
+
+function socialPlatformLabel(platform: string) {
+  const normalized = normalizeSocialPlatformAlias(platform);
+  if (normalized === 'x') return 'X';
+  if (normalized === 'linkedin') return 'LinkedIn';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function repairPlatformArticle(value: string) {
+  return value
+    .replace(/\ban (?=(?:Facebook|LinkedIn)\b)/gi, 'a ')
+    .replace(/\ba (?=(?:Instagram|X)\b)/gi, 'an ');
 }
 
 function alignOrganicTopic(value: string, platform: string) {
@@ -362,7 +380,7 @@ export function repairCampaignPack(
 
   draft.socialPosts = draft.socialPosts.map((item, index) => ({
     ...item,
-    caption: repair(item.caption, `Social post ${index + 1}`) || item.caption,
+    caption: formatPublishableCopy(repair(item.caption, `Social post ${index + 1}`) || item.caption),
     creativeBrief: repair(item.creativeBrief, `Social post ${index + 1} creative brief`),
   }));
   const explicitKeywords = cleanKeywords(brief.keywordTargets || []);
@@ -407,7 +425,7 @@ export function repairCampaignPack(
     if (item.cta !== cta) notes.push(`Paid social ad ${index + 1}: aligned the button with the requested action.`);
     return {
       ...item,
-      primaryText: repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText,
+      primaryText: formatPublishableCopy(repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText),
       headline: repair(item.headline, `Paid social ad ${index + 1} headline`) || item.headline,
       description: repair(item.description, `Paid social ad ${index + 1} description`),
       cta,

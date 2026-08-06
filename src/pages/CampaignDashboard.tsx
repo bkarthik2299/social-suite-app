@@ -73,6 +73,7 @@ import {
     type EditableCampaignMediaAsset,
 } from '@/lib/campaignMedia';
 import type { CampaignMediaAsset, CampaignMediaFormat } from '@/types';
+import { formatPublishableCopy } from '../../supabase/functions/_shared/publishable_copy';
 
 // --- Platform Constants ---
 const PLATFORM_SPECS = {
@@ -807,10 +808,11 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
         ? post.mediaAssets
         : post.image ? [{ id: 'legacy-preview-media', url: post.image, kind: 'image' as const }] : [];
     const mediaFormat = normalizeCampaignMediaFormat(post.mediaFormat, mediaAssets.length);
+    const formattedCaption = formatPublishableCopy(post.caption || '');
 
     useEffect(() => {
         setCaptionExpanded(false);
-    }, [platform, post.caption]);
+    }, [platform, formattedCaption]);
 
     const displayHashtags = post.hashtags?.length
         ? post.hashtags.map(tag => `${tag.startsWith('#') ? '' : '#'}${tag}`).join(' ')
@@ -873,7 +875,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
 
     const RenderText = ({ className }: { className?: string }) => (
         <div className={cn("text-[15px] text-gray-900 whitespace-pre-wrap leading-relaxed", className)}>
-            {getTruncatedCaption(post.caption || "")}
+            {getTruncatedCaption(formattedCaption)}
             {displayHashtags && platform !== 'twitter' && (
                 <span className={cn("block mt-1 font-medium",
                     platform === 'linkedin' ? "text-[#0A66C2]" : "text-[#00376B]"
@@ -1069,7 +1071,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                                 {platform === 'instagram' ? (
                                     <div className={cn(
                                         "bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-300 overflow-hidden shrink-0",
-                                        device === 'mobile' ? "w-full" : "w-full max-w-[400px]"
+                                        device === 'mobile' ? "w-full" : "w-full max-w-[480px]"
                                     )}>
                                         <div className="p-3"><RenderHeader /></div>
                                         <RenderMedia />
@@ -1077,7 +1079,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                                         <div className="px-4 pb-4">
                                             <div className="text-sm">
                                                 <span className="font-bold mr-2 text-gray-900">{displayAccountName}</span>
-                                                <span className="text-gray-900">{getTruncatedCaption(post.caption || "")}</span>
+                                                <span className="text-gray-900 whitespace-pre-wrap">{getTruncatedCaption(formattedCaption)}</span>
                                             </div>
                                             {displayHashtags && <div className="text-blue-900 text-sm mt-1">{displayHashtags}</div>}
                                             <div className="text-xs text-slate-400 mt-2 uppercase">2 HOURS AGO</div>
@@ -1087,7 +1089,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                                     /* STANDARD LAYOUT (Text First) - LinkedIn, Facebook, Twitter */
                                     <div className={cn(
                                         "bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-300 overflow-hidden shrink-0",
-                                        device === 'mobile' ? "w-full" : "w-full max-w-[500px]",
+                                        device === 'mobile' ? "w-full" : "w-full max-w-[600px]",
                                         platform === 'twitter' && "rounded-none border-x-0 sm:rounded-xl sm:border-x"
                                     )}>
                                         <div className="p-4"><RenderHeader /></div>
@@ -1138,7 +1140,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             status: i.status,
             ...i.payload,
             creativeBrief: payloadString(i.payload, ['creativeBrief', 'creative_brief'], ''),
-            caption: socialCaptionFromPayload(i.payload, i.name || 'Social post draft'),
+            caption: formatPublishableCopy(socialCaptionFromPayload(i.payload, i.name || 'Social post draft')),
             visualGuide: visualGuideFromPayload(i.payload),
             generatedImages: generatedImagesFromPayload(i.payload),
             imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
@@ -1181,7 +1183,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setEditingPost(post);
             setName(post.name || 'New Social Post');
             setVisualGuide(post.visualGuide || post.creativeBrief || '');
-            setCaption(post.caption);
+            setCaption(formatPublishableCopy(post.caption));
             setImage(post.image || '');
             setMediaAssets(post.mediaAssets || []);
             setMediaFormat(normalizeCampaignMediaFormat(post.mediaFormat, post.mediaAssets?.length || 0));
@@ -1530,7 +1532,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
 
             {/* Editor Modal - Refined UI */}
             <Dialog open={isDialogOpen} onOpenChange={handlePostDialogOpenChange}>
-                <DialogContent closeClassName="hidden" className="sm:max-w-[1200px] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
+                <DialogContent closeClassName="hidden" className="w-[96vw] max-w-[1500px] h-[94vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
                     <div className="flex items-center justify-between gap-3 px-4 py-4 bg-white border-b sticky top-0 z-20 shadow-sm sm:px-6">
                         <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                             <div className="hidden bg-blue-100 p-2 rounded-lg sm:block"><Share2 className="w-5 h-5 text-blue-600" /></div>
@@ -1726,8 +1728,8 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                         </ScrollArea>
 
                         {/* Right Column: Preview */}
-                        <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
-                            <div className="p-8 h-full flex items-center justify-center">
+                        <div className="w-[52%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200">
+                            <div className="p-6 h-full flex items-center justify-center">
                                 <SocialPreview post={{ caption, hashtags: [], image, mediaAssets, mediaFormat, imageAspectRatio: selectedAspectRatio, platforms: selectedPlatforms }} accountName={projectName} onImageClick={setLightboxImage} />
                             </div>
                         </div>
@@ -1835,7 +1837,7 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
         if (!domain) domain = 'example.com';
 
         return (
-            <div className="flex items-center gap-1.5 text-xs text-[#202124] mb-2">
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-[#202124] mb-2">
                 {/* Favicon Placeholder */}
                 <div className="w-6 h-6 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center shrink-0">
                     <img
@@ -1845,15 +1847,15 @@ const GoogleAdPreview = ({ ad }: { ad: Partial<GoogleAd> }) => {
                         onError={(e) => { (e.target as HTMLImageElement).style.opacity = '0'; }}
                     />
                 </div>
-                <div className="flex flex-col leading-tight">
+                <div className="flex min-w-0 flex-1 flex-col leading-tight">
                     <span className="font-semibold text-[13px] text-[#202124]">Sponsored</span>
-                    <div className="flex items-center text-[12px] text-[#202124] gap-1">
+                    <div className="min-w-0 truncate whitespace-nowrap text-[12px] text-[#202124]" title={`${domain}${ad.path1 ? `/${ad.path1}` : ''}${ad.path2 ? `/${ad.path2}` : ''}`}>
                         <span>{domain}</span>
                         {ad.path1 && <span className="text-[#5f6368]">/{ad.path1}</span>}
                         {ad.path2 && <span className="text-[#5f6368]">/{ad.path2}</span>}
                     </div>
                 </div>
-                <MoreVertical className="w-4 h-4 text-slate-500 ml-auto" />
+                <MoreVertical className="ml-auto h-4 w-4 shrink-0 text-slate-500" />
             </div>
         );
     };
@@ -2299,7 +2301,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
 
             {/* Google Ads Editor Modal */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-                <DialogContent className="sm:max-w-[1200px] h-[90vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
+                <DialogContent className="w-[96vw] max-w-[1500px] h-[94vh] p-0 flex flex-col gap-0 overflow-hidden bg-slate-50">
                     <div className="flex items-center justify-between px-6 py-4 bg-white border-b sticky top-0 z-20 shadow-sm">
                         <div className="flex items-center gap-4">
                             <div className="bg-blue-100 p-2 rounded-lg"><Search className="w-5 h-5 text-blue-600" /></div>
@@ -2560,7 +2562,7 @@ const GoogleAdsTab = ({ campaignId, autoCreate, targetContentItemId }: { campaig
                         </ScrollArea>
 
                         {/* Preview Column */}
-                        <div className="w-[45%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200 items-center justify-center p-8">
+                        <div className="w-[52%] bg-slate-100 hidden lg:flex flex-col border-l border-slate-200 items-center justify-center p-8">
                             <div className="mb-6 text-center">
                                 <h3 className="font-semibold text-slate-700">Ad Preview</h3>
                                 <p className="text-sm text-slate-500">See how your ad might look on Google Search.</p>
@@ -2593,7 +2595,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             ...i.payload,
             platform: normalizeSocialPlatform(i.payload.platform),
             cta: normalizeSocialAdCta(i.payload.cta),
-            primaryText: payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft'),
+            primaryText: formatPublishableCopy(payloadString(i.payload, ['primaryText', 'primary_text', 'primaryCopy', 'primary_copy', 'adCopy', 'ad_copy', 'body', 'copy', 'text', 'content', 'caption'], i.name || 'Paid social draft')),
             headline: payloadString(i.payload, ['headline', 'title', 'hook'], i.name || 'Paid social draft'),
             description: payloadString(i.payload, ['description', 'supporting_text'], ''),
             visualGuide: visualGuideFromPayload(i.payload),
@@ -2641,7 +2643,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             setEditingAd(ad);
             setName(ad.name || 'New Social Ad');
             setPlatform(normalizeSocialPlatform(ad.platform));
-            setPrimaryText(ad.primaryText || '');
+            setPrimaryText(formatPublishableCopy(ad.primaryText || ''));
             setHeadline(ad.headline || '');
             setDescription(ad.description || '');
             setVisualGuide(ad.visualGuide || '');
@@ -3029,7 +3031,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                 {/* The Ad Card */}
                                 <div className={cn(
                                     "bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-300 overflow-hidden shrink-0",
-                                    previewDevice === 'mobile' ? "w-full" : "w-full max-w-[500px]"
+                                    previewDevice === 'mobile' ? "w-full" : "w-full max-w-[600px]"
                                 )}>
 
                                     {/* === INSTAGRAM LAYOUT === */}
@@ -3074,7 +3076,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             <div className="px-4 pb-4">
                                                 <div className="text-sm">
                                                     <span className="font-bold mr-2 text-gray-900">{displayAccountName}</span>
-                                                    <span className="text-gray-700">{primaryText || 'Your ad caption will appear here...'}</span>
+                                                    <span className="text-gray-700 whitespace-pre-wrap">{formatPublishableCopy(primaryText) || 'Your ad caption will appear here...'}</span>
                                                 </div>
                                                 {headline && <p className="text-sm text-blue-900 mt-1">{headline}</p>}
                                             </div>
@@ -3100,7 +3102,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             {/* Primary Text ABOVE media */}
                                             <div className="px-4 pb-3">
                                                 <p className="text-[15px] text-gray-900 whitespace-pre-wrap leading-relaxed">
-                                                    {primaryText || 'Your ad copy will appear here...'}
+                                                    {formatPublishableCopy(primaryText) || 'Your ad copy will appear here...'}
                                                 </p>
                                             </div>
 
@@ -3164,7 +3166,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             {/* Primary Text ABOVE media */}
                                             <div className="px-4 pb-3">
                                                 <p className="text-[15px] text-gray-900 whitespace-pre-wrap leading-relaxed">
-                                                    {primaryText || 'Your ad copy will appear here...'}
+                                                    {formatPublishableCopy(primaryText) || 'Your ad copy will appear here...'}
                                                 </p>
                                             </div>
 
@@ -3291,7 +3293,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                             <Plus className="w-4 h-4" /> New Ad
                         </Button>
                     </DialogTrigger>
-                    <DialogContent closeClassName="hidden" className="max-w-6xl h-[90vh] p-0 flex flex-col overflow-hidden">
+                    <DialogContent closeClassName="hidden" className="w-[96vw] max-w-[1500px] h-[94vh] p-0 flex flex-col overflow-hidden">
                         {/* Dialog Header */}
                         <div className="flex shrink-0 items-center justify-between gap-3 border-b bg-white p-4">
                             <div className="min-w-0">
@@ -3549,7 +3551,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                             </ScrollArea>
 
                             {/* Preview Column */}
-                            <div className="w-[45%] hidden lg:flex flex-col">
+                            <div className="w-[52%] hidden lg:flex flex-col">
                                 <AdPreview />
                             </div>
                         </div>
