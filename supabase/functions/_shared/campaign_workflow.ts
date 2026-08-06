@@ -276,13 +276,42 @@ function campaignSectionLabel(key: GeneratedCampaignSectionKey) {
 
 export function applyContentPatches(pack: CampaignPack, patches: ContentPatch[]): CampaignPack {
   const draft = structuredClone(pack) as CampaignPack;
-  for (const patch of patches) {
+  for (const patch of applicableContentPatches(draft, patches)) {
     const group = draft[patch.group] as Array<Record<string, unknown>>;
     const item = group?.[patch.index];
-    if (!item || !editableFields[patch.group].has(patch.field)) continue;
-    item[patch.field] = patch.value;
+    if (!item) continue;
+    const target = contentPatchTarget(patch.field);
+    if (!target) continue;
+    if (target.arrayIndex === undefined) {
+      item[target.field] = patch.value;
+      continue;
+    }
+    const values = item[target.field];
+    if (!Array.isArray(values) || target.arrayIndex >= values.length) continue;
+    values[target.arrayIndex] = patch.value;
   }
   return normalizeCampaignPack(draft);
+}
+
+export function applicableContentPatches(pack: CampaignPack, patches: ContentPatch[]) {
+  return patches.filter((patch) => {
+    const target = contentPatchTarget(patch.field);
+    if (!target || !editableFields[patch.group].has(target.field)) return false;
+    const group = pack[patch.group] as Array<Record<string, unknown>>;
+    const item = group?.[patch.index];
+    if (!item) return false;
+    if (target.arrayIndex === undefined) return true;
+    return Array.isArray(item[target.field]) && target.arrayIndex < item[target.field].length;
+  });
+}
+
+function contentPatchTarget(field: string) {
+  const match = /^([a-zA-Z][a-zA-Z0-9]*)(?:\[(\d+)\])?$/.exec(field.trim());
+  if (!match) return null;
+  return {
+    field: match[1],
+    arrayIndex: match[2] === undefined ? undefined : Number(match[2]),
+  };
 }
 
 export function reviewFindingResolvedByPatches(finding: QaFinding, patches: ContentPatch[]) {
@@ -307,7 +336,10 @@ export function reviewFindingResolvedByPatches(finding: QaFinding, patches: Cont
     ...(problem.includes('platform') ? ['platform', 'topic', 'creativeBrief', 'visualGuide'] : []),
   ]));
   return expectedFields.length
-    ? relevant.some((patch) => expectedFields.includes(patch.field))
+    ? relevant.some((patch) => {
+      const target = contentPatchTarget(patch.field);
+      return !!target && expectedFields.includes(target.field);
+    })
     : true;
 }
 
@@ -319,7 +351,9 @@ export function repairCampaignPack(
   const notes: string[] = [];
   const repair = (value: string | undefined, location: string) => {
     if (!value) return value;
-    const claimSafe = removeForbiddenQuantifiedClaims(value, brief.restrictions || []);
+    const contactSafe = removeUnconfirmedPhoneNumbers(value, brief.confirmedFacts || [], brief.desiredAction);
+    if (contactSafe !== value) notes.push(`${location}: removed an unverified phone number.`);
+    const claimSafe = removeForbiddenQuantifiedClaims(contactSafe, brief.restrictions || []);
     if (claimSafe !== value) notes.push(`${location}: removed a quantified claim forbidden by the brief.`);
     const repaired = repairUnsupportedAttribution(repairActionLanguage(repairAwkwardActionPhrase(claimSafe), brief.desiredAction));
     if (repaired !== claimSafe) notes.push(`${location}: aligned the wording with the requested action.`);
@@ -360,7 +394,12 @@ export function repairCampaignPack(
       keywords,
       headlines: finalHeadlines,
       descriptions: finalDescriptions,
-      callouts: item.callouts?.map((value) => repair(value, `Google ad ${index + 1} callout`) || value),
+      callouts: item.callouts?.flatMap((value) => {
+        const aligned = repair(value, `Google ad ${index + 1} callout`) || value;
+        const finished = finishGoogleCallout(aligned);
+        if (finished !== aligned) notes.push(`Google ad ${index + 1} callout: removed an unfinished ending.`);
+        return finished ? [finished] : [];
+      }),
     };
   });
   draft.socialAds = draft.socialAds.map((item, index) => {
@@ -704,6 +743,33 @@ function repairUnsupportedAttribution(value: string) {
   return `${repaired.charAt(0).toUpperCase()}${repaired.slice(1)}`;
 }
 
+function removeUnconfirmedPhoneNumbers(value: string, confirmedFacts: string[], desiredAction: string) {
+  const evidence = [...confirmedFacts, desiredAction].join(' ');
+  const approved = new Set((evidence.match(/\+?\d[\d\s().-]{7,}\d/g) || []).map(normalizePhoneDigits));
+  const phones = value.match(/\+?\d[\d\s().-]{7,}\d/g) || [];
+  let repaired = value;
+  for (const phone of phones) {
+    if (approved.has(normalizePhoneDigits(phone))) continue;
+    const escaped = escapeRegExp(phone);
+    repaired = repaired
+      .replace(new RegExp(`\\bcall\\s+(?:us\\s+)?(?:at|on)?\\s*${escaped}\\s+or\\s+visit`, 'gi'), 'Visit')
+      .replace(new RegExp(`\\b(?:call|phone|whatsapp)\\s+(?:us\\s+)?(?:at|on)?\\s*${escaped}`, 'gi'), 'Contact us through an official channel')
+      .replace(new RegExp(escaped, 'g'), '');
+  }
+  return repaired
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([,.;!?])/g, '$1')
+    .trim();
+}
+
+function normalizePhoneDigits(value: string) {
+  return value.replace(/\D/g, '');
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function removeConversionActionFromHeading(value: string) {
   const repaired = value
     .replace(/\s*(?:[-:]\s*)?\b(?:book|schedule|request)\s+(?:a\s+)?(?:discovery call|demo)\b.*$/i, '')
@@ -715,8 +781,36 @@ function finishGoogleDescription(value: string) {
   let repaired = value.replace(/\s+/g, ' ').trim();
   repaired = repaired.replace(/\s+(?:for|with|to|of|in|on|at|by|from|about|into|through)\s+(?:dental|mobile|online|better|clear|easy|faster|warmer|your|our|their|every|independent|local|new)$/i, '');
   repaired = repaired.replace(/\s+(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|the|a|an|your|our|their)$/i, '');
-  if (!/[.!?]$/.test(repaired) && repaired.length < 90) repaired = `${repaired}.`;
+  if (looksLikeIncompleteGoogleDescription(repaired)) {
+    const withoutFinalPunctuation = repaired.replace(/[.!?]+$/, '');
+    const previousBoundary = Math.max(
+      withoutFinalPunctuation.lastIndexOf('.'),
+      withoutFinalPunctuation.lastIndexOf('!'),
+      withoutFinalPunctuation.lastIndexOf('?'),
+    );
+    repaired = previousBoundary >= 20
+      ? withoutFinalPunctuation.slice(0, previousBoundary + 1).trim()
+      : withoutFinalPunctuation
+        .replace(/\s+(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|the|a|an|your|our|their|make|build|easy|clear|better|faster|warmer)$/i, '')
+        .trim();
+  }
+  if (!/[.!?]$/.test(repaired)) {
+    if (repaired.length >= 90) {
+      repaired = compactPhrase(repaired, 89)
+        .replace(/\s+(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|the|a|an|your|our|their)$/i, '')
+        .trim();
+    }
+    repaired = `${repaired}.`;
+  }
   return repaired;
+}
+
+function finishGoogleCallout(value: string) {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/[\s,;:|/\\&-]+$/g, '')
+    .replace(/\s+(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|the|a|an|your|our|their)$/i, '')
+    .trim();
 }
 
 function hasConflictingAction(value: string, desiredAction: string) {
@@ -737,6 +831,7 @@ function normalizePreferredAction(value: string) {
 }
 
 function buildGoogleHeadlines(existing: string[], keywords: string[], desiredAction: string) {
+  const preferredCta = preferredGoogleCtaHeadline(desiredAction);
   const keywordHeadlines = existing.filter((headline) => keywords.some((keyword) => keywordMatchesText(keyword, headline)));
   for (const keyword of keywords) {
     if (keywordHeadlines.length >= Math.max(2, Math.min(keywords.length, 12))) break;
@@ -762,7 +857,25 @@ function buildGoogleHeadlines(existing: string[], keywords: string[], desiredAct
     if (headlines.length >= 8) break;
     if (!headlines.some((headline) => headline.toLowerCase() === fallback.toLowerCase())) headlines.push(fallback);
   }
-  return headlines.slice(0, 15);
+  const cappedHeadlines = headlines.slice(0, 15);
+  if (preferredCta && !cappedHeadlines.some((headline) => headline.toLowerCase() === preferredCta.toLowerCase())) {
+    return cappedHeadlines.length >= 15
+      ? [...cappedHeadlines.slice(0, 14), preferredCta]
+      : [...cappedHeadlines, preferredCta];
+  }
+  return cappedHeadlines;
+}
+
+function preferredGoogleCtaHeadline(desiredAction: string) {
+  if (/\bcontact\s+us\b/i.test(desiredAction)) return 'Contact Us';
+  if (/\bdiscovery\s+call\b/i.test(desiredAction)) return 'Book a Discovery Call';
+  if (/\b(?:book|request|schedule)\b[^.!?]{0,30}\bdemo\b|\bdemo\b/i.test(desiredAction)) return 'Book a Demo';
+  if (/\bget\s+started\b/i.test(desiredAction)) return 'Get Started';
+  if (/\bsign[ -]?up\b/i.test(desiredAction)) return 'Sign Up';
+  if (/\bdownload\b/i.test(desiredAction)) return 'Download the App';
+  if (/\bshop\s+now\b|\b(?:buy|purchase|order)\b/i.test(desiredAction)) return 'Shop Now';
+  if (/\blearn\s+more\b/i.test(desiredAction)) return 'Learn More';
+  return '';
 }
 
 function buildGoogleDescriptions(existing: string[], keywords: string[]) {
@@ -907,7 +1020,8 @@ function looksLikeIncompleteGoogleHeadline(value: string) {
 
 function looksLikeIncompleteGoogleDescription(value: string) {
   return /\s+(?:and|or|for|with|to|of|in|on|at|by|from|about|into|through|the|a|an|your|our|their)[.!?]?$/i.test(value)
-    || /\s+(?:for|with|to|of|in|on|at|by|from|about|into|through)\s+(?:dental|mobile|online|better|clear|easy|faster|warmer|your|our|their|every|independent|local|new)[.!?]?$/i.test(value);
+    || /\s+(?:for|with|to|of|in|on|at|by|from|about|into|through)\s+(?:dental|mobile|online|better|clear|easy|faster|warmer|your|our|their|every|independent|local|new)[.!?]?$/i.test(value)
+    || /\s+(?:make|build|easy|clear|better|faster|warmer)[.!?]?$/i.test(value);
 }
 
 function jaccard(left: string, right: string) {

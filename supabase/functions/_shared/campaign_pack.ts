@@ -1,3 +1,5 @@
+import { repairMojibake } from './text_encoding.ts';
+
 export type CampaignPack = {
   strategy: { title: string; summary: string; objectives: string[]; contentPillars: string[] };
   socialPosts: Array<{ name: string; topic: string; caption: string; platforms: string[]; scheduledDate?: string; creativeBrief?: string; visualGuide?: string }>;
@@ -393,7 +395,7 @@ function normalizeSocialAdCta(input: unknown): string {
 }
 
 function stringValue(input: unknown): string {
-  if (typeof input === 'string') return input.trim();
+  if (typeof input === 'string') return repairMojibake(input.trim());
   if (typeof input === 'number' || typeof input === 'boolean') return String(input);
   return '';
 }

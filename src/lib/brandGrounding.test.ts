@@ -173,6 +173,37 @@ describe('brand grounding', () => {
     expect(findings.filter((finding) => finding.problem.includes('unfinished phrase'))).toEqual([]);
   });
 
+  it('does not hard-block broad website and phone intent as an invented literal CTA', () => {
+    const aptusGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Aptus',
+        website_url: 'https://www.aptusindia.com',
+        elevator_pitch: 'A home loan company serving self-employed low and middle-income families.',
+        target_audience: 'Self-employed low and middle-income families in semi-urban and rural markets.',
+      },
+      markdown: '',
+    });
+    const input = pack('Aptus supports self-employed families exploring housing finance for a home of their own.');
+    input.googleAds = [{
+      name: 'Aptus home loans',
+      topic: 'Housing finance for self-employed families',
+      keywords: ['home loans for self employed'],
+      headlines: ['Aptus Home Loans', 'Housing Finance Guidance', 'Explore Your Home Options', 'Aptus India', 'For Self Employed Families', 'A Clear Next Step', 'Visit Aptus India', 'Home Finance Information'],
+      descriptions: ['Explore home loan information for self-employed families on the official Aptus website.', 'Visit Aptus India or call to make an inquiry about housing finance.'],
+      finalUrl: 'https://www.aptusindia.com',
+    }];
+    const context = {
+      audience: 'Aspiring and existing homeowners across South India.',
+      offerOrSubject: 'Aptus housing finance.',
+      desiredAction: 'Drive to website/phone number for inquiries.',
+    };
+
+    const ctaFindings = brandGroundingQualityFindings(input, aptusGrounding, context)
+      .filter((finding) => /campaign CTA|reader-facing verified CTA/i.test(finding.problem));
+
+    expect(ctaFindings).toEqual([]);
+  });
+
   it('does not promote undefined Brand Knowledge placeholders into campaign facts', () => {
     const sparseMarkdown = `# KYRO Construction SaaS — Brand Knowledge Document
 
@@ -354,6 +385,46 @@ None provided. (No case studies, testimonials, or data points available.)`;
     expect(grounded.researchQuery).toContain('Orthodontic practices');
     expect(grounded.researchQuery).toContain('berrystudio.ai');
     expect(groundedAgain.campaignGuidance.match(/Verified brand context is authoritative/g)).toHaveLength(1);
+  });
+
+  it('does not mistake ordinary product copy containing "apply" for an Apply Now CTA', () => {
+    const contactGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Berrystudio',
+        website_url: 'https://berrystudio.ai',
+        elevator_pitch: 'Practice management software for orthodontic teams.',
+        sample_copy: ['Contact Us'],
+      },
+      markdown: '',
+    });
+    const prompt = 'BerryNerd helps teams watch, listen, read, and apply SOP guidance in real time.';
+    const planner = fallbackPlannerOutput(prompt, { projectName: 'Berry Studio AI', campaignName: 'BerryNerd' });
+    planner.internalBrief.desiredAction = 'Use the action explicitly requested in the client brief.';
+
+    expect(groundPlannerOutputWithBrand(planner, contactGrounding, prompt).internalBrief.desiredAction).toBe('Contact Us');
+  });
+
+  it('accepts a named product capability mapping explicitly supplied in the client brief', () => {
+    const productGrounding = buildBrandGrounding({
+      guide: {
+        brand_name: 'Berrystudio',
+        website_url: 'https://berrystudio.ai',
+        elevator_pitch: 'Practice management software for orthodontic teams.',
+        sample_copy: ['Contact Us'],
+      },
+      markdown: `## Proof Points\n- Products include BerryForms, BerryTasks, BerryPlans, BerryPay, BerryReports, and BerryNerd — purpose-built for modern orthodontic practices.`,
+    });
+    const input = pack('Berrystudio helps orthodontic teams keep learning resources useful.');
+    input.socialPosts[0].caption = 'BerryNerd creates dynamic SOPs and tracks team understanding.';
+    const context = {
+      prompt: 'Help promote BerryNerd product. Here are the details: create dynamic SOPs, assign them, and track competency.',
+      desiredAction: 'Contact Us',
+    };
+
+    const grounded = applyBrandGroundingDefaults(input, productGrounding, context);
+    expect(grounded.socialPosts[0].caption).toContain('BerryNerd');
+    expect(brandGroundingQualityFindings(grounded, productGrounding, context)
+      .filter((finding) => finding.problem.includes('named product'))).toEqual([]);
   });
 
   it('prevents the Brand Guide Agent from filtering out core identity, audience, offering, and restrictions', () => {

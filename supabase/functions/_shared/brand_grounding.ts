@@ -204,7 +204,7 @@ export function groundPlannerOutputWithBrand(
 ): PlannerOutput {
   if (!grounding.requiredFacts.length) return planner;
   const promptSuppliesAudience = /\b(?:target(?:ing)?|audience|for)\s+(?:is\s+|are\s+)?(?:orthodont|dent|doctor|patient|parent|owner|manager|professional|consumer|business|company|team|student|teacher|developer|marketer)/i.test(prompt);
-  const promptSuppliesAction = /\b(?:book|schedule|download|install|sign\s*up|register|buy|shop|contact|call|visit|subscribe|apply|request|start\s+(?:a\s+)?trial)\b/i.test(prompt);
+  const promptSuppliesAction = /\b(?:book|schedule|download|install|sign\s*up|register|buy|shop|contact|call|visit|subscribe|apply\s+now|request|start\s+(?:a\s+)?trial)\b/i.test(prompt);
   const currentAudience = planner.internalBrief.audience;
   const audience = grounding.audienceSummary && (!promptSuppliesAudience || isGenericAudience(currentAudience))
     ? grounding.audienceSummary
@@ -325,7 +325,7 @@ export function brandGroundingQualityFindings(
   if (!grounding.requiredFacts.length) return [];
   const findings = brandStrategyGroundingFindings(pack.strategy, grounding);
   const packText = normalizeSearchText(JSON.stringify(pack));
-  const requiredCta = campaignCta(grounding, context);
+  const requiredCta = requiredCampaignCta(grounding, context);
   if (requiredCta && !containsNormalizedPhrase(packText, requiredCta)) {
     findings.push(groundingFinding(`Campaign omits the verified campaign CTA “${requiredCta}”.`, 'Use the approved campaign CTA naturally in at least one relevant asset.'));
   }
@@ -442,7 +442,7 @@ export function brandGroundingQualityFindings(
       });
     });
   }
-  const unmappedProducts = unmappedNamedProducts(grounding);
+  const unmappedProducts = unmappedNamedProducts(grounding, context);
   publicClaimFields(pack).forEach(({ group, index, value }) => {
     const products = mentionedProducts(value, unmappedProducts);
     if (!products.length) return;
@@ -475,7 +475,7 @@ export function applyBrandGroundingDefaults(
   context: BrandCampaignContext = {},
 ): CampaignPack {
   const primaryCta = campaignCta(grounding, context);
-  const unmappedProducts = unmappedNamedProducts(grounding);
+  const unmappedProducts = unmappedNamedProducts(grounding, context);
   const officialWebsite = verifiedWebsite(grounding, context);
   const sparseBrand = isSparseBrandGrounding(grounding);
   const sanitizeClaim = (value: string | undefined) => {
@@ -589,7 +589,7 @@ export function applyBrandGroundingToCreativeDirection(
   grounding: BrandGrounding,
   context: BrandCampaignContext = {},
 ): CreativeDirection {
-  const unmappedProducts = unmappedNamedProducts(grounding);
+  const unmappedProducts = unmappedNamedProducts(grounding, context);
   const sparseBrand = isSparseBrandGrounding(grounding);
   const sanitize = (value: string) => {
     const productSafe = sanitizeUnmappedProductNames(value, unmappedProducts, grounding.brandName) || value;
@@ -850,6 +850,11 @@ function campaignCta(grounding: BrandGrounding, context: BrandCampaignContext) {
     || canonicalCta(context.desiredAction || '', true);
 }
 
+function requiredCampaignCta(grounding: BrandGrounding, context: BrandCampaignContext) {
+  return canonicalCta(grounding.primaryCta)
+    || canonicalCta(context.desiredAction || '');
+}
+
 function domainFromUrl(value: string) {
   try {
     return new URL(value).hostname.replace(/^www\./, '');
@@ -909,14 +914,14 @@ function unsupportedNamedColors(value: string, allowed: Set<string>) {
   return uniqueStrings(mentioned.filter((color) => !allowed.has(color)));
 }
 
-function unmappedNamedProducts(grounding: BrandGrounding) {
+function unmappedNamedProducts(grounding: BrandGrounding, context: BrandCampaignContext = {}) {
   const sources = grounding.proofPoints;
   const brandToken = normalizeSearchText(grounding.brandName).replace(/\s+/g, '');
   const candidates = uniqueStrings(sources.flatMap((source) => (
     Array.from(source.matchAll(/\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/g), (match) => match[0])
   ))).filter((candidate) => normalizeSearchText(candidate).replace(/\s+/g, '') !== brandToken);
 
-  return candidates.filter((candidate) => !sources.some((source) => {
+  return candidates.filter((candidate) => !promptExplicitlyMapsNamedProduct(context.prompt || '', candidate) && !sources.some((source) => {
     const sentences = source.split(/(?<=[.!?])\s+/);
     return sentences.some((sentence) => {
       if (!new RegExp(`\\b${escapeRegExp(candidate)}\\b`, 'i').test(sentence)) return false;
@@ -925,6 +930,15 @@ function unmappedNamedProducts(grounding: BrandGrounding) {
       return new RegExp(`\\b${escapeRegExp(candidate)}\\b\\s*(?:is|are|:|[-–—]|helps?|handles?|supports?|provides?|manages?|automates?|verifies?|collects?|creates?|tracks?|offers?)\\b`, 'i').test(sentence);
     });
   }));
+}
+
+function promptExplicitlyMapsNamedProduct(prompt: string, product: string) {
+  const productIndex = prompt.toLowerCase().indexOf(product.toLowerCase());
+  if (productIndex < 0) return false;
+  const nearby = prompt.slice(Math.max(0, productIndex - 80), productIndex + 1800);
+  const capabilitySignals = nearby.match(/\b(?:create|assign|confirm|track|duplicate|adapt|scale|standardize|collaborate|share|search|manage|automate|support|build)\w*\b/gi) || [];
+  const introducesDetails = /\b(?:details?|features?|capabilities?|built\s+for)\b/i.test(nearby);
+  return capabilitySignals.length >= 2 || (introducesDetails && capabilitySignals.length >= 1);
 }
 
 function sanitizeUnmappedProductNames(value: string | undefined, products: string[], brandName: string) {

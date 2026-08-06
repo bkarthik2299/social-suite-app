@@ -1,6 +1,6 @@
 import { currentUserId, getUserClient, jsonResponse, readJson, requireMethod } from '../_shared/http.ts';
 import { openRouterJson, openRouterTextWithCitations } from '../_shared/openrouter.ts';
-import { structuredJsonAttemptPlan } from '../_shared/openrouter_policy.ts';
+import { prefersSectionedCampaignPack, structuredJsonAttemptPlan } from '../_shared/openrouter_policy.ts';
 import { captureAiTrace, type AiObservabilityContext } from '../_shared/posthog_ai.ts';
 import { hasCampaignOutput, normalizeCampaignPack, type CampaignPack } from '../_shared/campaign_pack.ts';
 import { campaignTopic, safeBlogOutline, safeCalendarItem, safeGoogleAd, safeSocialAd, safeSocialPost, safeStrategy } from '../_shared/campaign_recovery.ts';
@@ -25,6 +25,7 @@ import {
 import {
   alignCampaignPackToRequestedPlatforms,
   applyContentPatches,
+  applicableContentPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
   campaignPlatformConsistencyFindings,
@@ -150,9 +151,12 @@ const PLANNER_TIMEOUT_MS = 20_000;
 const RESEARCH_TIMEOUT_MS = 45_000;
 const RESEARCH_DIGEST_TIMEOUT_MS = 20_000;
 const SECTION_TIMEOUT_MS = 50_000;
+const DEEP_WORK_SECTION_TIMEOUT_MS = 108_000;
+const DEEP_WORK_BATCH_TIMEOUT_MS = 112_000;
+const DEEP_WORK_ATTEMPT_TIMEOUT_MS = 50_000;
 const BRAND_FILTER_TIMEOUT_MS = 14_000;
 const CREATIVE_DIRECTION_TIMEOUT_MS = 16_000;
-const QA_REVIEW_TIMEOUT_MS = 16_000;
+const QA_REVIEW_TIMEOUT_MS = 30_000;
 const CUSTOM_AGENT_MIN_BUDGET_MS = 36_000;
 const CUSTOM_AGENT_TIMEOUT_MS = 26_000;
 
@@ -1158,10 +1162,11 @@ async function processMission({
           observability: withRunObservation(runObservability, 'qa', 'mission-qa-review'),
         });
         reviewedFindings = [...reviewedFindings, ...reviewed.findings].slice(0, 30);
-        reviewedPatches = [...reviewedPatches, ...reviewed.patches].slice(0, 32);
         qaDetailedFindings = [...qaDetailedFindings, ...reviewed.findings].slice(0, 30);
-        if (reviewed.patches.length) {
-          const patched = applyContentPatches(pack, reviewed.patches);
+        const applicablePatches = applicableContentPatches(pack, reviewed.patches);
+        reviewedPatches = [...reviewedPatches, ...applicablePatches].slice(0, 32);
+        if (applicablePatches.length) {
+          const patched = applyContentPatches(pack, applicablePatches);
           const guarded = guardCampaignPack(normalizeCampaignPack({
             ...patched,
             strategy: pack.strategy,
@@ -1176,10 +1181,11 @@ async function processMission({
           const postQaRepair = repairCampaignPack(postQaGroundedPack, plannerOutput.internalBrief);
           pack = postQaRepair.pack;
           contentGuardrailNotes.push(...postQaRepair.notes);
-          qaRepairCount += reviewed.patches.length + postQaRepair.notes.length;
-          await addEvent(activeStep, 'qa_repairs', `QA repair attempt ${qaModelAttempt} applied ${reviewed.patches.length} focused copy change${reviewed.patches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
+          qaRepairCount += applicablePatches.length + postQaRepair.notes.length;
+          await addEvent(activeStep, 'qa_repairs', `QA repair attempt ${qaModelAttempt} applied ${applicablePatches.length} focused copy change${applicablePatches.length === 1 ? '' : 's'} without rewriting the full pack.`, {
             attempt: qaModelAttempt,
-            patches: reviewed.patches.map(({ group, index, field, reason }) => ({ group, index, field, reason })),
+            patches: applicablePatches.map(({ group, index, field, reason }) => ({ group, index, field, reason })),
+            rejectedPatchCount: reviewed.patches.length - applicablePatches.length,
           });
         }
 
@@ -2341,7 +2347,8 @@ async function buildCampaignPackInParts({
 
   const activeSections = sectionSpecs.filter((section) => section.expectedCount > 0);
   const requestedItemCount = activeSections.reduce((total, section) => total + section.expectedCount, 0);
-  if (requestedItemCount <= 12) {
+  const useSectionedGeneration = prefersSectionedCampaignPack(models[0] || '');
+  if (requestedItemCount <= 12 && !useSectionedGeneration) {
     const compactTimeoutMs = Math.max(8_000, Math.min(116_000, remainingForSectionsMs));
     try {
       const value = await generateCompactCampaignPack({
@@ -2390,8 +2397,10 @@ async function buildCampaignPackInParts({
     }
   }
 
-  const sectionTimeoutMs = Math.max(6_000, Math.min(SECTION_TIMEOUT_MS, remainingForSectionsMs));
-  const batchTimeoutMs = Math.max(6_000, Math.min(45_000, remainingForSectionsMs));
+  const sectionTimeoutCapMs = useSectionedGeneration ? DEEP_WORK_SECTION_TIMEOUT_MS : SECTION_TIMEOUT_MS;
+  const batchTimeoutCapMs = useSectionedGeneration ? DEEP_WORK_BATCH_TIMEOUT_MS : 45_000;
+  const sectionTimeoutMs = Math.max(6_000, Math.min(sectionTimeoutCapMs, remainingForSectionsMs));
+  const batchTimeoutMs = Math.max(6_000, Math.min(batchTimeoutCapMs, remainingForSectionsMs));
   const results = await withTimeout(Promise.all(sectionSpecs.map(async (section) => {
     if (section.expectedCount <= 0) {
       return { section, value: { [section.key]: [] }, error: '' };
@@ -2554,7 +2563,10 @@ async function generateCampaignSection({
   const selectedModel = models[0];
   if (!selectedModel) throw new Error('No selected generation model was supplied.');
   const attemptPlan = structuredJsonAttemptPlan(selectedModel);
-  const attemptTimeoutMs = Math.max(5_000, Math.min(21_000, Math.floor(timeoutMs / attemptPlan.length)));
+  const attemptTimeoutCapMs = prefersSectionedCampaignPack(selectedModel)
+    ? DEEP_WORK_ATTEMPT_TIMEOUT_MS
+    : 21_000;
+  const attemptTimeoutMs = Math.max(5_000, Math.min(attemptTimeoutCapMs, Math.floor(timeoutMs / attemptPlan.length)));
   let lastError = '';
   for (const [attemptIndex, attempt] of attemptPlan.entries()) {
     const retryPrefix = attempt.strictRecovery

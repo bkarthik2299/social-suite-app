@@ -15,12 +15,28 @@ export function structuredJsonAttemptPlan(selectedModelId: string) {
   ] as const;
 }
 
+export function prefersSectionedCampaignPack(modelId: string) {
+  return modelId === 'deepseek/deepseek-v4-pro';
+}
+
 export function prefersNativeJsonMode(modelId: string) {
   return modelId !== PERPLEXITY_RESEARCH_MODEL;
 }
 
 export function supportsTemperatureParameter(modelId: string) {
-  return !modelId.startsWith('openai/gpt-5');
+  if (modelId.startsWith('openai/gpt-5')) return false;
+
+  const claudeVersion = modelId.match(/^anthropic\/claude-(?:(?:opus|sonnet|haiku)-)?(\d+)\.(\d+)/i);
+  if (!claudeVersion) return true;
+  const major = Number(claudeVersion[1]);
+  const minor = Number(claudeVersion[2]);
+  return major < 4 || (major === 4 && minor < 7);
+}
+
+export function shouldRetryOpenRouterWithoutJsonMode(status: number, message: string) {
+  return status === 400
+    || status === 422
+    || (status === 404 && /no endpoints? found[^.]*requested parameters?/i.test(message));
 }
 
 export function structuredOutputReasoning(modelId: string) {

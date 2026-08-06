@@ -1,6 +1,10 @@
 import { getRequiredSecret } from './http.ts';
 import { parseJsonContent } from './json.ts';
-import { structuredOutputReasoning, supportsTemperatureParameter } from './openrouter_policy.ts';
+import {
+  shouldRetryOpenRouterWithoutJsonMode,
+  structuredOutputReasoning,
+  supportsTemperatureParameter,
+} from './openrouter_policy.ts';
 import { captureOpenRouterGeneration, type AiObservabilityContext } from './posthog_ai.ts';
 
 type ChatMessage = {
@@ -78,7 +82,11 @@ export async function openRouterJson<T>({
   }, timeoutMs);
   assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, jsonMode, observability });
 
-  if (!attempt.response.ok && jsonMode && [400, 422].includes(attempt.response.status)) {
+  if (
+    !attempt.response.ok
+    && jsonMode
+    && shouldRetryOpenRouterWithoutJsonMode(attempt.response.status, openRouterError(attempt))
+  ) {
     captureAttempt({
       attempt,
       body,
