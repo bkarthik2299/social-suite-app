@@ -1,6 +1,7 @@
 import { normalizeCampaignPack, type CampaignPack } from './campaign_pack.ts';
 import type { BrandInstructions, ContentPatch, InternalBrief, QaFinding } from './agent_contracts.ts';
 import { extractRequestedChannelConstraints, type DeliverableContract } from './deliverable_contract.ts';
+import { formatPublishableCopy } from './publishable_copy.ts';
 
 type CalendarType = CampaignPack['calendar'][number]['type'];
 export type GeneratedCampaignSectionKey = 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines';
@@ -379,7 +380,7 @@ export function repairCampaignPack(
 
   draft.socialPosts = draft.socialPosts.map((item, index) => ({
     ...item,
-    caption: repair(item.caption, `Social post ${index + 1}`) || item.caption,
+    caption: formatPublishableCopy(repair(item.caption, `Social post ${index + 1}`) || item.caption),
     creativeBrief: repair(item.creativeBrief, `Social post ${index + 1} creative brief`),
   }));
   const explicitKeywords = cleanKeywords(brief.keywordTargets || []);
@@ -424,7 +425,7 @@ export function repairCampaignPack(
     if (item.cta !== cta) notes.push(`Paid social ad ${index + 1}: aligned the button with the requested action.`);
     return {
       ...item,
-      primaryText: repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText,
+      primaryText: formatPublishableCopy(repair(item.primaryText, `Paid social ad ${index + 1}`) || item.primaryText),
       headline: repair(item.headline, `Paid social ad ${index + 1} headline`) || item.headline,
       description: repair(item.description, `Paid social ad ${index + 1} description`),
       cta,
