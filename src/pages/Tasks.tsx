@@ -1,13 +1,14 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { DndContext, DragOverlay, closestCenter, pointerWithin, rectIntersection, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, DragEndEvent, DragStartEvent, type CollisionDetection } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { useAuth } from '@/context/AuthContext';
-import { useTasks, useTaskStages, useProjects, useAllFolders, useAllCampaigns } from '@/hooks/useDatabase';
+import { useTasks, useTaskStages, useProjects, useAllFolders, useAllCampaigns, useTaskComments, useOrganizationTeamMembers } from '@/hooks/useDatabase';
 import { Button } from '@/components/ui/button';
-import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check, FolderOpen, ExternalLink } from 'lucide-react';
+import { PlusCircle, Calendar as CalendarIcon, MoreHorizontal, Settings2, Trash2, Plus, GripVertical, X, User, Check, FolderOpen, ExternalLink, MessageCircle, Reply, Send, ChevronDown, ChevronRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import {
   Dialog,
   DialogContent,
@@ -53,7 +54,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
-import { Task, TaskStage } from '@/types';
+import { Task, TaskComment, TaskStage } from '@/types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { campaignPath, folderPath } from '@/lib/routes';
 
@@ -72,6 +73,29 @@ const getErrorMessage = (error: unknown) => {
     return error.message;
   }
   return 'Something went wrong. Please try again.';
+};
+
+const getCommentAuthorKey = (name: string) => name.trim().toLowerCase() || 'unknown';
+
+const commentAuthorTones = [
+  'text-blue-700',
+  'text-emerald-700',
+  'text-amber-700',
+  'text-pink-700',
+  'text-cyan-700',
+  'text-slate-700',
+];
+
+const getInitials = (name: string) => {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'U';
+  return parts.slice(0, 2).map(part => part[0]?.toUpperCase()).join('');
+};
+
+const formatCommentDate = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return format(date, 'MMM d, h:mm a');
 };
 
 const taskCollisionDetection: CollisionDetection = (args) => {
@@ -194,6 +218,312 @@ function SortableColumnItem({
   );
 }
 
+function TaskCommentsPanel({
+  taskId,
+  comments,
+  currentUserName,
+  currentUserId,
+  currentUserAvatar,
+  onAddComment,
+  onDeleteComment,
+  isSubmitting,
+  isDeleting,
+  className,
+}: {
+  taskId: string;
+  comments: TaskComment[];
+  currentUserName: string;
+  currentUserId: string;
+  currentUserAvatar?: string;
+  onAddComment: (taskId: string, body: string, parentId?: string) => Promise<TaskComment | void>;
+  onDeleteComment: (commentId: string) => Promise<void>;
+  isSubmitting: boolean;
+  isDeleting: boolean;
+  className?: string;
+}) {
+  const [commentText, setCommentText] = useState('');
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [collapsedThreadIds, setCollapsedThreadIds] = useState<Set<string>>(() => new Set());
+  const [commentPendingDelete, setCommentPendingDelete] = useState<TaskComment | null>(null);
+  const [commentPendingScrollId, setCommentPendingScrollId] = useState<string | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const commentNodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  const topLevelComments = useMemo(
+    () => comments.filter(comment => !comment.parentId),
+    [comments],
+  );
+
+  const repliesByParentId = useMemo(() => {
+    return comments.reduce<Record<string, TaskComment[]>>((groups, comment) => {
+      if (!comment.parentId) return groups;
+      groups[comment.parentId] = [...(groups[comment.parentId] || []), comment];
+      return groups;
+    }, {});
+  }, [comments]);
+
+  const commentAuthorToneByKey = useMemo(() => {
+    const authorKeys = Array.from(new Set(comments.map(comment => getCommentAuthorKey(comment.authorName))));
+    return authorKeys.reduce<Record<string, string>>((tones, key, index) => {
+      tones[key] = commentAuthorTones[index % commentAuthorTones.length];
+      return tones;
+    }, {});
+  }, [comments]);
+
+  const submitComment = async () => {
+    const text = commentText.trim();
+    if (!text) return;
+    try {
+      const savedComment = await onAddComment(taskId, text, replyingToId || undefined);
+      if (replyingToId) {
+        setCollapsedThreadIds(previous => {
+          const next = new Set(previous);
+          next.delete(replyingToId);
+          return next;
+        });
+      }
+      setCommentText('');
+      setReplyingToId(null);
+      if (savedComment?.id) setCommentPendingScrollId(savedComment.id);
+    } catch {
+      return;
+    }
+  };
+
+  useEffect(() => {
+    if (!commentPendingScrollId) return;
+
+    const target = commentNodeRefs.current[commentPendingScrollId];
+    if (!target) return;
+
+    window.requestAnimationFrame(() => {
+      target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      target.classList.add('ring-2', 'ring-primary/20');
+      window.setTimeout(() => target.classList.remove('ring-2', 'ring-primary/20'), 1200);
+    });
+    setCommentPendingScrollId(null);
+  }, [commentPendingScrollId, comments]);
+
+  const replyingToComment = replyingToId
+    ? comments.find(comment => comment.id === replyingToId)
+    : undefined;
+  const pendingDeleteReplyCount = commentPendingDelete
+    ? comments.filter(comment => comment.parentId === commentPendingDelete.id).length
+    : 0;
+
+  const confirmDeleteComment = async () => {
+    if (!commentPendingDelete) return;
+
+    try {
+      await onDeleteComment(commentPendingDelete.id);
+      if (replyingToId === commentPendingDelete.id || replyingToComment?.parentId === commentPendingDelete.id) {
+        setReplyingToId(null);
+      }
+      setCommentPendingDelete(null);
+    } catch {
+      return;
+    }
+  };
+
+  const renderComment = (comment: TaskComment, compact = false) => (
+    <div
+      key={comment.id}
+      ref={(node) => {
+        commentNodeRefs.current[comment.id] = node;
+      }}
+      className={cn("relative flex rounded-lg transition-shadow gap-3", compact && "gap-2")}
+    >
+      {compact && <span className="absolute -left-6 top-3 h-px w-4 bg-blue-200" />}
+      <Avatar className={cn("h-8 w-8 border border-white shadow-sm", compact && "h-6 w-6")}>
+        <AvatarImage src={comment.authorAvatar} alt={comment.authorName} />
+        <AvatarFallback className="bg-blue-50 text-[11px] font-semibold text-blue-700">
+          {getInitials(comment.authorName)}
+        </AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start justify-between gap-3">
+          <span className={cn(
+            "text-xs font-semibold",
+            commentAuthorToneByKey[getCommentAuthorKey(comment.authorName)] || 'text-slate-700'
+          )}>
+            {comment.authorName}
+          </span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <span className="text-[10px] text-slate-400">{formatCommentDate(comment.createdAt)}</span>
+            {comment.authorUserId === currentUserId && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 rounded-full text-slate-400 hover:bg-red-50 hover:text-destructive"
+                onClick={() => setCommentPendingDelete(comment)}
+                aria-label="Delete comment"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{comment.body}</p>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={cn("flex min-h-[360px] flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm", className)}>
+      <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 px-4 py-3">
+        <MessageCircle className="h-4 w-4 text-slate-400" />
+        <h3 className="text-sm font-semibold text-slate-700">Comments</h3>
+        {comments.length > 0 && (
+          <Badge variant="secondary" className="ml-auto h-5 rounded-full bg-slate-100 px-1.5 text-[10px] text-slate-600">
+            {comments.length}
+          </Badge>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {comments.length === 0 ? (
+          <div className="flex h-full min-h-[180px] flex-col items-center justify-center text-center text-xs text-slate-400">
+            <MessageCircle className="mb-2 h-8 w-8 opacity-20" />
+            No comments yet
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {topLevelComments.map(comment => {
+              const replies = repliesByParentId[comment.id] || [];
+              const isReplying = replyingToId === comment.id;
+              const isThreadCollapsed = collapsedThreadIds.has(comment.id);
+
+              return (
+                <div key={comment.id} className="rounded-xl bg-slate-50/70 p-3">
+                  {renderComment(comment)}
+                  <div className="mt-2 flex items-center justify-between">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1.5 rounded-lg px-2 text-xs text-slate-500 hover:bg-white hover:text-primary"
+                      onClick={() => {
+                        setReplyingToId(isReplying ? null : comment.id);
+                        window.setTimeout(() => composerRef.current?.focus(), 0);
+                      }}
+                    >
+                      <Reply className="h-3.5 w-3.5" />
+                      Reply
+                    </Button>
+                    {replies.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 rounded-lg px-2 text-[10px] font-medium text-slate-400 hover:bg-white hover:text-primary"
+                        onClick={() => {
+                          setCollapsedThreadIds(previous => {
+                            const next = new Set(previous);
+                            if (next.has(comment.id)) {
+                              next.delete(comment.id);
+                            } else {
+                              next.add(comment.id);
+                            }
+                            return next;
+                          });
+                        }}
+                        aria-expanded={!isThreadCollapsed}
+                        aria-label={`${isThreadCollapsed ? 'Expand' : 'Collapse'} ${replies.length === 1 ? 'reply' : 'replies'}`}
+                      >
+                        {isThreadCollapsed ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                        {replies.length} {replies.length === 1 ? 'reply' : 'replies'}
+                      </Button>
+                    )}
+                  </div>
+
+                  {replies.length > 0 && !isThreadCollapsed && (
+                    <div className="relative ml-4 mt-3 space-y-3 pl-6 before:absolute before:bottom-2 before:left-0 before:top-0 before:w-px before:bg-blue-200">
+                      {replies.map(reply => renderComment(reply, true))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <div className="shrink-0 border-t border-slate-100 p-3">
+        <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-sm transition-all focus-within:border-primary/30 focus-within:ring-2 focus-within:ring-primary/10">
+          {replyingToComment && (
+            <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700">
+              <span className="min-w-0 truncate">Replying to {replyingToComment.authorName}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5 shrink-0 rounded-full text-blue-600 hover:bg-blue-100 hover:text-blue-700"
+                onClick={() => setReplyingToId(null)}
+                aria-label="Cancel reply"
+              >
+                <X className="h-3 w-3" />
+              </Button>
+            </div>
+          )}
+          <div className="flex min-h-[52px] items-center gap-3">
+            <Avatar className="h-8 w-8">
+              <AvatarImage src={currentUserAvatar} alt={currentUserName} />
+              <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">{getInitials(currentUserName)}</AvatarFallback>
+            </Avatar>
+            <Textarea
+              ref={composerRef}
+              placeholder={replyingToComment ? `Reply as ${currentUserName}` : 'Add a comment...'}
+              className="min-h-[36px] max-h-[96px] flex-1 resize-none border-0 bg-transparent px-0 py-2 text-sm leading-5 placeholder:text-slate-400 focus-visible:ring-0"
+              value={commentText}
+              onChange={(event) => setCommentText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  void submitComment();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              size="icon"
+              className="h-9 w-9 shrink-0 rounded-full"
+              onClick={() => void submitComment()}
+              disabled={!commentText.trim() || isSubmitting}
+              aria-label={replyingToComment ? 'Send reply' : 'Send comment'}
+            >
+              <Send className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <AlertDialog open={!!commentPendingDelete} onOpenChange={(open) => !open && setCommentPendingDelete(null)}>
+        <AlertDialogContent className="border-0 bg-white shadow-2xl sm:rounded-2xl">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete comment?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteReplyCount > 0
+                ? `This will delete your comment and ${pendingDeleteReplyCount} ${pendingDeleteReplyCount === 1 ? 'reply' : 'replies'} in this thread.`
+                : 'This will permanently delete your comment.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void confirmDeleteComment()}
+              disabled={isDeleting}
+              className="bg-red-600 text-white hover:bg-red-700"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
 type TaskCardVisualProps = {
   task: Task;
   project?: { name: string };
@@ -202,44 +532,55 @@ type TaskCardVisualProps = {
   onOpenWorkLocation: (href: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
+  unreadCommentCount?: number;
   preview?: boolean;
 };
 
-function TaskCardVisual({ task, project, campaign, workLocation, onOpenWorkLocation, onEdit, onDelete, preview = false }: TaskCardVisualProps) {
+function TaskCardVisual({ task, project, campaign, workLocation, onOpenWorkLocation, onEdit, onDelete, unreadCommentCount = 0, preview = false }: TaskCardVisualProps) {
   return (
     <>
       <div className="mb-2 flex items-start justify-between">
         <div className="flex flex-1 items-center gap-2">
           <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-          <h4
-            className="line-clamp-2 cursor-pointer font-medium text-foreground transition-colors hover:text-primary"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (!preview) onEdit(task);
-            }}
-          >
+          <h4 className="line-clamp-2 font-medium text-foreground transition-colors group-hover:text-primary">
             {task.title}
           </h4>
         </div>
         {!preview && (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50">
-                <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(task); }}>
-                Edit Task
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-destructive"
-                onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+          <div className="flex items-center gap-1">
+            {unreadCommentCount > 0 && (
+              <span
+                className="flex h-6 min-w-6 items-center justify-center gap-1 rounded-full bg-blue-50 px-1.5 text-[10px] font-semibold text-primary ring-1 ring-blue-100"
+                aria-label={`${unreadCommentCount} new ${unreadCommentCount === 1 ? 'comment' : 'comments'}`}
+                title={`${unreadCommentCount} new ${unreadCommentCount === 1 ? 'comment' : 'comments'}`}
               >
-                Delete Task
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+                  <span className="absolute inline-flex h-3.5 w-3.5 animate-[ping_1.4s_cubic-bezier(0,0,0.2,1)_infinite] rounded-full bg-primary/35" />
+                  <span className="relative inline-flex h-2.5 w-2.5 animate-pulse rounded-full bg-primary shadow-[0_0_0_3px_rgba(37,99,235,0.12)]" />
+                </span>
+                <MessageCircle className="h-3 w-3" />
+                {unreadCommentCount > 9 ? '9+' : unreadCommentCount}
+              </span>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer rounded-lg opacity-0 group-hover:opacity-100 hover:bg-blue-50">
+                  <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(task); }}>
+                  Edit Task
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive"
+                  onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
+                >
+                  Delete Task
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         )}
       </div>
 
@@ -331,6 +672,7 @@ function TaskCard({
   onOpenWorkLocation,
   onEdit,
   onDelete,
+  unreadCommentCount,
   isDragging
 }: {
   task: Task;
@@ -340,6 +682,7 @@ function TaskCard({
   onOpenWorkLocation: (href: string) => void;
   onEdit: (task: Task) => void;
   onDelete: (id: string) => void;
+  unreadCommentCount: number;
   isDragging: boolean;
 }) {
   const {
@@ -355,6 +698,7 @@ function TaskCard({
   });
 
   const activeDragging = isDragging || isSortableDragging;
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const style = {
     transform: CSS.Transform.toString(transform),
     transition: isSortableDragging ? undefined : transition,
@@ -368,8 +712,31 @@ function TaskCard({
       data-testid={`task-card-${task.id}`}
       {...attributes}
       {...listeners}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open task ${task.title}`}
+      onPointerDownCapture={(event) => {
+        pointerStartRef.current = { x: event.clientX, y: event.clientY };
+      }}
+      onClick={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest('button, input, textarea, a, [role="menuitem"], [data-radix-popper-content-wrapper]')) return;
+
+        const start = pointerStartRef.current;
+        if (start) {
+          const moved = Math.hypot(event.clientX - start.x, event.clientY - start.y);
+          if (moved > 6) return;
+        }
+
+        onEdit(task);
+      }}
+      onKeyUp={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest('button, input, textarea, a, [role="menuitem"], [data-radix-popper-content-wrapper]')) return;
+        if (event.key === 'Enter') onEdit(task);
+      }}
       className={cn(
-        "tool-surface tool-surface-interactive group touch-none cursor-grab select-none rounded-xl p-4 active:cursor-grabbing",
+        "tool-surface tool-surface-interactive group touch-none cursor-pointer select-none rounded-xl p-4 active:cursor-grabbing",
         activeDragging && "opacity-25 ring-2 ring-primary/20 ring-offset-2 ring-offset-slate-50"
       )}
     >
@@ -381,6 +748,7 @@ function TaskCard({
         onOpenWorkLocation={onOpenWorkLocation}
         onEdit={onEdit}
         onDelete={onDelete}
+        unreadCommentCount={unreadCommentCount}
       />
     </div>
   );
@@ -394,26 +762,51 @@ export default function Tasks() {
   const { data: projects = [] } = useProjects();
   const { data: folders = [] } = useAllFolders();
   const { data: campaigns = [] } = useAllCampaigns();
+  const { comments: taskComments, readMarkers, addTaskComment, deleteTaskComment, markTaskCommentsRead } = useTaskComments();
+  const { data: dbTeamMembers = [] } = useOrganizationTeamMembers();
   const { membership, user } = useAuth();
   const { toast } = useToast();
 
   const currentUserId = user?.id || '';
   const currentUserName = user?.user_metadata?.full_name || user?.email || 'You';
+  const currentUserAvatar = user?.user_metadata?.avatar_url || undefined;
   const teamMembers = useMemo(() => {
+    if (dbTeamMembers.length > 0) return dbTeamMembers;
     if (!currentUserId) return [];
 
-    return [
-      {
-        id: currentUserId,
-        name: 'You',
-        role: membership?.role || 'admin',
-        avatar: user?.user_metadata?.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserName)}&background=0D8ABC&color=fff`,
-      }
-    ];
-  }, [currentUserId, currentUserName, membership?.role, user?.user_metadata?.avatar_url]);
+    return [{
+      id: currentUserId,
+      name: currentUserName,
+      email: user?.email || '',
+      role: membership?.role || 'admin',
+      avatar: currentUserAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(currentUserName)}&background=0D8ABC&color=fff`,
+    }];
+  }, [currentUserAvatar, currentUserId, currentUserName, dbTeamMembers, membership?.role, user?.email]);
 
   const tasks = useMemo(() => dbTasks || [], [dbTasks]);
   const tasksById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const taskCommentsByTaskId = useMemo(() => {
+    return taskComments.reduce<Record<string, TaskComment[]>>((groups, comment) => {
+      groups[comment.taskId] = [...(groups[comment.taskId] || []), comment];
+      return groups;
+    }, {});
+  }, [taskComments]);
+  const readMarkerByTaskId = useMemo(
+    () => new Map(readMarkers.map((marker) => [marker.task_id, marker.last_read_at])),
+    [readMarkers],
+  );
+  const unreadCommentCounts = useMemo(() => {
+    return taskComments.reduce<Record<string, number>>((counts, comment) => {
+      if (comment.authorUserId === currentUserId) return counts;
+
+      const lastReadAt = readMarkerByTaskId.get(comment.taskId);
+      const hasBeenRead = lastReadAt && new Date(comment.createdAt).getTime() <= new Date(lastReadAt).getTime();
+      if (hasBeenRead) return counts;
+
+      counts[comment.taskId] = (counts[comment.taskId] || 0) + 1;
+      return counts;
+    }, {});
+  }, [currentUserId, readMarkerByTaskId, taskComments]);
   const [open, setOpen] = useState(false);
   const [columnsDialogOpen, setColumnsDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -647,6 +1040,51 @@ export default function Tasks() {
       assigneeId: task.assigneeId || ''
     });
   }, [campaigns, folders]);
+
+  const editingTaskId = editingTask?.id || '';
+  const editingTaskComments = editingTaskId ? taskCommentsByTaskId[editingTaskId] || [] : [];
+  const markTaskCommentsReadMutate = markTaskCommentsRead.mutate;
+  const lastOpenedReadTaskIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!editingTaskId) {
+      lastOpenedReadTaskIdRef.current = null;
+      return;
+    }
+    if (lastOpenedReadTaskIdRef.current === editingTaskId) return;
+
+    lastOpenedReadTaskIdRef.current = editingTaskId;
+    markTaskCommentsReadMutate(editingTaskId);
+  }, [editingTaskId, markTaskCommentsReadMutate]);
+
+  const handleAddTaskComment = async (taskId: string, body: string, parentId?: string) => {
+    const text = body.trim();
+    if (!text) return undefined;
+
+    try {
+      const savedComment = await addTaskComment.mutateAsync({
+        taskId,
+        parentId,
+        body: text,
+        authorName: currentUserName,
+        authorAvatar: currentUserAvatar,
+      });
+      markTaskCommentsRead.mutate(taskId);
+      return savedComment;
+    } catch (error) {
+      toast({ title: 'Could not add comment', description: getErrorMessage(error), variant: 'destructive' });
+      throw error;
+    }
+  };
+
+  const handleDeleteTaskComment = async (commentId: string) => {
+    try {
+      await deleteTaskComment.mutateAsync(commentId);
+    } catch (error) {
+      toast({ title: 'Could not delete comment', description: getErrorMessage(error), variant: 'destructive' });
+      throw error;
+    }
+  };
 
   const closeEditDialog = () => {
     setEditingTask(null);
@@ -882,6 +1320,7 @@ export default function Tasks() {
                   onOpenWorkLocation={navigate}
                   onEdit={openEditDialog}
                   onDelete={() => setTaskToDelete(task)}
+                  unreadCommentCount={unreadCommentCounts[task.id] || 0}
                   isDragging={draggingTaskId === task.id}
                 />
               );
@@ -1218,13 +1657,14 @@ export default function Tasks() {
 
       {/* Edit Task Dialog */}
       <Dialog open={!!editingTask} onOpenChange={(open) => !open && closeEditDialog()}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto border-0 bg-slate-50 shadow-2xl sm:max-w-[600px] sm:rounded-2xl">
-          <DialogHeader>
+        <DialogContent className="flex h-[90vh] max-h-[90vh] flex-col overflow-hidden border-0 bg-slate-50 shadow-2xl sm:max-w-[1040px] sm:rounded-2xl xl:max-w-[1120px]">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Edit Task</DialogTitle>
             <DialogDescription>Update task details, work location, assignment, status, or due date.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
+          <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto py-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:overflow-hidden xl:grid-cols-[minmax(0,1fr)_390px]">
+            <div className="space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-1 lg:[scrollbar-width:none] lg:[&::-webkit-scrollbar]:hidden">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Task Name</Label>
                 <Input
@@ -1310,7 +1750,7 @@ export default function Tasks() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Status</Label>
                 <Select value={taskForm.status} onValueChange={val => setTaskForm(prev => ({ ...prev, status: val }))}>
@@ -1372,8 +1812,26 @@ export default function Tasks() {
                 onChange={e => setTaskForm(prev => ({ ...prev, description: e.target.value }))}
               />
             </div>
+            </div>
+
+            {editingTask && (
+              <aside className="min-h-[360px] min-w-0 lg:min-h-0 lg:self-stretch">
+                <TaskCommentsPanel
+                  taskId={editingTask.id}
+                  comments={editingTaskComments}
+                  currentUserName={currentUserName}
+                  currentUserId={currentUserId}
+                  currentUserAvatar={currentUserAvatar}
+                  onAddComment={handleAddTaskComment}
+                  onDeleteComment={handleDeleteTaskComment}
+                  isSubmitting={addTaskComment.isPending}
+                  isDeleting={deleteTaskComment.isPending}
+                  className="h-full"
+                />
+              </aside>
+            )}
           </div>
-          <DialogFooter>
+          <DialogFooter className="shrink-0 border-t border-slate-200 pt-4">
             <Button
               variant="destructive"
               className="mr-auto rounded-xl"
