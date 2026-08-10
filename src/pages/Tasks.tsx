@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { DndContext, DragOverlay, closestCenter, pointerWithin, rectIntersection, KeyboardSensor, PointerSensor, useDroppable, useSensor, useSensors, DragEndEvent, DragStartEvent, type CollisionDetection } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -54,7 +54,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Calendar } from '@/components/ui/calendar';
-import { Task, TaskComment, TaskStage } from '@/types';
+import { Task, TaskComment, TaskStage, TeamMember } from '@/types';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { campaignPath, folderPath } from '@/lib/routes';
 
@@ -224,6 +224,7 @@ function TaskCommentsPanel({
   currentUserName,
   currentUserId,
   currentUserAvatar,
+  teamMembers = [],
   onAddComment,
   onDeleteComment,
   isSubmitting,
@@ -235,6 +236,7 @@ function TaskCommentsPanel({
   currentUserName: string;
   currentUserId: string;
   currentUserAvatar?: string;
+  teamMembers?: TeamMember[];
   onAddComment: (taskId: string, body: string, parentId?: string) => Promise<TaskComment | void>;
   onDeleteComment: (commentId: string) => Promise<void>;
   isSubmitting: boolean;
@@ -246,7 +248,11 @@ function TaskCommentsPanel({
   const [collapsedThreadIds, setCollapsedThreadIds] = useState<Set<string>>(() => new Set());
   const [commentPendingDelete, setCommentPendingDelete] = useState<TaskComment | null>(null);
   const [commentPendingScrollId, setCommentPendingScrollId] = useState<string | null>(null);
+  const [mentionStart, setMentionStart] = useState<number | null>(null);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const composerHighlightRef = useRef<HTMLDivElement | null>(null);
   const commentNodeRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const topLevelComments = useMemo(
@@ -270,6 +276,125 @@ function TaskCommentsPanel({
     }, {});
   }, [comments]);
 
+  const mentionableMembers = useMemo(() => {
+    const membersById = new Map<string, TeamMember>();
+    teamMembers.forEach(member => {
+      if (member.id) membersById.set(member.id, member);
+    });
+    if (currentUserId && !membersById.has(currentUserId)) {
+      membersById.set(currentUserId, {
+        id: currentUserId,
+        name: currentUserName,
+        email: '',
+        role: 'viewer',
+        avatar: currentUserAvatar,
+      });
+    }
+    return Array.from(membersById.values())
+      .filter(member => member.name.trim())
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [currentUserAvatar, currentUserId, currentUserName, teamMembers]);
+
+  const filteredMentionMembers = useMemo(() => {
+    const query = mentionQuery.trim().toLowerCase();
+    return mentionableMembers
+      .filter(member => {
+        if (!query) return true;
+        return member.name.toLowerCase().includes(query) || member.email.toLowerCase().includes(query);
+      })
+      .slice(0, 6);
+  }, [mentionQuery, mentionableMembers]);
+
+  const mentionMenuOpen = mentionStart !== null && filteredMentionMembers.length > 0;
+
+  const mentionNamePattern = useMemo(() => {
+    const names = mentionableMembers
+      .map(member => member.name.trim())
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length)
+      .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+
+    if (names.length === 0) return null;
+    return new RegExp(`@(${names.join('|')})(?=\\s|$|[.,!?;:])`, 'gi');
+  }, [mentionableMembers]);
+
+  const renderMentionText = (
+    body: string,
+    mentionClassName = "inline-flex rounded-md bg-blue-50 px-1 font-medium text-primary ring-1 ring-blue-100",
+  ) => {
+    if (!mentionNamePattern) return body;
+
+    const parts: Array<string | ReactNode> = [];
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    mentionNamePattern.lastIndex = 0;
+
+    while ((match = mentionNamePattern.exec(body)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(body.slice(lastIndex, match.index));
+      }
+
+      const mention = match[0];
+      parts.push(
+        <span
+          key={`${match.index}-${mention}`}
+          className={mentionClassName}
+        >
+          {mention}
+        </span>
+      );
+      lastIndex = match.index + mention.length;
+    }
+
+    if (lastIndex < body.length) {
+      parts.push(body.slice(lastIndex));
+    }
+
+    return parts.length > 0 ? parts : body;
+  };
+
+  const syncMentionState = (value: string, caretIndex: number | null) => {
+    if (caretIndex === null) {
+      setMentionStart(null);
+      setMentionQuery('');
+      setActiveMentionIndex(0);
+      return;
+    }
+
+    const textBeforeCaret = value.slice(0, caretIndex);
+    const match = /(^|\s)@([^\s@]*)$/.exec(textBeforeCaret);
+    if (!match) {
+      setMentionStart(null);
+      setMentionQuery('');
+      setActiveMentionIndex(0);
+      return;
+    }
+
+    const query = match[2] || '';
+    setMentionStart(caretIndex - query.length - 1);
+    setMentionQuery(query);
+    setActiveMentionIndex(0);
+  };
+
+  const insertMention = (member: TeamMember) => {
+    if (mentionStart === null) return;
+
+    const composer = composerRef.current;
+    const caretIndex = composer?.selectionStart ?? commentText.length;
+    const mentionText = `@${member.name} `;
+    const nextText = `${commentText.slice(0, mentionStart)}${mentionText}${commentText.slice(caretIndex)}`;
+    const nextCaretIndex = mentionStart + mentionText.length;
+
+    setCommentText(nextText);
+    setMentionStart(null);
+    setMentionQuery('');
+    setActiveMentionIndex(0);
+    window.setTimeout(() => {
+      composerRef.current?.focus();
+      composerRef.current?.setSelectionRange(nextCaretIndex, nextCaretIndex);
+    }, 0);
+  };
+
   const submitComment = async () => {
     const text = commentText.trim();
     if (!text) return;
@@ -284,6 +409,9 @@ function TaskCommentsPanel({
       }
       setCommentText('');
       setReplyingToId(null);
+      setMentionStart(null);
+      setMentionQuery('');
+      setActiveMentionIndex(0);
       if (savedComment?.id) setCommentPendingScrollId(savedComment.id);
     } catch {
       return;
@@ -303,6 +431,11 @@ function TaskCommentsPanel({
     });
     setCommentPendingScrollId(null);
   }, [commentPendingScrollId, comments]);
+
+  useEffect(() => {
+    if (activeMentionIndex < filteredMentionMembers.length) return;
+    setActiveMentionIndex(Math.max(0, filteredMentionMembers.length - 1));
+  }, [activeMentionIndex, filteredMentionMembers.length]);
 
   const replyingToComment = replyingToId
     ? comments.find(comment => comment.id === replyingToId)
@@ -364,7 +497,7 @@ function TaskCommentsPanel({
             )}
           </div>
         </div>
-        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{comment.body}</p>
+        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-600">{renderMentionText(comment.body)}</p>
       </div>
     </div>
   );
@@ -450,7 +583,35 @@ function TaskCommentsPanel({
       </div>
 
       <div className="shrink-0 border-t border-slate-100 p-3">
-        <div className="rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-sm transition-all focus-within:border-primary/30 focus-within:ring-2 focus-within:ring-primary/10">
+        <div className="relative rounded-xl border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-sm transition-all focus-within:border-primary/30 focus-within:ring-2 focus-within:ring-primary/10">
+          {mentionMenuOpen && (
+            <div className="absolute bottom-[calc(100%+8px)] left-3 right-3 z-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+              <div className="max-h-56 overflow-y-auto py-1">
+                {filteredMentionMembers.map((member, index) => (
+                  <button
+                    key={member.id}
+                    type="button"
+                    className={cn(
+                      "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors",
+                      index === activeMentionIndex ? "bg-blue-50 text-primary" : "text-slate-700 hover:bg-slate-50"
+                    )}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      insertMention(member);
+                    }}
+                  >
+                    <Avatar className="h-7 w-7">
+                      <AvatarImage src={member.avatar} alt={member.name} />
+                      <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">
+                        {getInitials(member.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span className="min-w-0 flex-1 truncate font-medium">{member.name}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {replyingToComment && (
             <div className="mb-2 flex items-center justify-between gap-3 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-700">
               <span className="min-w-0 truncate">Replying to {replyingToComment.authorName}</span>
@@ -471,19 +632,78 @@ function TaskCommentsPanel({
               <AvatarImage src={currentUserAvatar} alt={currentUserName} />
               <AvatarFallback className="bg-primary/10 text-[10px] font-semibold text-primary">{getInitials(currentUserName)}</AvatarFallback>
             </Avatar>
-            <Textarea
-              ref={composerRef}
-              placeholder={replyingToComment ? `Reply as ${currentUserName}` : 'Add a comment...'}
-              className="min-h-[36px] max-h-[96px] flex-1 resize-none border-0 bg-transparent px-0 py-2 text-sm leading-5 placeholder:text-slate-400 focus-visible:ring-0"
-              value={commentText}
-              onChange={(event) => setCommentText(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  void submitComment();
-                }
-              }}
-            />
+            <div className="relative min-h-[52px] flex-1">
+              {commentText && (
+                <div
+                  ref={composerHighlightRef}
+                  className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-0 py-2 text-sm leading-5 text-slate-700"
+                  aria-hidden="true"
+                >
+                  {renderMentionText(
+                    commentText,
+                    "text-primary underline decoration-primary/30 underline-offset-2",
+                  )}
+                </div>
+              )}
+              <Textarea
+                ref={composerRef}
+                placeholder={replyingToComment ? `Reply as ${currentUserName}` : 'Add a comment...'}
+                className={cn(
+                  "relative z-10 min-h-[36px] max-h-[96px] w-full resize-none border-0 bg-transparent px-0 py-2 text-sm leading-5 caret-slate-900 placeholder:text-slate-400 focus-visible:ring-0",
+                  commentText && "text-transparent selection:bg-primary/20"
+                )}
+                value={commentText}
+                onScroll={(event) => {
+                  if (composerHighlightRef.current) {
+                    composerHighlightRef.current.scrollTop = event.currentTarget.scrollTop;
+                  }
+                }}
+                onChange={(event) => {
+                  setCommentText(event.target.value);
+                  syncMentionState(event.target.value, event.target.selectionStart);
+                }}
+                onClick={(event) => {
+                  const target = event.currentTarget;
+                  syncMentionState(target.value, target.selectionStart);
+                }}
+                onKeyUp={(event) => {
+                  const target = event.currentTarget;
+                  if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                    syncMentionState(target.value, target.selectionStart);
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (mentionMenuOpen) {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault();
+                      setActiveMentionIndex(previous => (previous + 1) % filteredMentionMembers.length);
+                      return;
+                    }
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault();
+                      setActiveMentionIndex(previous => (previous - 1 + filteredMentionMembers.length) % filteredMentionMembers.length);
+                      return;
+                    }
+                    if (event.key === 'Enter' || event.key === 'Tab') {
+                      event.preventDefault();
+                      insertMention(filteredMentionMembers[activeMentionIndex]);
+                      return;
+                    }
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      setMentionStart(null);
+                      setMentionQuery('');
+                      setActiveMentionIndex(0);
+                      return;
+                    }
+                  }
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    void submitComment();
+                  }
+                }}
+              />
+            </div>
             <Button
               type="button"
               size="icon"
@@ -1822,6 +2042,7 @@ export default function Tasks() {
                   currentUserName={currentUserName}
                   currentUserId={currentUserId}
                   currentUserAvatar={currentUserAvatar}
+                  teamMembers={teamMembers}
                   onAddComment={handleAddTaskComment}
                   onDeleteComment={handleDeleteTaskComment}
                   isSubmitting={addTaskComment.isPending}
