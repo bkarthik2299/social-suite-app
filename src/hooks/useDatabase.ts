@@ -13,7 +13,7 @@ import { supabase } from '@/lib/supabase';
 import { sortPortalRowsByCreatedAt } from '@/lib/portalReview';
 import { useAuth } from '@/context/AuthContext';
 import type { Database, Json } from '@/types/supabase';
-import type { Campaign, CampaignType, Folder, Note, Project, Task, TaskStage } from '@/types';
+import type { Campaign, CampaignType, Folder, Note, Project, Task, TaskComment, TaskStage, TeamMember } from '@/types';
 
 type ProjectRow = Database['public']['Tables']['projects']['Row'];
 type FolderRow = Database['public']['Tables']['folders']['Row'];
@@ -21,6 +21,8 @@ type CampaignRow = Database['public']['Tables']['campaigns']['Row'];
 type ContentItemRow = Database['public']['Tables']['content_items']['Row'];
 type NoteRow = Database['public']['Tables']['notes']['Row'];
 type TaskRow = Database['public']['Tables']['tasks']['Row'];
+type TaskCommentRow = Database['public']['Tables']['task_comments']['Row'];
+type TaskCommentReadRow = Database['public']['Tables']['task_comment_reads']['Row'];
 type TaskStageRow = Database['public']['Tables']['task_stages']['Row'];
 type PortalClientUpdate = Database['public']['Tables']['portal_clients']['Update'];
 type PortalReviewPostRow = Database['public']['Tables']['portal_review_posts']['Row'];
@@ -37,6 +39,17 @@ type AddPortalReviewPostInput = {
     content_item_id?: string;
     content_type: string;
     snapshot: JsonRecord;
+};
+type TeamMemberResponse = {
+    id?: string;
+    userId?: string;
+    name?: string;
+    email?: string;
+    role?: TeamMember['role'];
+    avatarUrl?: string;
+};
+type TeamListResponse = {
+    members?: TeamMemberResponse[];
 };
 
 const getString = (value: unknown): string => typeof value === 'string' ? value : '';
@@ -357,6 +370,18 @@ const mapTask = (task: TaskRow): Task => ({
     assigneeId: task.assignee_id || undefined,
 });
 
+const mapTaskComment = (comment: TaskCommentRow): TaskComment => ({
+    id: comment.id,
+    taskId: comment.task_id,
+    parentId: comment.parent_id || undefined,
+    authorUserId: comment.author_user_id || undefined,
+    authorName: comment.author_name,
+    authorAvatar: comment.author_avatar || undefined,
+    body: comment.body,
+    createdAt: comment.created_at,
+    updatedAt: comment.updated_at,
+});
+
 const mapTaskStage = (stage: TaskStageRow): TaskStage => ({
     id: stage.id,
     title: stage.title,
@@ -372,6 +397,9 @@ const keys = {
     campaigns: (folderId: string) => ['campaigns', folderId] as const,
     contentItems: (campaignId: string) => ['content_items', campaignId] as const,
     tasks: (orgId: string) => ['tasks', orgId] as const,
+    teamMembers: (orgId: string) => ['team_members', orgId] as const,
+    taskComments: (orgId: string) => ['task_comments', orgId] as const,
+    taskCommentReads: (orgId: string, userId: string) => ['task_comment_reads', orgId, userId] as const,
     taskStages: (orgId: string) => ['task_stages', orgId] as const,
     calendarEvents: (campaignId?: string) => ['calendar_events', campaignId] as const,
     // Micro tools
@@ -842,6 +870,170 @@ export function useTasks() {
 }
 
 // ── CALENDAR EVENTS ────────────────────────────────────────────────────
+
+export function useOrganizationTeamMembers() {
+    const { organization, user } = useAuth();
+    const orgId = organization?.id ?? '';
+
+    return useQuery({
+        queryKey: keys.teamMembers(orgId),
+        queryFn: async () => {
+            const { data, error } = await supabase.functions.invoke('team-invitations', {
+                body: { action: 'list', orgId },
+            });
+            if (error) throw error;
+
+            const members = ((data as TeamListResponse | null)?.members || []);
+            return members
+                .map((member): TeamMember => {
+                    const id = member.userId || member.id || '';
+                    const email = member.email || '';
+                    return {
+                        id,
+                        name: member.name || (email ? email.split('@')[0] : 'Member'),
+                        email,
+                        role: member.role || 'viewer',
+                        avatar: member.avatarUrl || undefined,
+                    };
+                })
+                .filter((member) => Boolean(member.id));
+        },
+        enabled: !!orgId && !!user?.id,
+    });
+}
+
+export function useTaskComments() {
+    const { organization, user } = useAuth();
+    const qc = useQueryClient();
+    const orgId = organization?.id ?? '';
+    const userId = user?.id ?? '';
+    const commentsKey = keys.taskComments(orgId);
+    const readsKey = keys.taskCommentReads(orgId, userId);
+
+    const commentsQuery = useQuery({
+        queryKey: commentsKey,
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('task_comments')
+                .select('*')
+                .eq('org_id', orgId)
+                .order('created_at', { ascending: true });
+            if (error) throw error;
+            return data.map(mapTaskComment);
+        },
+        enabled: !!orgId,
+    });
+
+    const readMarkersQuery = useQuery({
+        queryKey: readsKey,
+        queryFn: async () => {
+            const { data, error } = await supabase
+                .from('task_comment_reads')
+                .select('*')
+                .eq('org_id', orgId)
+                .eq('user_id', userId);
+            if (error) throw error;
+            return (data || []) as TaskCommentReadRow[];
+        },
+        enabled: !!orgId && !!userId,
+    });
+
+    useEffect(() => {
+        if (!orgId) return;
+
+        const channel = supabase
+            .channel(`task-comments:${orgId}`)
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'task_comments', filter: `org_id=eq.${orgId}` },
+                () => {
+                    qc.invalidateQueries({ queryKey: keys.taskComments(orgId) });
+                },
+            )
+            .subscribe();
+
+        return () => {
+            void supabase.removeChannel(channel);
+        };
+    }, [orgId, qc]);
+
+    const addTaskComment = useMutation({
+        mutationFn: async (comment: {
+            taskId: string;
+            body: string;
+            authorName: string;
+            authorAvatar?: string;
+            parentId?: string;
+        }) => {
+            if (!orgId || !userId) throw new Error('Sign in to comment on tasks.');
+
+            const { data, error } = await supabase
+                .from('task_comments')
+                .insert({
+                    org_id: orgId,
+                    task_id: comment.taskId,
+                    parent_id: comment.parentId || null,
+                    author_user_id: userId,
+                    author_name: comment.authorName,
+                    author_avatar: comment.authorAvatar || null,
+                    body: comment.body,
+                })
+                .select()
+                .single();
+            if (error) throw error;
+            return mapTaskComment(data);
+        },
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: commentsKey });
+        },
+    });
+
+    const deleteTaskComment = useMutation({
+        mutationFn: async (commentId: string) => {
+            if (!orgId || !userId) throw new Error('Sign in to delete comments.');
+
+            const { error } = await supabase
+                .from('task_comments')
+                .delete()
+                .eq('id', commentId)
+                .eq('org_id', orgId)
+                .eq('author_user_id', userId);
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: commentsKey });
+        },
+    });
+
+    const markTaskCommentsRead = useMutation({
+        mutationFn: async (taskId: string) => {
+            if (!orgId || !userId) return;
+
+            const { error } = await supabase
+                .from('task_comment_reads')
+                .upsert({
+                    task_id: taskId,
+                    user_id: userId,
+                    org_id: orgId,
+                    last_read_at: new Date().toISOString(),
+                }, { onConflict: 'task_id,user_id' });
+            if (error) throw error;
+        },
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: readsKey });
+        },
+    });
+
+    return {
+        comments: commentsQuery.data || [],
+        commentsQuery,
+        readMarkers: readMarkersQuery.data || [],
+        readMarkersQuery,
+        addTaskComment,
+        deleteTaskComment,
+        markTaskCommentsRead,
+    };
+}
 
 export function useAllContentItems() {
     const { organization } = useAuth();

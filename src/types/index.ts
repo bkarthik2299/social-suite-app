@@ -34,6 +34,18 @@ export interface Task {
   assigneeId?: string;
 }
 
+export interface TaskComment {
+  id: string;
+  taskId: string;
+  parentId?: string;
+  authorUserId?: string;
+  authorName: string;
+  authorAvatar?: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface TaskStage {
   id: string;
   title: string;
