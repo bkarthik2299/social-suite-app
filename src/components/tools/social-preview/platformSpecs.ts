@@ -4,10 +4,11 @@ import {
     Instagram,
     Linkedin,
     Music2,
-    Twitter,
     Youtube,
 } from 'lucide-react';
+import type { ComponentType } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { XLogo } from '@/components/shared/XLogo';
 
 export interface SafeZone {
     type: 'safe' | 'warning' | 'danger';
@@ -35,7 +36,7 @@ export interface PlatformSpec {
     id: string;
     name: string;
     shortName?: string;
-    icon: LucideIcon;
+    icon: LucideIcon | ComponentType<{ className?: string }>;
     accentClass: string;
     formats: PlatformFormat[];
 }
@@ -209,9 +210,9 @@ export const platformSpecs: PlatformSpec[] = [
     },
     {
         id: 'x',
-        name: 'X / Twitter',
+        name: 'X',
         shortName: 'X',
-        icon: Twitter,
+        icon: XLogo,
         accentClass: 'text-slate-950 bg-slate-100 border-slate-200',
         formats: [
             {
@@ -279,4 +280,3 @@ export const platformSpecs: PlatformSpec[] = [
         ],
     },
 ];
-

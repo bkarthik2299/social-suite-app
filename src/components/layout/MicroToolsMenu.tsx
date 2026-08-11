@@ -70,7 +70,7 @@ export function MicroToolsMenu() {
         } else if (toolName === "Notes") {
             navigate("/tools/notes");
         } else if (toolName === "Brand Guide") {
-            navigate("/tools/brand-guide");
+            navigate("/tools/brand-guide", { state: { brandGuideView: 'list', requestedAt: Date.now() } });
         }
     };
 

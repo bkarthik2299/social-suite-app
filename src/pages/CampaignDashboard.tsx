@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Twitter, Sparkles, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft, Download } from 'lucide-react';
+import { LayoutGrid, Search, Share2, FileText, Plus, MoreHorizontal, Calendar as CalendarIcon, X, SlidersHorizontal, Image as ImageIcon, Eye, Instagram, Facebook, Linkedin, Sparkles, Smartphone, Monitor, UploadCloud, Info, ChevronDown, ChevronRight, Heart, MessageCircle, Send, Repeat, BarChart2, Globe, ThumbsUp, Trash2, Wifi, Battery, Mic, ScanSearch, Home, Bell, MoreVertical, Pencil, Check, Settings, PanelRight, ChevronLeft, Download } from 'lucide-react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -74,6 +74,7 @@ import {
 } from '@/lib/campaignMedia';
 import type { CampaignMediaAsset, CampaignMediaFormat } from '@/types';
 import { formatPublishableCopy } from '../../supabase/functions/_shared/publishable_copy';
+import { XLogo } from '@/components/shared/XLogo';
 
 // --- Platform Constants ---
 const PLATFORM_SPECS = {
@@ -88,7 +89,7 @@ const PLATFORM_SPECS = {
         bestFor: 'Professional updates, documents, industry news.'
     },
     twitter: {
-        name: 'Twitter (X)',
+        name: 'X',
         color: '#1D9BF0', // Action Blue
         bgColor: '#FFFFFF',
         font: 'font-sans', // System UI
@@ -349,41 +350,6 @@ const downloadImageAsset = async (imageUrl: string, filename = 'social-suite-ima
 
 const uniqueTextValues = (values: string[]) => Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 
-const buildSocialCaptionDraft = ({
-    topic,
-    visualGuide,
-    platforms,
-    projectName,
-}: {
-    topic: string;
-    visualGuide: string;
-    platforms: string[];
-    projectName?: string;
-}) => {
-    const cleanedTopic = topic.trim();
-    const cleanedVisualGuide = visualGuide.trim();
-    const selectedPlatformNames = platforms
-        .map((platform) => PLATFORM_SPECS[normalizeSocialPlatform(platform)].name)
-        .join(', ');
-    const opener = cleanedTopic || `A practical update from ${projectName || 'the team'}.`;
-    const visualCue = cleanedVisualGuide
-        ? `Pair it with a visual that feels like this: ${cleanedVisualGuide}`
-        : '';
-    const platformCue = selectedPlatformNames
-        ? `Format the final post for ${selectedPlatformNames}.`
-        : '';
-
-    return [
-        opener,
-        '',
-        'Make the next step easy: lead with the value, keep the message focused, and ask readers to take one clear action.',
-        visualCue,
-        platformCue,
-        '',
-        'Save this for your next planning session and share it with the teammate shaping the campaign.'
-    ].filter(Boolean).join('\n');
-};
-
 const stripCaptionTitlePrefix = (caption: string, candidates: string[]) => {
     const original = caption.trim();
     if (!original) return '';
@@ -501,7 +467,7 @@ const PlatformIcon = ({ platform, active, onClick, size = "md" }: { platform: st
         instagram: Instagram,
         facebook: Facebook,
         linkedin: Linkedin,
-        twitter: Twitter
+        twitter: XLogo
     };
     const Icon = icons[normalized] || Share2;
     const label = PLATFORM_SPECS[normalized].name;
@@ -556,7 +522,7 @@ const PlatformMark = ({ platform, className }: { platform: string; className?: s
         instagram: Instagram,
         facebook: Facebook,
         linkedin: Linkedin,
-        twitter: Twitter,
+        twitter: XLogo,
     };
     const styles = {
         instagram: 'bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 text-white',
@@ -1087,7 +1053,7 @@ const SocialPreview = ({ post, accountName, onImageClick }: { post: Partial<Soci
                                         </div>
                                     </div>
                                 ) : (
-                                    /* STANDARD LAYOUT (Text First) - LinkedIn, Facebook, Twitter */
+                                    /* STANDARD LAYOUT (Text First) - LinkedIn, Facebook, X */
                                     <div className={cn(
                                         "bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-300 overflow-hidden shrink-0",
                                         device === 'mobile' ? "w-full" : "w-full max-w-[600px]",
@@ -1333,19 +1299,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
         } else {
             setSelectedPlatforms([...selectedPlatforms, p]);
         }
-    };
-
-    const handleGenerateCaption = () => {
-        setCaption(buildSocialCaptionDraft({
-            topic,
-            visualGuide,
-            platforms: selectedPlatforms,
-            projectName,
-        }));
-        toast({
-            title: 'Caption generated',
-            description: 'A draft caption was added from the topic, visual guide, and selected channels.',
-        });
     };
 
     const handleMediaFilesSelected = (files: File[]) => {
@@ -1683,15 +1636,6 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                     <CardContent className="p-6">
                                         <div className="flex justify-between items-center mb-3">
                                             <Label className="text-sm font-semibold text-slate-700">Caption</Label>
-                                            <Button
-                                                type="button"
-                                                variant="ghost"
-                                                size="sm"
-                                                className="h-7 text-xs text-indigo-600 bg-indigo-50 hover:bg-indigo-100 font-medium"
-                                                onClick={handleGenerateCaption}
-                                            >
-                                                <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Generate with AI
-                                            </Button>
                                         </div>
                                         <div className="relative">
                                             <Textarea
@@ -2899,7 +2843,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
 
     const platformSpecs = {
         linkedin: { name: 'LinkedIn', color: '#0A66C2', textLimit: 150, headlineLimit: 70 },
-        twitter: { name: 'Twitter (X)', color: '#1D9BF0', textLimit: 280, headlineLimit: 70 },
+        twitter: { name: 'X', color: '#1D9BF0', textLimit: 280, headlineLimit: 70 },
         instagram: { name: 'Instagram', color: '#E1306C', textLimit: 125, headlineLimit: 40 },
         facebook: { name: 'Facebook', color: '#0866FF', textLimit: 125, headlineLimit: 40 },
     };
@@ -2909,7 +2853,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
 
     const AD_PLATFORM_SPECS = {
         linkedin: { name: 'LinkedIn', color: '#0A66C2', textLimit: 150, headlineLimit: 70, ratios: ['1.91:1 (Landscape)', '1:1 (Square)', '4:5 (Portrait)'], bestFor: 'Professional B2B advertising, lead generation.' },
-        twitter: { name: 'Twitter (X)', color: '#1D9BF0', textLimit: 280, headlineLimit: 70, ratios: ['1.91:1 (Landscape)', '1:1 (Square)'], bestFor: 'Awareness campaigns, trending topics.' },
+        twitter: { name: 'X', color: '#1D9BF0', textLimit: 280, headlineLimit: 70, ratios: ['1.91:1 (Landscape)', '1:1 (Square)'], bestFor: 'Awareness campaigns, trending topics.' },
         instagram: { name: 'Instagram', color: '#E1306C', textLimit: 125, headlineLimit: 40, ratios: ['4:5 (Portrait)', '1:1 (Square)'], bestFor: 'Visual storytelling, product showcases.' },
         facebook: { name: 'Facebook', color: '#0866FF', textLimit: 125, headlineLimit: 40, ratios: ['1:1 (Square)', '4:5 (Portrait)'], bestFor: 'Broad reach, retargeting, conversions.' },
     };
@@ -3227,7 +3171,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                                         {primaryText || 'Your ad copy will appear here...'}
                                                     </p>
 
-                                                    {/* Website Card - Twitter style (media + headline as card) */}
+                                                    {/* Website Card - X style (media + headline as card) */}
                                                     <div className="mt-3 border border-slate-200 rounded-2xl overflow-hidden">
                                                         <RenderAdMedia />
                                                         <div className="p-3 bg-white border-t">
@@ -3355,8 +3299,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                             <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 block">Select Channels</Label>
                                             <div className="flex flex-wrap gap-3">
                                                 {(['linkedin', 'twitter', 'instagram', 'facebook'] as const).map((p) => {
-                                                    const Icon = p === 'linkedin' ? Linkedin : p === 'twitter' ? Twitter : p === 'instagram' ? Instagram : Facebook;
-                                                    const label = p === 'twitter' ? 'Twitter' : p.charAt(0).toUpperCase() + p.slice(1);
+                                                    const Icon = p === 'linkedin' ? Linkedin : p === 'twitter' ? XLogo : p === 'instagram' ? Instagram : Facebook;
+                                                    const label = p === 'twitter' ? 'X' : p.charAt(0).toUpperCase() + p.slice(1);
                                                     const isSelected = platform === p;
 
                                                     return (

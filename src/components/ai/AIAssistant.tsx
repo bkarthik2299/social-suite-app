@@ -841,7 +841,6 @@ export function AIAssistant() {
                   <DialogDescription className="mt-1">{missionDescription(currentRun, running)}</DialogDescription>
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {researchEvent && <ResearchNotesButton onClick={() => setResearchNotesOpen(true)} />}
                   <Button
                     size="sm"
                     className="h-9 gap-2 rounded-lg bg-primary px-3.5 text-white shadow-[0_12px_28px_-20px_rgba(37,99,235,0.65)] hover:bg-primary/90"

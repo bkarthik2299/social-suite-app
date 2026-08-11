@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     ArrowLeft,
     BadgeInfo,
@@ -112,7 +112,7 @@ const socialPlatforms = [
     { id: 'instagram', label: 'Instagram', placeholder: 'instagram.com/brand' },
     { id: 'facebook', label: 'Facebook', placeholder: 'facebook.com/brand' },
     { id: 'linkedin', label: 'LinkedIn', placeholder: 'linkedin.com/company/brand' },
-    { id: 'x', label: 'X / Twitter', placeholder: 'x.com/brand' },
+    { id: 'x', label: 'X', placeholder: 'x.com/brand' },
     { id: 'tiktok', label: 'TikTok', placeholder: 'tiktok.com/@brand' },
     { id: 'youtube', label: 'YouTube', placeholder: 'youtube.com/@brand' },
     { id: 'pinterest', label: 'Pinterest', placeholder: 'pinterest.com/brand' },
@@ -168,9 +168,21 @@ export default function BrandGuidePage() {
     const [openSections, setOpenSections] = useState<string[]>(['identity']);
     const [activeSection, setActiveSection] = useState(sections[0].id);
     const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirm | null>(null);
+    const sectionNavigationLockRef = useRef(false);
+    const sectionNavigationTimersRef = useRef<number[]>([]);
 
     useEffect(() => {
-        if ((location.state as { onboardingAction?: string } | null)?.onboardingAction !== 'create-brand-guide') return;
+        const routeState = location.state as { onboardingAction?: string; brandGuideView?: string } | null;
+
+        if (routeState?.brandGuideView === 'list') {
+            setSelectedGuideId('');
+            setOpenSections(['identity']);
+            setActiveSection(sections[0].id);
+            navigate(location.pathname, { replace: true, state: null });
+            return;
+        }
+
+        if (routeState?.onboardingAction !== 'create-brand-guide') return;
         setNewGuideName('');
         setNewGuideProjectId('none');
         setCreateOpen(true);
@@ -226,6 +238,7 @@ export default function BrandGuidePage() {
 
     useEffect(() => {
         setDraft(guide || {});
+        setHasVisualAnalysis(false);
     }, [guide?.id]);
 
     useEffect(() => {
@@ -260,14 +273,19 @@ export default function BrandGuidePage() {
 
         const scrollRoot = document.querySelector('main');
         const updateActiveSection = () => {
+            if (sectionNavigationLockRef.current) return;
+
             const rootTop = scrollRoot?.getBoundingClientRect().top ?? 0;
             const activationLine = rootTop + 96;
             let nextSection = sections[0].id;
+            let closestDistance = Number.POSITIVE_INFINITY;
 
             sections.forEach((section) => {
                 const element = document.getElementById(section.id);
                 if (!element) return;
-                if (element.getBoundingClientRect().top <= activationLine) {
+                const distance = Math.abs(element.getBoundingClientRect().top - activationLine);
+                if (distance <= closestDistance) {
+                    closestDistance = distance;
                     nextSection = section.id;
                 }
             });
@@ -284,6 +302,12 @@ export default function BrandGuidePage() {
             window.removeEventListener('resize', updateActiveSection);
         };
     }, [hasGuide, openSections]);
+
+    useEffect(() => {
+        return () => {
+            sectionNavigationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        };
+    }, []);
 
     const updateDraft = (field: keyof BrandGuide, value: unknown) => {
         setDraft((current) => ({ ...current, [field]: value }));
@@ -382,6 +406,7 @@ export default function BrandGuidePage() {
                     }));
                     setKnowledgeDraft('');
                     setOpenSections(['identity']);
+                    setHasVisualAnalysis(false);
                     toast({ title: 'Brand Guide reset', description: `${guideName} is ready for fresh details.` });
                 },
                 onError: (error) => {
@@ -404,14 +429,48 @@ export default function BrandGuidePage() {
         }
     };
 
-    const scrollToSection = (sectionId: string) => {
+    const scrollToSection = useCallback((sectionId: string) => {
+        sectionNavigationTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        sectionNavigationTimersRef.current = [];
+        sectionNavigationLockRef.current = true;
         setActiveSection(sectionId);
         setOpenSections((current) => current.includes(sectionId) ? current : [...current, sectionId]);
-        requestAnimationFrame(() => {
-            document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
         window.history.replaceState(null, '', `#${sectionId}`);
-    };
+
+        const scrollIntoView = () => {
+            const element = document.getElementById(sectionId);
+            if (!element) return;
+
+            const scrollRoot = document.querySelector('main');
+            if (!scrollRoot) {
+                element.scrollIntoView({ behavior: 'auto', block: 'start' });
+                return;
+            }
+
+            const rootRect = scrollRoot.getBoundingClientRect();
+            const elementRect = element.getBoundingClientRect();
+            const targetTop = scrollRoot.scrollTop + elementRect.top - rootRect.top - 16;
+            scrollRoot.scrollTo({ top: Math.max(targetTop, 0), behavior: 'auto' });
+            setActiveSection(sectionId);
+        };
+
+        requestAnimationFrame(() => {
+            requestAnimationFrame(scrollIntoView);
+        });
+        sectionNavigationTimersRef.current = [120, 320, 520].map((delay) => window.setTimeout(scrollIntoView, delay));
+        sectionNavigationTimersRef.current.push(window.setTimeout(() => {
+            scrollIntoView();
+            sectionNavigationLockRef.current = false;
+            setActiveSection(sectionId);
+        }, 680));
+    }, []);
+
+    useEffect(() => {
+        if (!hasGuide || !location.hash) return;
+        const sectionId = decodeURIComponent(location.hash.slice(1));
+        if (!sections.some((section) => section.id === sectionId)) return;
+        scrollToSection(sectionId);
+    }, [hasGuide, location.hash, scrollToSection]);
 
     const submitColor = async () => {
         if (!guideId) return;
@@ -543,9 +602,9 @@ export default function BrandGuidePage() {
             setVisualPatternNotes(result.analysis.pattern_notes);
             setHasVisualAnalysis(true);
             setVisualAnalysisOpen(true);
-            toast({ title: 'Visual direction analysed', description: `Drafted visual rules from ${result.imageCount} moodboard images.` });
+            toast({ title: 'Visual direction analyzed', description: `Drafted visual rules from ${result.imageCount} moodboard images.` });
         } catch (error) {
-            toast({ title: 'Could not analyse visual direction', description: errorMessage(error), variant: 'destructive' });
+            toast({ title: 'Could not analyze visual direction', description: errorMessage(error), variant: 'destructive' });
         }
     };
 
@@ -632,9 +691,16 @@ export default function BrandGuidePage() {
     const knowledgeStatus = brandKnowledgeDocument?.status || 'missing';
     const knowledgeUpdatedAt = brandKnowledgeDocument?.generated_at || brandKnowledgeDocument?.updated_at || '';
     const showFolderView = !selectedGuideId;
+    const hasSavedVisualDirection = [
+        stringValue(draft.photography_style),
+        stringValue(draft.illustration_style),
+        stringValue(draft.iconography_rules),
+        stringValue(draft.layout_composition),
+    ].some((value) => value.trim().length > 0);
+    const visualAnalysisButtonLabel = hasVisualAnalysis || hasSavedVisualDirection ? 'Reanalyze Images' : 'Analyze Images';
 
     return (
-        <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Brand Guide', path: '/tools/brand-guide' }]}>
+        <AppLayout breadcrumbs={[{ label: 'Tools', path: '#' }, { label: 'Brand Guide', path: '/tools/brand-guide', onClick: returnToFolders }]}>
             <div className="mx-auto flex max-w-7xl flex-col gap-6 pb-10">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div className="min-w-0">
@@ -1066,13 +1132,13 @@ export default function BrandGuidePage() {
                                                     onClick={runVisualAnalysis}
                                                 >
                                                     {analyseVisualDirection.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                                                    {analyseVisualDirection.isPending ? 'Analysing...' : hasVisualAnalysis ? 'Re-analyse' : 'Analyse Images'}
+                                                    {analyseVisualDirection.isPending ? 'Analyzing...' : visualAnalysisButtonLabel}
                                                 </Button>
                                             </div>
                                         </div>
                                         {moodImages.length > 0 && moodImages.length < recommendedAnalysisImages && (
                                             <p className="mt-3 text-xs font-medium text-slate-500">
-                                                {recommendedAnalysisImages - moodImages.length} more {recommendedAnalysisImages - moodImages.length === 1 ? 'image' : 'images'} needed to analyse. The AI works best with recurring patterns across multiple posts.
+                                                {recommendedAnalysisImages - moodImages.length} more {recommendedAnalysisImages - moodImages.length === 1 ? 'image' : 'images'} needed to analyze. The AI works best with recurring patterns across multiple posts.
                                             </p>
                                         )}
                                     </div>
