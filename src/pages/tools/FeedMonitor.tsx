@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Search, Plus, FolderPlus, MoreHorizontal, Link, Trash2, Edit2, Share2, Facebook, Instagram, Twitter, Linkedin, RotateCcw, Loader2, PlusCircle } from 'lucide-react';
+import { Search, Plus, FolderPlus, MoreHorizontal, Link, Trash2, Edit2, Share2, Facebook, Instagram, Linkedin, RotateCcw, Loader2, PlusCircle } from 'lucide-react';
 import { TikTokEmbed, YouTubeEmbed, TwitterEmbed, InstagramEmbed, LinkedInEmbed, FacebookEmbed } from 'react-social-media-embed';
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { XLogo } from '@/components/shared/XLogo';
 
 type SocialScriptWindow = Window & {
     twttr?: { widgets?: { load: (element?: Element | null) => void } };
@@ -47,7 +48,7 @@ const socialWindow = () => window as SocialScriptWindow;
 
 const useSocialScripts = () => {
     useEffect(() => {
-        // Twitter
+        // X embeds still load through the twitter.com widgets endpoint.
         if (!socialWindow().twttr) {
             const script = document.createElement('script');
             script.src = 'https://platform.twitter.com/widgets.js';
@@ -77,7 +78,7 @@ const useSocialScripts = () => {
 };
 
 // Fetch Open Graph metadata using multiple CORS proxy fallbacks
-// Special handling for Instagram and X/Twitter
+// Special handling for Instagram and X
 const fetchOGMetadata = async (url: string): Promise<{
     title?: string;
     description?: string;
@@ -103,9 +104,9 @@ const fetchOGMetadata = async (url: string): Promise<{
         }
     }
 
-    // Special handling for X/Twitter - use fxtwitter.com bridge for better OG data
+    // Special handling for X - use fxtwitter.com bridge for better OG data
     if (url.includes('twitter.com/') || url.includes('x.com/')) {
-        console.log('X/Twitter URL detected, using FxTwitter bridge');
+        console.log('X URL detected, using FxTwitter bridge');
         // Convert to fxtwitter URL for OG scraping
         let fxUrl = url.replace('twitter.com/', 'fxtwitter.com/').replace('x.com/', 'fxtwitter.com/');
         // Remove any query params
@@ -116,7 +117,7 @@ const fetchOGMetadata = async (url: string): Promise<{
         let directMediaUrl: string | undefined;
         if (match) {
             directMediaUrl = `https://d.fxtwitter.com/${match[1]}/status/${match[2]}`;
-            console.log('X/Twitter direct media URL:', directMediaUrl);
+            console.log('X direct media URL:', directMediaUrl);
         }
 
         // Try to fetch OG from fxtwitter
@@ -135,7 +136,7 @@ const fetchOGMetadata = async (url: string): Promise<{
                         title: getMeta('og:title') || 'X Post',
                         description: getMeta('og:description'),
                         image: getMeta('og:image') || directMediaUrl,
-                        siteName: 'X (Twitter)'
+                        siteName: 'X'
                     };
                     console.log('FxTwitter OG data:', result);
                     if (result.image || result.title) return result;
@@ -151,7 +152,7 @@ const fetchOGMetadata = async (url: string): Promise<{
                 title: 'X Post',
                 description: 'View this post on X',
                 image: directMediaUrl,
-                siteName: 'X (Twitter)'
+                siteName: 'X'
             };
         }
     }
@@ -354,7 +355,7 @@ const SocialPostCard = ({ post, folders, onDelete, onAssignFolder, onRefresh }: 
     const PlatformIcon = {
         facebook: Facebook,
         instagram: Instagram,
-        twitter: Twitter,
+        twitter: XLogo,
         linkedin: Linkedin
     }[post.platform];
 
@@ -861,7 +862,7 @@ const FeedMonitor = () => {
                                 className={cn("h-12 gap-2 text-sm", activeTab === 'twitter' ? 'bg-slate-900' : 'tool-surface tool-surface-interactive bg-white hover:bg-slate-50')}
                                 onClick={() => setActiveTab(activeTab === 'twitter' ? 'all' : 'twitter')}
                             >
-                                <Twitter className={cn("w-5 h-5", activeTab === 'twitter' ? 'text-white' : 'text-slate-900')} /> X (Twitter)
+                                <XLogo className={cn("w-5 h-5", activeTab === 'twitter' ? 'text-white' : 'text-slate-900')} /> X
                             </Button>
                             <Button
                                 variant={activeTab === 'linkedin' ? 'default' : 'outline'}
