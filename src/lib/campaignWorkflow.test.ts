@@ -3,6 +3,7 @@ import type { CampaignPack } from '../../supabase/functions/_shared/campaign_pac
 import {
   alignCampaignPackToRequestedPlatforms,
   applicableContentPatches,
+  applicableHumanizerPatches,
   applyContentPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
@@ -11,12 +12,14 @@ import {
   campaignSectionVisualGuidanceError,
   campaignSectionValidationError,
   deterministicQualityFindings,
+  expectedSocialAdCta,
   limitCampaignPackToContract,
   repairCampaignPack,
   repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
+  reviewFindingFlagsValidSocialAdCta,
 } from '../../supabase/functions/_shared/campaign_workflow';
-import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection, requirePlannerResearch } from '../../supabase/functions/_shared/agent_contracts';
+import { emptyBrandInstructions, fallbackCreativeDirection, fallbackPlannerOutput, normalizeCreativeDirection, normalizeQaFindings, requirePlannerResearch } from '../../supabase/functions/_shared/agent_contracts';
 
 const pack = (): CampaignPack => ({
   strategy: { title: 'Campaign', summary: 'A useful campaign rationale with enough detail to be reviewed.', objectives: ['Book a call'], contentPillars: ['First impressions'] },
@@ -409,6 +412,57 @@ describe('campaign workflow helpers', () => {
     expect(result.socialPosts).toHaveLength(2);
   });
 
+  it('limits Humanizer edits to natural-language social and blog fields', () => {
+    const input = pack();
+    const patches = [
+      { group: 'socialPosts' as const, index: 0, field: 'caption', value: 'A more natural caption.', reason: 'Rhythm' },
+      { group: 'socialAds' as const, index: 0, field: 'primaryText', value: 'A more natural ad.', reason: 'Clarity' },
+      { group: 'blogOutlines' as const, index: 0, field: 'excerpt', value: 'A clearer summary.', reason: 'Clarity' },
+      { group: 'blogOutlines' as const, index: 0, field: 'outline[0]', value: 'A more natural section.', reason: 'Rhythm' },
+      { group: 'googleAds' as const, index: 0, field: 'descriptions[0]', value: 'Forbidden Google edit.', reason: 'Tone' },
+      { group: 'socialAds' as const, index: 0, field: 'cta', value: 'learn_more', reason: 'Forbidden CTA edit' },
+      { group: 'socialPosts' as const, index: 0, field: 'visualGuide', value: 'Forbidden structure edit.', reason: 'Tone' },
+      { group: 'blogOutlines' as const, index: 0, field: 'title', value: 'Forbidden metadata edit.', reason: 'Tone' },
+    ];
+
+    expect(applicableHumanizerPatches(input, patches).map((patch) => `${patch.group}.${patch.field}`)).toEqual([
+      'socialPosts.caption',
+      'socialAds.primaryText',
+      'blogOutlines.excerpt',
+      'blogOutlines.outline[0]',
+    ]);
+  });
+
+  it.each([
+    ['Contact Us', 'contact_us'],
+    ['Book a Demo', 'contact_us'],
+    ['Schedule a discovery call', 'contact_us'],
+    ['Download the app', 'download'],
+    ['Buy now', 'shop_now'],
+    ['Register today', 'sign_up'],
+    ['Learn more', 'learn_more'],
+    ['Get started', 'learn_more'],
+  ])('maps the desired action %s to the authoritative social CTA %s', (desiredAction, expected) => {
+    expect(expectedSocialAdCta(desiredAction)).toBe(expected);
+  });
+
+  it('ignores a model finding that incorrectly rejects a valid Contact Us button enum', () => {
+    const input = pack();
+    input.socialAds[0].cta = 'contact_us';
+    const finding = {
+      group: 'socialAds' as const,
+      index: 0,
+      category: 'cta' as const,
+      severity: 'blocking' as const,
+      problem: 'The CTA button value contact_us should be changed to a visible Contact Us label.',
+      suggestion: 'Change the CTA enum.',
+    };
+
+    expect(reviewFindingFlagsValidSocialAdCta(finding, input, 'Contact Us')).toBe(true);
+    input.socialAds[0].cta = 'learn_more';
+    expect(reviewFindingFlagsValidSocialAdCta(finding, input, 'Contact Us')).toBe(false);
+  });
+
   it('applies indexed Google ad QA patches and reports invalid patch targets', () => {
     const input = pack();
     input.googleAds[0].descriptions = ['First line.', 'Second line.'];
@@ -427,6 +481,42 @@ describe('campaign workflow helpers', () => {
     expect(reviewFindingResolvedByPatches({
       group: 'googleAds', index: 0, severity: 'blocking', problem: 'The description is incomplete.', suggestion: 'Complete it.',
     }, patches)).toBe(true);
+  });
+
+  it('rejects malformed whole-array patches instead of collapsing Google assets to one string', () => {
+    const input = pack();
+    const patches = [
+      { group: 'googleAds' as const, index: 0, field: 'callouts', value: 'Berry Studio', reason: 'Malformed array patch.' },
+      { group: 'googleAds' as const, index: 0, field: 'headlines', value: ['One', 'Two'], reason: 'Valid array patch.' },
+    ];
+
+    expect(applicableContentPatches(input, patches)).toEqual([patches[1]]);
+  });
+
+  it('does not count or apply no-op editorial patches', () => {
+    const input = pack();
+    const patches = [
+      { group: 'socialPosts' as const, index: 0, field: 'caption', value: input.socialPosts[0].caption, reason: 'Already natural.' },
+      { group: 'blogOutlines' as const, index: 0, field: 'outline[0]', value: input.blogOutlines[0].outline[0], reason: 'Already clear.' },
+    ];
+
+    expect(applicableContentPatches(input, patches)).toEqual([]);
+    expect(applicableHumanizerPatches(input, patches)).toEqual([]);
+  });
+
+  it('treats subjective blog usefulness complaints as polish, not a blocking contract failure', () => {
+    const findings = normalizeQaFindings({
+      findings: [{
+        group: 'blogOutlines',
+        index: 0,
+        category: 'deliverable_contract',
+        severity: 'blocking',
+        problem: 'The blog outline is generic and repetitive and does not describe a useful article. The outline is a placeholder that does not answer the brief.',
+        suggestion: 'Make it more specific.',
+      }],
+    });
+
+    expect(findings[0]).toMatchObject({ category: 'polish', severity: 'note' });
   });
 
   it('repairs Google ad text clipped at platform limits into complete copy', () => {

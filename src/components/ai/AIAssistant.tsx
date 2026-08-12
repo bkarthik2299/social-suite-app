@@ -7,8 +7,6 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Circle,
   Clock3,
   ExternalLink,
@@ -65,7 +63,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/components/ui/use-toast';
-import { defaultAiAgentFlow, useAIMission, useAiAgents, useAiCredits, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
+import { defaultAiAgentFlow, optionalAiAgentFlow, useAIMission, useAiAgents, useAiCredits, useAiRunDetails, useAiWorkflow, useBrandKnowledge } from '@/hooks/useAI';
 import { useAllCampaigns, useAllFolders, useBrandGuide, useCampaigns, useFolders, useProjects } from '@/hooks/useDatabase';
 import { activityTrailEvents, eventHandoffDetails, eventSources, payloadString, sanitizeActivityText, type HandoffDisplayDetails } from '@/lib/aiActivityTrail';
 import {
@@ -89,6 +87,7 @@ const agentActivity = [
   { name: 'Creative Strategist', message: 'Turning the brief, brand rules, and research into one connected idea with distinct content angles.' },
   { name: 'Copywriter Agent', message: 'Drafting channel-ready campaign copy from the brief, brand guide, and research context.' },
   { name: 'Platform Specialist', message: 'Adapting posts, ads, blogs, and calendar items for Social Suite placeholders.' },
+  { name: 'Humanizer Agent', message: 'Refining natural rhythm in eligible social and blog copy without touching Google Ads.' },
   { name: 'QA Agent', message: 'Checking required output groups, campaign dates, claims, and brand fit.' },
   { name: 'Output Mapper Agent', message: 'Preparing the review artifact and draft insertion map.' },
 ];
@@ -187,6 +186,10 @@ export function AIAssistant() {
   const { addCampaign } = useCampaigns(folderId === 'none' ? '' : folderId);
   const { data: agents = [], saveSkill, createAgent, deleteAgent } = useAiAgents();
   const { data: workflowSteps = [], saveWorkflow } = useAiWorkflow();
+  const humanizerConfigured = workflowSteps.some((step) => step.agent_slug === 'humanizer');
+  const activeAgentActivity = humanizerConfigured
+    ? agentActivity
+    : agentActivity.filter((activity) => activity.name !== 'Humanizer Agent');
   const { guides = [] } = useBrandGuide(brandGuideId === 'none' ? '' : brandGuideId);
   const selectedBrandGuideId = brandGuideId === 'none' ? '' : brandGuideId;
   const selectedRemoteBrandGuideId = isUuid(selectedBrandGuideId) ? selectedBrandGuideId : '';
@@ -273,10 +276,10 @@ export function AIAssistant() {
       return;
     }
     const timer = window.setInterval(() => {
-      setSyntheticStep((current) => Math.min(current + 1, agentActivity.length - 1));
+      setSyntheticStep((current) => Math.min(current + 1, activeAgentActivity.length - 1));
     }, 1700);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [activeAgentActivity.length, running]);
 
   useEffect(() => {
     if (!running || !missionStartedAt) {
@@ -306,13 +309,13 @@ export function AIAssistant() {
   const selectedFolder = folders.find((folder) => folder.id === selectedFolderId) || null;
   const selectedCampaign = campaigns.find((campaign) => campaign.id === selectedCampaignId) || null;
   const selectedGuide = guides.find((guide) => guide.id === selectedBrandGuideId) || null;
-  const configuredCustomSlugs = workflowSteps
+  const configuredReviewSlugs = workflowSteps
     .map((step) => step.agent_slug)
     .filter((slug) => !defaultAiAgentFlow.includes(slug));
   const qaFlowIndex = defaultAiAgentFlow.indexOf('qa');
   const workflowSlugs = [
     ...defaultAiAgentFlow.slice(0, qaFlowIndex),
-    ...configuredCustomSlugs,
+    ...configuredReviewSlugs,
     ...defaultAiAgentFlow.slice(qaFlowIndex),
   ].filter((slug, index, values) => agents.some((agent) => agent.slug === slug) && values.indexOf(slug) === index);
 
@@ -348,7 +351,7 @@ export function AIAssistant() {
       brandName: selectedGuide?.brand_name,
       compilingBrandKnowledge: compileKnowledge.isPending,
       startingRun: startRun.isPending,
-    });
+    }, activeAgentActivity);
   const completedSteps = displaySteps.filter((step) => step.status === 'done' || step.status === 'skipped').length;
   const progress = currentRun?.status === 'completed'
     ? 100
@@ -1427,15 +1430,6 @@ function CustomizeAgentSheet({
     setSkillDraft(selectedAgent?.skill_md || '');
   }, [selectedAgent?.id, selectedAgent?.skill_md]);
 
-  const moveAgent = (index: number, direction: -1 | 1) => {
-    const targetIndex = index + direction;
-    if (targetIndex < 0 || targetIndex >= workflowSlugs.length) return;
-    if (defaultAiAgentFlow.includes(workflowSlugs[index]) || defaultAiAgentFlow.includes(workflowSlugs[targetIndex])) return;
-    const reordered = [...workflowSlugs];
-    [reordered[index], reordered[targetIndex]] = [reordered[targetIndex], reordered[index]];
-    void onSaveWorkflow(reordered).catch(() => undefined);
-  };
-
   const removeAgentFromFlow = (agent: AiAgent) => {
     if (defaultAiAgentFlow.includes(agent.slug)) return;
     void onSaveWorkflow(workflowSlugs.filter((slug) => slug !== agent.slug)).catch(() => undefined);
@@ -1443,6 +1437,18 @@ function CustomizeAgentSheet({
 
   const addAgentToFlow = (agent: AiAgent) => {
     if (workflowSlugs.includes(agent.slug)) return;
+    if (agent.slug === 'humanizer') {
+      const platformIndex = workflowSlugs.indexOf('platform-specialist');
+      const insertAt = platformIndex >= 0 ? platformIndex + 1 : Math.max(0, workflowSlugs.indexOf('qa'));
+      void onSaveWorkflow([
+        ...workflowSlugs.slice(0, insertAt),
+        agent.slug,
+        ...workflowSlugs.slice(insertAt),
+      ])
+        .then(() => setSelectedSlug(agent.slug))
+        .catch(() => undefined);
+      return;
+    }
     const qaIndex = workflowSlugs.indexOf('qa');
     const next = qaIndex >= 0
       ? [...workflowSlugs.slice(0, qaIndex), agent.slug, ...workflowSlugs.slice(qaIndex)]
@@ -1496,7 +1502,7 @@ function CustomizeAgentSheet({
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">Agent Workflow</p>
-                    <p className="mt-1 text-sm leading-5 text-slate-500">Built-in stages keep their safe order. Custom agents review the finished copy before final QA.</p>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">Built-in stages keep their safe order. Optional and custom review agents run before final QA.</p>
                   </div>
                   <Button type="button" size="sm" className="gap-2 rounded-lg" onClick={() => setCreateOpen(true)}>
                     <UserPlus className="h-4 w-4" />
@@ -1508,66 +1514,43 @@ function CustomizeAgentSheet({
                   <div className="flex min-w-max items-center gap-2">
                     {flowAgents.map((agent, index) => {
                       const protectedAgent = defaultAiAgentFlow.includes(agent.slug);
+                      const optionalAgent = optionalAiAgentFlow.includes(agent.slug);
                       const selected = selectedAgent?.slug === agent.slug;
                       return (
-                        <div key={agent.slug} className="flex items-center gap-2">
+                        <div key={agent.slug} className="flex items-center gap-3">
                           <div className={cn(
-                            'w-44 rounded-xl bg-white p-3 transition-colors',
-                            selected ? 'bg-blue-50/80 shadow-sm' : 'hover:bg-slate-50',
+                            'group soft-card soft-card-interactive flex min-h-[150px] w-48 flex-col rounded-2xl p-4',
+                            selected && 'bg-blue-50/70 ring-2 ring-primary/15 shadow-[0_18px_42px_-24px_rgba(37,99,235,0.5),0_8px_20px_-18px_rgba(15,23,42,0.18)]',
                           )}>
-                            <button type="button" className="w-full text-left" onClick={() => setSelectedSlug(agent.slug)}>
+                            <button type="button" className="flex flex-1 flex-col text-left" onClick={() => setSelectedSlug(agent.slug)}>
                               <div className="flex items-start justify-between gap-2">
-                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                                  <Bot className="h-4 w-4" />
+                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                                  <Bot className="h-5 w-5" />
                                 </div>
-                                <Badge variant="outline" className="max-w-[92px] truncate text-[10px]">
-                                  {protectedAgent ? 'Protected' : 'Custom'}
-                                </Badge>
+                                {!protectedAgent && (
+                                  <Badge variant="outline" className="max-w-[96px] truncate rounded-full bg-white/80 px-2.5 text-[10px] shadow-sm">
+                                    {optionalAgent ? 'Optional' : 'Custom'}
+                                  </Badge>
+                                )}
                               </div>
-                              <p className="mt-3 min-h-10 text-sm font-semibold leading-5 text-slate-900">{agent.name}</p>
+                              <p className="mt-4 text-sm font-semibold leading-5 text-slate-900">{agent.name}</p>
+                              <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{agent.description}</p>
                             </button>
-                            <div className="mt-3 flex items-center justify-between rounded-lg bg-white/70 px-2 py-2">
-                              <div className="flex gap-1">
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  title={`Move ${agent.name} left`}
-                                  aria-label={`Move ${agent.name} left`}
-                                  className="h-7 w-7"
-                                  disabled={protectedAgent || index === 0 || defaultAiAgentFlow.includes(workflowSlugs[index - 1]) || workflowSaving}
-                                  onClick={() => moveAgent(index, -1)}
-                                >
-                                  <ChevronLeft className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  title={`Move ${agent.name} right`}
-                                  aria-label={`Move ${agent.name} right`}
-                                  className="h-7 w-7"
-                                  disabled={protectedAgent || index === flowAgents.length - 1 || defaultAiAgentFlow.includes(workflowSlugs[index + 1]) || workflowSaving}
-                                  onClick={() => moveAgent(index, 1)}
-                                >
-                                  <ChevronRight className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                              {!protectedAgent && (
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  title={`Remove ${agent.name} from flow`}
-                                  aria-label={`Remove ${agent.name} from flow`}
-                                  className="h-7 w-7 text-slate-400 hover:text-destructive"
-                                  disabled={workflowSaving}
-                                  onClick={() => removeAgentFromFlow(agent)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              )}
-                            </div>
+                            {!protectedAgent && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                title={`Remove ${agent.name} from flow`}
+                                aria-label={`Remove ${agent.name} from flow`}
+                                className="mt-3 h-8 w-full justify-start gap-2 rounded-lg px-2 text-xs text-slate-500 hover:bg-red-50 hover:text-destructive"
+                                disabled={workflowSaving}
+                                onClick={() => removeAgentFromFlow(agent)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Remove from flow
+                              </Button>
+                            )}
                           </div>
                           {index < flowAgents.length - 1 && <ArrowRight className="h-4 w-4 shrink-0 text-slate-300" />}
                         </div>
@@ -1616,7 +1599,13 @@ function CustomizeAgentSheet({
                     <div className="tool-surface rounded-xl px-4 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-semibold text-slate-900">{selectedAgent.name}</p>
-                        <Badge variant="outline">{defaultAiAgentFlow.includes(selectedAgent.slug) ? 'Built-in' : 'Custom'}</Badge>
+                        <Badge variant="outline">
+                          {defaultAiAgentFlow.includes(selectedAgent.slug)
+                            ? 'Built-in'
+                            : optionalAiAgentFlow.includes(selectedAgent.slug)
+                              ? 'Optional built-in'
+                              : 'Custom'}
+                        </Badge>
                       </div>
                       <p className="mt-2 text-sm leading-6 text-slate-500">{selectedAgent.description}</p>
                       <p className="mt-3 text-xs font-medium text-slate-500">{selectedInFlow ? 'Active in workflow' : 'Available in library'}</p>
@@ -1627,7 +1616,7 @@ function CustomizeAgentSheet({
                         Add to workflow
                       </Button>
                     )}
-                    {!!selectedAgent.org_id && !defaultAiAgentFlow.includes(selectedAgent.slug) && (
+                    {!!selectedAgent.org_id && !defaultAiAgentFlow.includes(selectedAgent.slug) && !optionalAiAgentFlow.includes(selectedAgent.slug) && (
                       <Button type="button" variant="outline" className="w-full gap-2 rounded-xl text-destructive hover:text-destructive" disabled={deleting} onClick={() => setAgentToDelete(selectedAgent)}>
                         {deleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         Delete custom agent
@@ -2516,10 +2505,11 @@ function syntheticSteps(
     compilingBrandKnowledge: boolean;
     startingRun: boolean;
   },
+  activity: typeof agentActivity = agentActivity,
 ): AiRunStep[] {
   const projectLabel = options.projectName || 'the selected project';
   const brandLabel = options.brandName || 'the selected brand guide';
-  const agents = agentActivity.map((agent) => {
+  const agents = activity.map((agent) => {
     if (agent.name === 'Planner Agent' && options.startingRun) {
       return { ...agent, message: `Starting the backend mission for ${projectLabel} and sending the requested output map.` };
     }

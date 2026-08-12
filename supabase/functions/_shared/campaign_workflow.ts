@@ -13,6 +13,13 @@ const editableFields: Record<ContentPatch['group'], Set<string>> = {
   blogOutlines: new Set(['title', 'excerpt', 'metaTitle', 'metaDescription', 'keywords', 'outline']),
 };
 
+const arrayPatchFields: Record<ContentPatch['group'], Set<string>> = {
+  socialPosts: new Set(['platforms']),
+  googleAds: new Set(['keywords', 'headlines', 'descriptions', 'callouts']),
+  socialAds: new Set(),
+  blogOutlines: new Set(['keywords', 'outline']),
+};
+
 export function buildCampaignCalendar(pack: CampaignPack, count: number, startDate: string): CampaignPack['calendar'] {
   const groups: Array<Array<{ title: string; type: CalendarType; date?: string }>> = [
     pack.socialPosts.map((item, index) => ({ title: item.name || item.topic || `Social post ${index + 1}`, type: 'socials' as CalendarType, date: item.scheduledDate })),
@@ -316,7 +323,8 @@ export function campaignSectionVisualGuidanceError(
     }
 
     if (key === 'socialPosts') {
-      const subject = `${item.name || ''} ${item.topic || ''} ${item.caption || ''}`;
+      const socialPost = item as CampaignPack['socialPosts'][number];
+      const subject = `${socialPost.name || ''} ${socialPost.topic || ''} ${socialPost.caption || ''}`;
       const needsExplanatoryFormat = /\b(?:eligib\w*|application|process|steps?|tips?|documents?|checklist|guide|how\s+to|myth|facts?|timeline|explainer)\b/i.test(subject);
       const usesExplanatoryFormat = /\b(?:carousel|document\s+post|infographic|checklist|explainer|step[- ]by[- ]step|comparison|flowchart|timeline|swipe|slides?|panels?)\b/i.test(guide);
       if (needsExplanatoryFormat && !usesExplanatoryFormat) {
@@ -539,8 +547,30 @@ export function applicableContentPatches(pack: CampaignPack, patches: ContentPat
     const group = pack[patch.group] as Array<Record<string, unknown>>;
     const item = group?.[patch.index];
     if (!item) return false;
-    if (target.arrayIndex === undefined) return true;
-    return Array.isArray(item[target.field]) && target.arrayIndex < item[target.field].length;
+    if (target.arrayIndex === undefined) {
+      if (arrayPatchFields[patch.group].has(target.field)) {
+        return Array.isArray(patch.value) && JSON.stringify(item[target.field]) !== JSON.stringify(patch.value);
+      }
+      return typeof patch.value === 'string' && item[target.field] !== patch.value;
+    }
+    const currentValue = item[target.field];
+    return Array.isArray(currentValue)
+      && target.arrayIndex < currentValue.length
+      && typeof patch.value === 'string'
+      && currentValue[target.arrayIndex] !== patch.value;
+  });
+}
+
+export function applicableHumanizerPatches(pack: CampaignPack, patches: ContentPatch[]) {
+  return applicableContentPatches(pack, patches).filter((patch) => {
+    const target = contentPatchTarget(patch.field);
+    if (!target) return false;
+    if (patch.group === 'socialPosts') return target.field === 'caption' && target.arrayIndex === undefined;
+    if (patch.group === 'socialAds') {
+      return ['primaryText', 'headline', 'description'].includes(target.field) && target.arrayIndex === undefined;
+    }
+    return patch.group === 'blogOutlines'
+      && (target.field === 'excerpt' || (target.field === 'outline' && target.arrayIndex !== undefined));
   });
 }
 
@@ -965,12 +995,26 @@ function removeForbiddenQuantifiedClaims(value: string, restrictions: string[]) 
   return safe || value;
 }
 
-function expectedSocialAdCta(desiredAction: string) {
+export function expectedSocialAdCta(desiredAction: string) {
   if (/\b(?:contact|book|schedule|request|demo|appointment|consultation|call)\b/i.test(desiredAction)) return 'contact_us';
   if (/\b(?:download|install|get the app)\b/i.test(desiredAction)) return 'download';
   if (/\b(?:shop|buy|order|purchase)\b/i.test(desiredAction)) return 'shop_now';
   if (/\b(?:sign[ -]?up|register|enrol|enroll|join)\b/i.test(desiredAction)) return 'sign_up';
   return 'learn_more';
+}
+
+export function reviewFindingFlagsValidSocialAdCta(
+  finding: QaFinding,
+  pack: CampaignPack,
+  desiredAction: string,
+) {
+  if (finding.group !== 'socialAds') return false;
+  const ad = pack.socialAds[finding.index];
+  if (!ad || ad.cta !== expectedSocialAdCta(desiredAction)) return false;
+  const problem = finding.problem.toLowerCase();
+  const explicitlyAboutEncodedButton = finding.category === 'cta'
+    && /(?:socialads\.cta|cta\s+(?:button|field|enum|value)|button\s+(?:cta|value)|\bcontact_us\b|\blearn_more\b|\bsign_up\b|\bshop_now\b)/i.test(problem);
+  return explicitlyAboutEncodedButton;
 }
 
 function repairUnsupportedAttribution(value: string) {

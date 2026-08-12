@@ -27,6 +27,7 @@ import {
   alignCampaignPackToRequestedPlatforms,
   applyContentPatches,
   applicableContentPatches,
+  applicableHumanizerPatches,
   buildCampaignCalendar,
   campaignCalendarCount,
   campaignPlatformConsistencyFindings,
@@ -38,6 +39,7 @@ import {
   repairCampaignPack,
   repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
+  reviewFindingFlagsValidSocialAdCta,
   type GeneratedCampaignSectionKey,
 } from '../_shared/campaign_workflow.ts';
 import {
@@ -149,6 +151,7 @@ const CREATIVE_DIRECTION_TIMEOUT_MS = 16_000;
 const QA_REVIEW_TIMEOUT_MS = 30_000;
 const CUSTOM_AGENT_MIN_BUDGET_MS = 36_000;
 const CUSTOM_AGENT_TIMEOUT_MS = 40_000;
+const HUMANIZER_TIMEOUT_MS = 40_000;
 
 const stepDefinitions = [
   { slug: 'planner', agent_name: 'Planner Agent', title: 'Planner Agent' },
@@ -157,13 +160,16 @@ const stepDefinitions = [
   { slug: 'creative-strategist', agent_name: 'Creative Strategist', title: 'Creative Strategist' },
   { slug: 'copywriter', agent_name: 'Copywriter Agent', title: 'Copywriter Agent' },
   { slug: 'platform-specialist', agent_name: 'Platform Specialist', title: 'Platform Specialist' },
+  { slug: 'humanizer', agent_name: 'Humanizer Agent', title: 'Humanizer Agent' },
   { slug: 'qa', agent_name: 'QA Agent', title: 'QA Agent' },
   { slug: 'output-mapper', agent_name: 'Output Mapper Agent', title: 'Output Mapper Agent' },
 ] as const;
 
 const builtInStepSlugs = new Set<string>(stepDefinitions.map((step) => step.slug));
 const builtInSlugByName = new Map<string, string>(stepDefinitions.map((step) => [step.agent_name, step.slug]));
-const defaultWorkflowSlugs: string[] = stepDefinitions.map((step) => step.slug);
+const defaultWorkflowSlugs: string[] = stepDefinitions
+  .map((step) => step.slug)
+  .filter((slug) => slug !== 'humanizer');
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
@@ -187,7 +193,12 @@ Deno.serve(async (req) => {
       const workMode: WorkMode = existingRun.context?.workMode === 'deep' ? 'deep' : 'instant';
       const selectedModel = modelForMode(workMode, existingRun.context);
       const selectedResearchProvider = researchProviderFromContext(existingRun.context);
-      const agentWorkflow = await loadAgentWorkflow(supabase, existingRun.org_id);
+      const snapshottedWorkflow = Array.isArray(existingRun.context?.agentWorkflow)
+        ? existingRun.context.agentWorkflow.filter((slug: unknown): slug is string => typeof slug === 'string' && !!slug)
+        : [];
+      const agentWorkflow = snapshottedWorkflow.length
+        ? snapshottedWorkflow
+        : await loadAgentWorkflow(supabase, existingRun.org_id);
       const runStepDefinitions = await loadRunStepDefinitions(supabase, existingRun.org_id, agentWorkflow);
       const { data: existingSteps, error: existingStepsError } = await supabase
         .from('ai_run_steps')
@@ -264,6 +275,7 @@ Deno.serve(async (req) => {
           researchProvider: selectedResearchProvider.id,
           researchProviderName: selectedResearchProvider.name,
           researchModel: selectedResearchProvider.model || null,
+          agentWorkflow,
         },
       })
       .select()
@@ -346,6 +358,7 @@ async function processMission({
   let activeStep: StepName = 'Planner Agent';
   const missionDeadlineAt = Date.now() + MISSION_SOFT_LIMIT_MS;
   const remainingMissionMs = () => Math.max(0, missionDeadlineAt - Date.now());
+  const humanizerEnabled = agentWorkflow.includes('humanizer');
   const watchdogMessage = 'The mission exceeded its safe processing window and was stopped. Please retry; no incomplete drafts were saved.';
   const watchdogId = setTimeout(() => {
     void (async () => {
@@ -999,6 +1012,61 @@ async function processMission({
     }
 
     if (resumePhase === 'humanizer') {
+      activeStep = 'Humanizer Agent';
+      if (humanizerEnabled) {
+        await updateStep(activeStep, 'working', 'Refining natural rhythm and clarity in eligible copy while preserving the brief and platform structure.');
+        try {
+          const humanized = await applyHumanizerToPack({
+            model: structuredModelId,
+            prompt: body.prompt,
+            skill: agentSkills.humanizer || '',
+            pack,
+            plannerOutput,
+            brandInstructions,
+            deliverableContract: plannerOutput.deliverableContract,
+            deadlineAt: missionDeadlineAt,
+            observability: withRunObservation(runObservability, 'humanizer', 'mission-humanizer'),
+          });
+          pack = humanized.pack;
+          await snapshotStep(activeStep, {
+            eligibleFields: ['socialPosts.caption', 'socialAds.primaryText', 'socialAds.headline', 'socialAds.description', 'blogOutlines.excerpt', 'blogOutlines.outline[]'],
+            googleAdsProtected: true,
+          }, {
+            appliedPatchCount: humanized.appliedPatchCount,
+            rejectedPatchCount: humanized.rejectedPatchCount,
+            counts: packCounts(pack),
+          }, structuredModelId);
+          await addEvent(activeStep, 'humanizer_review', humanized.appliedPatchCount
+            ? `Humanizer applied ${humanized.appliedPatchCount} focused editorial change${humanized.appliedPatchCount === 1 ? '' : 's'}.`
+            : 'Humanizer reviewed the eligible copy and found no useful changes.', {
+            appliedPatchCount: humanized.appliedPatchCount,
+            rejectedPatchCount: humanized.rejectedPatchCount,
+            googleAdsProtected: true,
+          });
+          await addHandoffEvent(activeStep, {
+            title: 'Humanizer handoff',
+            summary: humanized.appliedPatchCount
+              ? `Refined ${humanized.appliedPatchCount} eligible copy field${humanized.appliedPatchCount === 1 ? '' : 's'} without changing Google Ads, facts, CTAs, or campaign structure.`
+              : 'Eligible copy already read naturally, so the draft pack passed through unchanged.',
+            sections: packHandoffSections(pack),
+            metrics: { ...packCounts(pack), humanizerEdits: humanized.appliedPatchCount, googleAdsProtected: true },
+          });
+          await updateStep(activeStep, 'done', humanized.appliedPatchCount
+            ? `Refined ${humanized.appliedPatchCount} eligible copy field${humanized.appliedPatchCount === 1 ? '' : 's'}; Google Ads were not edited.`
+            : 'Reviewed eligible copy; no changes were needed.');
+        } catch (error) {
+          await addEvent(activeStep, 'humanizer_skipped', 'The optional Humanizer could not finish, so the platform-ready draft was preserved unchanged.', {
+            internalError: error instanceof Error ? error.message : 'Humanizer failed',
+            googleAdsProtected: true,
+          });
+          await updateStep(activeStep, 'skipped', 'Optional natural-language editing could not finish; the prior draft was preserved.');
+        }
+      } else {
+        await updateStep(activeStep, 'skipped', 'Natural-language editing was not selected for this mission.');
+        await addEvent(activeStep, 'humanizer_disabled', 'Humanizer was not selected; the platform-ready copy passed directly to QA.', {
+          googleAdsProtected: true,
+        });
+      }
       pack = await applyCustomPackStepsBefore('qa', pack);
       await recordRunDocument('pre_qa_pack', { ...pack });
       await addEvent('QA Agent', 'qa_continuation_queued', 'Humanizer handoff completed. QA is starting with a fresh Edge Function budget.', {
@@ -1126,11 +1194,14 @@ async function processMission({
     });
     await updateStep(activeStep, 'done', `Mapped ${pack.calendar.length} calendar items and structured every output for its campaign type.`);
     const pendingCustomReviewSteps = customStepsBefore('qa');
-    if (pendingCustomReviewSteps.length) {
+    if (humanizerEnabled || pendingCustomReviewSteps.length) {
       await recordRunDocument('pre_humanizer_pack', { ...pack });
-      await addEvent(pendingCustomReviewSteps[0].slug, 'humanizer_continuation_queued', `${pendingCustomReviewSteps[0].agent_name} is starting with a fresh Edge Function budget.`, {
+      await addEvent('Humanizer Agent', 'humanizer_continuation_queued', humanizerEnabled
+        ? 'Humanizer is starting with a fresh Edge Function budget.'
+        : `${pendingCustomReviewSteps[0].agent_name} is starting with a fresh Edge Function budget.`, {
         selectedModel: selectedModel.id,
         counts: packCounts(pack),
+        enabled: humanizerEnabled,
       });
       await dispatchMissionContinuation({ runId, phase: 'humanizer', authorization, apiKey });
       return;
@@ -1186,8 +1257,8 @@ async function processMission({
           platformSkill: agentSkills['platform-specialist'] || '',
           observability: withRunObservation(runObservability, 'qa', 'mission-qa-review'),
         });
-        reviewedFindings = [...reviewedFindings, ...reviewed.findings].slice(0, 30);
-        qaDetailedFindings = [...qaDetailedFindings, ...reviewed.findings].slice(0, 30);
+        reviewedFindings = uniqueQaFindings([...reviewedFindings, ...reviewed.findings]).slice(0, 30);
+        qaDetailedFindings = uniqueQaFindings([...qaDetailedFindings, ...reviewed.findings]).slice(0, 30);
         const applicablePatches = applicableContentPatches(pack, reviewed.patches);
         reviewedPatches = [...reviewedPatches, ...applicablePatches].slice(0, 32);
         if (applicablePatches.length) {
@@ -1222,10 +1293,6 @@ async function processMission({
             prompt: body.prompt,
           }),
           ...campaignPlatformConsistencyFindings(pack, body.prompt),
-          ...reviewedFindings.filter((finding) => (
-            reviewFindingAppliesToBrief(finding, plannerOutput)
-            && !reviewFindingResolvedByPatches(finding, reviewedPatches)
-          )),
         ].filter((finding) => finding.severity === 'blocking');
         if (!unresolvedAfterAttempt.length) break;
       } catch (error) {
@@ -1242,10 +1309,13 @@ async function processMission({
     const discoveredFindings = qaDetailedFindings;
     const unresolvedReviewedFindings = reviewedFindings.filter((finding) => (
       finding.group !== 'calendar'
-      && reviewFindingAppliesToBrief(finding, plannerOutput)
+      && reviewFindingAppliesToBrief(finding, plannerOutput, pack)
       && !reviewFindingResolvedByPatches(finding, reviewedPatches)
-    ));
-    const unresolvedDetailed = [
+    )).map((finding) => ({
+      ...finding,
+      severity: finding.severity === 'blocking' ? 'warning' as const : finding.severity,
+    }));
+    const unresolvedDetailed = uniqueQaFindings([
       ...deterministicQualityFindings(pack, brandInstructions, plannerOutput.internalBrief),
       ...brandGroundingQualityFindings(pack, brandKnowledge.grounding, {
         ...plannerOutput.internalBrief,
@@ -1253,7 +1323,7 @@ async function processMission({
       }),
       ...campaignPlatformConsistencyFindings(pack, body.prompt),
       ...unresolvedReviewedFindings,
-    ].slice(0, 30);
+    ]).slice(0, 30);
     const blockingDetailed = unresolvedDetailed.filter((finding) => finding.severity === 'blocking');
     const qaBlocked = qaFindings.length > 0 || blockingDetailed.length > 0;
     await addEvent(activeStep, qaBlocked ? 'qa_blocked' : 'qa_review', qaBlocked
@@ -1833,10 +1903,11 @@ async function loadAgentWorkflow(supabase: SupabaseClient, orgId: string) {
 
 async function loadRunStepDefinitions(supabase: SupabaseClient, orgId: string, workflow: string[]): Promise<RunStepDefinition[]> {
   const customSlugs = Array.from(new Set(workflow.filter((slug) => !builtInStepSlugs.has(slug))));
+  const reviewSlugs = workflow.includes('humanizer') ? ['humanizer', ...customSlugs] : customSlugs;
   const qaIndex = defaultWorkflowSlugs.indexOf('qa');
   const orderedSlugs = [
     ...defaultWorkflowSlugs.slice(0, qaIndex),
-    ...customSlugs,
+    ...reviewSlugs,
     ...defaultWorkflowSlugs.slice(qaIndex),
   ];
 
@@ -2062,6 +2133,8 @@ async function buildCreativeDirection(args: {
             'Return only valid JSON with title, centralIdea, audienceProblem, promise, keyMessages, callsToAction, contentAngles, platformGuidance, and strategy.',
             'strategy must contain title, summary, objectives, and contentPillars.',
             'Create enough genuinely different contentAngles for the requested deliverables so writers do not repeat the same thought.',
+            'When the plan needs multiple ad angles, create 3 to 5 genuinely different options and define each through its audience problem or tension, hook, grounded promise, visual direction, and testing hypothesis. Synonym swaps are not different angles.',
+            'Use performance evidence to prioritize an angle only when that evidence was actually provided. Never invent performance rationale.',
             'Give each content angle a distinct visual territory or social-content format. Do not default every angle to the same lifestyle photograph, setting, lighting treatment, or composition merely because the brand system is shared.',
             'The central idea must be brief-specific, useful, memorable, and consistent with the brand rules.',
             'The client brief is the highest priority. If it supplies a campaign thought or rough line, preserve or improve that idea instead of replacing it with general brand positioning.',
@@ -2292,6 +2365,7 @@ async function buildCampaignPackInParts({
     brandInstructionsText(brandInstructions) ? `Campaign-specific brand rules:\n${brandInstructionsText(brandInstructions)}` : '',
     researchContext ? `Deep research context:\n${truncateContext(researchContext, 3500)}` : '',
     `Shared creative direction:\n${creativeDirectionText(creativeDirection)}`,
+    'Map every asset to one assigned creative angle. Variations must differ meaningfully in hook, framing, promise, or audience tension rather than swapping synonyms. Keep one main angle, one grounded promise, and one requested next action per ad. Never invent proof, statistics, testimonials, urgency, guarantees, or performance claims.',
     copywriterSkill ? `Copywriter operating guidance:\n${truncateContext(sanitizeWorkspaceSkill(copywriterSkill), 2400)}` : '',
     platformSpecialistSkill ? `Platform Specialist requirements:\n${truncateContext(sanitizeWorkspaceSkill(platformSpecialistSkill), 14000)}` : '',
     agentSkillContext ? `Workspace agent skill guidance:\n${truncateContext(agentSkillContext, 4500)}` : '',
@@ -2845,6 +2919,85 @@ async function applyWorkspaceAgentToPack({
   });
 }
 
+async function applyHumanizerToPack({
+  model,
+  prompt,
+  skill,
+  pack,
+  plannerOutput,
+  brandInstructions,
+  deliverableContract,
+  deadlineAt,
+  observability,
+}: {
+  model: string;
+  prompt: string;
+  skill: string;
+  pack: CampaignPack;
+  plannerOutput: PlannerOutput;
+  brandInstructions: BrandInstructions;
+  deliverableContract: DeliverableContract;
+  deadlineAt: number;
+  observability?: AiObservabilityContext;
+}): Promise<{ pack: CampaignPack; appliedPatchCount: number; rejectedPatchCount: number }> {
+  const remainingMs = Math.max(0, deadlineAt - Date.now() - 8_000);
+  if (remainingMs < 8_000) throw new Error('The Humanizer did not have enough time for a guarded editorial pass.');
+
+  const result = await openRouterJson<unknown>({
+    model,
+    temperature: 0.25,
+    maxTokens: 2200,
+    timeoutMs: Math.min(HUMANIZER_TIMEOUT_MS, remainingMs),
+    observability,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          'You are Social Suite\'s optional Humanizer, a final editorial pass between Platform Specialist and QA.',
+          'Return only valid JSON with one key: patches. Each patch is { group, index, field, value, reason } and uses zero-based indices.',
+          'Edit only: socialPosts.caption; socialAds.primaryText, socialAds.headline, socialAds.description; blogOutlines.excerpt; and individual blogOutlines.outline[n] entries.',
+          'Never edit Google Ads. Search ads have compact, recombinable platform grammar that must remain owned by Platform Specialist.',
+          'Never edit strategy, metadata, names, topics, platforms, visual guides, URLs, dates, keywords, CTA enum fields, deliverable counts, or array structure.',
+          'Preserve every verified fact, offer, restriction, desired action, brand term, and reader-facing CTA. Never add proof, statistics, testimonials, urgency, guarantees, or new claims.',
+          'Keep intentional personality and useful quirks. Remove only detectable AI habits such as filler, vague hype, repetitive sentence patterns, canned transitions, awkward formality, and robotic vocabulary.',
+          'Prefer concrete language, natural contractions when the brand voice allows them, varied sentence rhythm, and clean direct phrasing.',
+          'Internally draft, audit against the original meaning and brand voice, then return only final focused patches. If a field already reads naturally, leave it alone.',
+          'Use no more than 24 patches. An empty patches array is valid.',
+          deliverableContract.explicitCounts
+            ? `Preserve these required deliverable counts exactly: ${formatDeliverableContract(deliverableContract)}.`
+            : `Preserve the planned output structure: ${formatDeliverableContract(deliverableContract)}.`,
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: [
+          sanitizeWorkspaceSkill(skill) ? `Humanizer skill guidance:\n${truncateContext(sanitizeWorkspaceSkill(skill), 3600)}` : '',
+          plannerOutput.campaignGuidance ? `Planner guidance:\n${plannerOutput.campaignGuidance}` : '',
+          brandInstructionsText(brandInstructions) ? `Brand voice and campaign rules:\n${brandInstructionsText(brandInstructions)}` : '',
+          `Client brief:\n${prompt}`,
+          `Current campaign pack JSON:\n${JSON.stringify(pack)}`,
+        ].filter(Boolean).join('\n\n'),
+      },
+    ],
+  });
+
+  const proposedPatches = normalizeContentPatches(result).slice(0, 24);
+  const safePatches = applicableHumanizerPatches(pack, proposedPatches);
+  const patched = applyContentPatches(pack, safePatches);
+  const protectedPack = normalizeCampaignPack({
+    ...patched,
+    strategy: pack.strategy,
+    googleAds: pack.googleAds,
+    calendar: buildCampaignCalendar(patched, campaignCalendarCount(pack, deliverableContract), new Date().toISOString().slice(0, 10)),
+  });
+
+  return {
+    pack: protectedPack,
+    appliedPatchCount: safePatches.length,
+    rejectedPatchCount: proposedPatches.length - safePatches.length,
+  };
+}
+
 async function reviewCampaignPack(args: {
   model: string;
   pack: CampaignPack;
@@ -2885,11 +3038,13 @@ async function reviewCampaignPack(args: {
           'Treat a dropped client keyword, missing Google keyword list, inadequate keyword coverage, incomplete ad fragment, generic workflow filler, or broken platform limit as blocking. Patch it when the safe correction is clear.',
           'For Google ads, review the keywords array rather than assuming topic is a primary keyword. Preserve every client keyword exactly, keep close intents grouped, require keyword use in at least two headlines and one description, and retain at least three non-keyword headlines.',
           'Every conversion CTA must use the next action requested in the internal brief; do not substitute a demo, consultation, purchase, sign-up, or other action.',
-          'Social Suite encodes a visible “Book a Demo” action as socialAds.cta="contact_us". Treat that enum as correct when the reader-facing ad copy says Book a Demo; do not flag or patch the enum merely because its internal value differs from the visible wording.',
+          'Social Suite uses fixed paid-social button enums. Contact, book, schedule, request, demo, appointment, consultation, and call actions map to socialAds.cta="contact_us"; download, install, and get-the-app actions map to "download"; shop, buy, order, and purchase map to "shop_now"; sign-up, register, enrol, and join map to "sign_up"; other information or awareness actions map to "learn_more".',
+          'Treat a socialAds.cta enum as correct whenever it matches that map. Do not flag or patch the encoded button value merely because reader-facing wording such as Contact Us, Book a Demo, or Book a Call is different. Review visible CTA language separately.',
           'Calendar type "meta-ad" is the correct internal type for Instagram, Facebook, LinkedIn, and other paid-social ads. Never flag it as a platform mismatch.',
           'A blog excerpt must summarize the article naturally. Do not force the conversion CTA into an awkward phrase.',
           'A finding is { group, index, category, severity, problem, suggestion }. Category must be deliverable_contract, required_field, unsupported_claim, brand_or_product, safety, platform_limit, cta, creative_example, or polish.',
           'Reserve blocking only for wrong deliverable counts, missing required fields, unsupported factual claims or statistics, wrong brand or product, unsafe claims, broken hard platform limits, or the wrong CTA.',
+          'Never return a finding for a field you determine is valid or acceptable. Do not create findings whose problem or suggestion says no issue, acceptable, within limits, or no action needed.',
           'Distinguish factual claims from illustrative creative examples. A city used as a verified business location is factual; a city used in an imagined travel example is illustrative. Daily-life scenes, generic situations, mood, visual metaphors, and illustrative settings are normally creative_example notes, not warnings or blockers.',
           'Use polish notes for optional improvements such as generic wording, repetition, tone nuance, or a stronger hook. Do not block on taste or preference.',
           'A patch is { group, index, field, value, reason }. Use zero-based indices.',
@@ -2923,13 +3078,40 @@ async function reviewCampaignPack(args: {
   };
 }
 
-function reviewFindingAppliesToBrief(finding: QaFinding, plannerOutput: PlannerOutput) {
+function reviewFindingAppliesToBrief(finding: QaFinding, plannerOutput: PlannerOutput, pack: CampaignPack) {
   const problem = finding.problem.toLowerCase();
+  if (/\b(?:no issue|no action needed|within (?:the )?(?:required|allowed|platform) (?:range|limit)|is within the \d+[-–]\d+ range)\b/i.test(problem)) {
+    return false;
+  }
   const claimsClientKeywords = /(?:client|user)[-\s]supplied[^.]{0,120}keyword|keyword[^.]{0,120}(?:client|user)[-\s]supplied/i.test(problem);
   if (finding.group === 'googleAds' && claimsClientKeywords && plannerOutput.internalBrief.keywordTargets.length === 0) {
     return false;
   }
+  if (reviewFindingFlagsValidSocialAdCta(finding, pack, plannerOutput.internalBrief.desiredAction)) {
+    return false;
+  }
+  if (finding.group === 'googleAds') {
+    const ad = pack.googleAds[finding.index];
+    if (!ad) return true;
+    const claimsTooFewCallouts = /callouts? (?:array )?(?:contains|has|includes)?\s*(?:only|fewer than|less than)|only \d+ (?:distinct )?callouts?/i.test(problem);
+    if (claimsTooFewCallouts && (ad.callouts?.length || 0) >= 4) return false;
+    const onlyDuplicateHeadlineConcern = /duplicate|identical/.test(problem)
+      && /headline/.test(problem)
+      && new Set(ad.headlines.map((headline) => headline.toLowerCase())).size >= 5;
+    if (onlyDuplicateHeadlineConcern) return false;
+  }
   return true;
+}
+
+function uniqueQaFindings(findings: QaFinding[]) {
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const normalizedProblem = finding.problem.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const key = `${finding.group}:${finding.index}:${finding.category || ''}:${normalizedProblem}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function campaignSafetyInstructions(sectionInstruction: string) {
