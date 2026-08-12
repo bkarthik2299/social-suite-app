@@ -443,6 +443,10 @@ function normalizeQaFindingCategory(input: unknown, problem: string): QaFindingC
   const looksIllustrative = /imagined|illustrative|creative example|visual example|daily[- ]life|scene|scenario|situation|mood|metaphor|planning (?:a )?trip|for example/.test(normalized);
   const assertsFactualRisk = /claims? that|states? that|factual claim|statistic|price|discount|offer|guarantee|testimonial|is located|is available|includes? the|provides? the|measurable outcome/.test(normalized);
   if (looksIllustrative && !assertsFactualRisk) return 'creative_example';
+  const subjectiveDeliverableCritique = requested === 'deliverable_contract'
+    && /generic|repetitive|more useful|useful article|placeholder|does not answer the brief/.test(normalized)
+    && !/wrong count|missing|required field|empty required|does not contain the required/.test(normalized);
+  if (subjectiveDeliverableCritique) return 'polish';
   if (qaFindingCategories.includes(requested)) return requested;
   if (/deliverable|wrong count|count (?:does not|doesn't|fails to) match|required \d+|missing \d+/.test(normalized)) return 'deliverable_contract';
   if (/missing required|required field|empty required|does not contain the required|no usable keyword list/.test(normalized)) return 'required_field';

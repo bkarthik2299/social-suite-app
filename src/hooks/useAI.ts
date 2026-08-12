@@ -8,6 +8,7 @@ import type { AiAgent, AiArtifact, AiCreditAccount, AiDraftSelection, AiRun, AiR
 
 const db = supabase as unknown as SupabaseClient;
 export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'creative-strategist', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
+export const optionalAiAgentFlow = ['humanizer'];
 const AI_RUN_POLL_MS = 1800;
 const AI_RUN_STALE_MS = 4 * 60 * 1000;
 
