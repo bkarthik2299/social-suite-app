@@ -1514,24 +1514,16 @@ function CustomizeAgentSheet({
                   <div className="flex min-w-max items-center gap-2">
                     {flowAgents.map((agent, index) => {
                       const protectedAgent = defaultAiAgentFlow.includes(agent.slug);
-                      const optionalAgent = optionalAiAgentFlow.includes(agent.slug);
                       const selected = selectedAgent?.slug === agent.slug;
                       return (
                         <div key={agent.slug} className="flex items-center gap-3">
                           <div className={cn(
-                            'group soft-card soft-card-interactive flex min-h-[150px] w-48 flex-col rounded-2xl p-4',
+                            'group soft-card soft-card-interactive relative flex h-[150px] w-48 flex-col rounded-2xl p-4 focus-within:ring-2 focus-within:ring-primary/15',
                             selected && 'bg-blue-50/70 ring-2 ring-primary/15 shadow-[0_18px_42px_-24px_rgba(37,99,235,0.5),0_8px_20px_-18px_rgba(15,23,42,0.18)]',
                           )}>
-                            <button type="button" className="flex flex-1 flex-col text-left" onClick={() => setSelectedSlug(agent.slug)}>
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
-                                  <Bot className="h-5 w-5" />
-                                </div>
-                                {!protectedAgent && (
-                                  <Badge variant="outline" className="max-w-[96px] truncate rounded-full bg-white/80 px-2.5 text-[10px] shadow-sm">
-                                    {optionalAgent ? 'Optional' : 'Custom'}
-                                  </Badge>
-                                )}
+                            <button type="button" className="flex h-full flex-col rounded-xl text-left focus-visible:outline-none" onClick={() => setSelectedSlug(agent.slug)}>
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
+                                <Bot className="h-5 w-5" />
                               </div>
                               <p className="mt-4 text-sm font-semibold leading-5 text-slate-900">{agent.name}</p>
                               <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-500">{agent.description}</p>
@@ -1540,15 +1532,14 @@ function CustomizeAgentSheet({
                               <Button
                                 type="button"
                                 variant="ghost"
-                                size="sm"
+                                size="icon"
                                 title={`Remove ${agent.name} from flow`}
                                 aria-label={`Remove ${agent.name} from flow`}
-                                className="mt-3 h-8 w-full justify-start gap-2 rounded-lg px-2 text-xs text-slate-500 hover:bg-red-50 hover:text-destructive"
+                                className="absolute right-3 top-3 h-8 w-8 rounded-lg text-slate-400 hover:bg-red-50 hover:text-destructive"
                                 disabled={workflowSaving}
                                 onClick={() => removeAgentFromFlow(agent)}
                               >
-                                <Trash2 className="h-3.5 w-3.5" />
-                                Remove from flow
+                                <Trash2 className="h-4 w-4" />
                               </Button>
                             )}
                           </div>
