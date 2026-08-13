@@ -649,10 +649,13 @@ export function useContentItems(campaignId: string) {
 
     const addContentItem = useMutation({
         mutationFn: async (item: { type: string; name?: string; status?: string; payload: Record<string, unknown> }) => {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('content_items')
-                .insert({ ...item, payload: item.payload as Json, campaign_id: campaignId });
+                .insert({ ...item, payload: item.payload as Json, campaign_id: campaignId })
+                .select('*')
+                .single();
             if (error) throw error;
+            return mapContentItem(data as ContentItemWithCampaign);
         },
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: keys.contentItems(campaignId) });

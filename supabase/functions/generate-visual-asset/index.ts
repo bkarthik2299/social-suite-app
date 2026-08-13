@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { inferLogoPlacement, inferVisualSlidePlan } from '../_shared/visual_asset.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,6 +22,13 @@ type Prediction = {
     get?: string;
     web?: string;
   };
+};
+
+type SelectedLogo = {
+  id: string;
+  label: string;
+  variant: string;
+  fileUrl: string;
 };
 
 const jsonResponse = (body: Record<string, unknown>, status = 200) => new Response(JSON.stringify(body), {
@@ -139,50 +147,74 @@ Deno.serve(async (req) => {
   }
 
   const context = body.context || {};
-  const prompt = buildImagePrompt(visualGuide, context);
+  const selectedLogo = await findSelectedLogo(userClient, cleanText(context.selectedLogoId), orgId);
+  const slidePlan = inferVisualSlidePlan(visualGuide);
+
+  if (creditAccount.credits_remaining < slidePlan.count) {
+    return jsonResponse({
+      error: `This ${slidePlan.count}-slide carousel needs ${slidePlan.count} AI credits, but only ${creditAccount.credits_remaining} remain.`,
+    }, 402);
+  }
 
   try {
-    const input = await buildPredictionInput(model, prompt, context);
-    const created = await createPrediction(endpoint, token, input);
-    const prediction = await waitForPrediction(created, token);
-    const outputUrl = firstOutputUrl(prediction.output);
+    // Replicate can reduce low-balance accounts to a burst of one prediction and
+    // six starts per minute. Stagger starts while allowing renders to overlap, so
+    // carousels remain fast without tripping that provider-side burst limit.
+    const generated = await mapWithStaggeredStarts(slidePlan.prompts, 11_000, async (slideGuide, index) => {
+      const prompt = buildImagePrompt(slideGuide, context, selectedLogo, slidePlan.count > 1 ? index + 1 : undefined, slidePlan.count);
+      const input = await buildPredictionInput(model, prompt, context);
+      const prediction = await withTransientRetry(async () => {
+        const created = await createPrediction(endpoint, token, input);
+        return await waitForPrediction(created, token);
+      });
+      const outputUrl = firstOutputUrl(prediction.output);
 
-    if (!outputUrl) {
-      const errorMessage = readError(prediction.error)
-        || (cleanText(prediction.status) ? `Replicate finished with status "${cleanText(prediction.status)}" but did not include a supported image URL.` : '')
-        || 'Image generation did not return an output file.';
-      return jsonResponse({
-        error: errorMessage,
-        predictionId: prediction.id,
-        predictionUrl: prediction.urls?.web,
-        outputPreview: previewValue(prediction.output),
-      }, 502);
-    }
+      if (!outputUrl) {
+        const errorMessage = readError(prediction.error)
+          || (cleanText(prediction.status) ? `Replicate finished with status "${cleanText(prediction.status)}" but did not include a supported image URL.` : '')
+          || `Slide ${index + 1} did not return an output file.`;
+        throw new Error(errorMessage);
+      }
 
-    const imageUrl = await imageToDataUrl(outputUrl).catch(() => outputUrl);
-    const generationKey = cleanText(prediction.id)
-      ? `replicate:${cleanText(prediction.id)}`
-      : `request:${crypto.randomUUID()}`;
-    const { error: chargeError } = await serviceClient.rpc('charge_ai_image_credit', {
-      p_org_id: orgId,
-      p_generation_key: generationKey,
+      return {
+        imageUrl: await imageToDataUrl(outputUrl).catch(() => outputUrl),
+        prediction,
+      };
     });
 
-    if (chargeError) {
-      const insufficientCredits = chargeError.code === 'P0001'
-        || /not enough ai credits/i.test(chargeError.message || '');
-      return jsonResponse({
-        error: insufficientCredits
-          ? 'No AI credits remaining. Upgrade or wait for your credits to renew.'
-          : 'The image was generated, but its AI credit could not be recorded. Please try again.',
-      }, insufficientCredits ? 402 : 500);
+    for (const result of generated) {
+      const generationKey = cleanText(result.prediction.id)
+        ? `replicate:${cleanText(result.prediction.id)}`
+        : `request:${crypto.randomUUID()}`;
+      const { error: chargeError } = await serviceClient.rpc('charge_ai_image_credit', {
+        p_org_id: orgId,
+        p_generation_key: generationKey,
+      });
+
+      if (chargeError) {
+        const insufficientCredits = chargeError.code === 'P0001'
+          || /not enough ai credits/i.test(chargeError.message || '');
+        return jsonResponse({
+          error: insufficientCredits
+            ? 'No AI credits remaining. Upgrade or wait for your credits to renew.'
+            : 'The image was generated, but its AI credit could not be recorded. Please try again.',
+        }, insufficientCredits ? 402 : 500);
+      }
     }
 
+    const imageUrls = generated.map((result) => result.imageUrl);
+    const logoDataUrl = selectedLogo
+      ? await imageToDataUrl(selectedLogo.fileUrl, 1_500_000).catch(() => selectedLogo.fileUrl)
+      : undefined;
+
     return jsonResponse({
-      imageUrl,
-      temporaryUrl: imageUrl === outputUrl,
-      predictionId: prediction.id,
-      predictionUrl: prediction.urls?.web,
+      imageUrl: imageUrls[0],
+      imageUrls,
+      format: slidePlan.isCarousel ? 'carousel' : 'single',
+      slideCount: slidePlan.count,
+      logoUrl: logoDataUrl,
+      predictionIds: generated.map((result) => result.prediction.id).filter(Boolean),
+      predictionUrls: generated.map((result) => result.prediction.urls?.web).filter(Boolean),
     });
   } catch (error) {
     return jsonResponse({
@@ -190,6 +222,36 @@ Deno.serve(async (req) => {
     }, 502);
   }
 });
+
+async function mapWithStaggeredStarts<T, R>(
+  values: T[],
+  intervalMs: number,
+  worker: (value: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  return await Promise.all(values.map(async (value, index) => {
+    if (index > 0) await delay(index * intervalMs);
+    return await worker(value, index);
+  }));
+}
+
+async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      const transient = /\b(408|409|425|429|500|502|503|504)\b|rate|throttl|concurr|temporar|timeout|timed out|network|fetch/i.test(message);
+      if (!transient || attempt === 2) throw error;
+      const throttled = /\b429\b|rate|throttl|burst/i.test(message);
+      await delay(throttled ? 11_000 : 1200 * (2 ** attempt));
+    }
+  }
+
+  throw lastError;
+}
 
 async function createPrediction(endpoint: string, token: string, input: Record<string, unknown>): Promise<Prediction> {
   const response = await fetch(endpoint, {
@@ -260,14 +322,14 @@ async function waitForPrediction(prediction: Prediction, token: string): Promise
   return current;
 }
 
-async function imageToDataUrl(url: string): Promise<string> {
+async function imageToDataUrl(url: string, maxBytes = 4_000_000): Promise<string> {
   const response = await fetch(url);
   if (!response.ok) throw new Error('Generated image could not be fetched.');
 
   const contentType = response.headers.get('content-type') || 'image/webp';
   const buffer = await response.arrayBuffer();
 
-  if (!contentType.startsWith('image/') || buffer.byteLength > 4_000_000) {
+  if (!contentType.startsWith('image/') || buffer.byteLength > maxBytes) {
     throw new Error('Generated image is too large to inline.');
   }
 
@@ -313,7 +375,13 @@ function firstOutputUrl(output: unknown): string | undefined {
   return undefined;
 }
 
-function buildImagePrompt(visualGuide: string, context: Record<string, unknown>) {
+function buildImagePrompt(
+  visualGuide: string,
+  context: Record<string, unknown>,
+  selectedLogo: SelectedLogo | null,
+  slideNumber?: number,
+  slideCount = 1,
+) {
   const kind = cleanText(context.kind);
   const platform = cleanText(context.platform);
   const platforms = Array.isArray(context.platforms)
@@ -324,9 +392,12 @@ function buildImagePrompt(visualGuide: string, context: Record<string, unknown>)
   const name = cleanText(context.name);
   const aspectRatio = normalizeAspectRatio(context.aspectRatio);
   const brandGuideContext = context.useBrandGuide === true ? cleanBrandGuideSummary(context.brandGuide) : '';
+  const logoPlacement = selectedLogo ? inferLogoPlacement(visualGuide) : '';
 
   return [
-    'Create one polished, brand-safe marketing image for a campaign draft.',
+    slideCount > 1
+      ? `Create slide ${slideNumber || 1} of ${slideCount} as one polished, brand-safe marketing image.`
+      : 'Create one polished, brand-safe marketing image for a campaign draft.',
     kind ? `Asset type: ${kind}.` : '',
     platform || platforms ? `Platform context: ${platform || platforms}.` : '',
     aspectRatio ? `Required aspect ratio: ${aspectRatio}.` : '',
@@ -334,9 +405,39 @@ function buildImagePrompt(visualGuide: string, context: Record<string, unknown>)
     headline ? `Headline context: ${headline}.` : '',
     name ? `Draft name: ${name}.` : '',
     brandGuideContext ? `Brand guide design context:\n${brandGuideContext}` : '',
+    selectedLogo
+      ? `Logo-safe composition: reserve a calm, uncluttered ${logoPlacement} safe area for the exact "${selectedLogo.label}" (${selectedLogo.variant}) logo. Do not draw, imitate, spell, distort, or invent the logo; the real logo asset will be composited there after generation.`
+      : '',
     `Visual guide: ${visualGuide}`,
-    'Style requirements: clean professional composition, clear focal point, premium commercial quality, realistic lighting, no crowded layout, no dense readable text, do not include any brand logo, do not recreate or invent a logo/wordmark, no graphic medical procedure imagery, no before-and-after claims, no misleading health outcome claims.',
+    'Style requirements: clean professional composition, clear focal point, premium commercial quality, realistic lighting, no crowded layout, no dense readable text, do not render or invent any logo/wordmark, no graphic medical procedure imagery, no before-and-after claims, no misleading health outcome claims.',
   ].filter(Boolean).join('\n');
+}
+
+async function findSelectedLogo(
+  userClient: ReturnType<typeof createClient>,
+  logoId: string,
+  orgId: string,
+): Promise<SelectedLogo | null> {
+  if (!logoId || !isUuid(logoId)) return null;
+
+  const { data, error } = await userClient
+    .from('brand_logos')
+    .select('id, label, variant, file_url, brand_guides!inner(org_id)')
+    .eq('id', logoId)
+    .eq('brand_guides.org_id', orgId)
+    .maybeSingle();
+  if (error || !data) return null;
+
+  const record = data as Record<string, unknown>;
+  const fileUrl = cleanText(record.file_url);
+  if (!fileUrl || !/^https?:\/\//i.test(fileUrl) && !/^data:image\//i.test(fileUrl)) return null;
+
+  return {
+    id: cleanText(record.id),
+    label: cleanText(record.label) || 'Brand logo',
+    variant: cleanText(record.variant) || 'approved',
+    fileUrl,
+  };
 }
 
 function normalizeAspectRatio(value: unknown) {
