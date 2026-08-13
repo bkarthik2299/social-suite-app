@@ -244,7 +244,9 @@ export default function BrandGuidePage() {
     useEffect(() => {
         fonts.forEach((font) => {
             const href = fontHref(font);
-            if (!href || document.querySelector(`link[data-brand-font="${href}"]`)) return;
+            const existingLink = Array.from(document.querySelectorAll<HTMLLinkElement>('link[data-brand-font]'))
+                .some((link) => link.dataset.brandFont === href);
+            if (!href || existingLink) return;
             const link = document.createElement('link');
             link.rel = 'stylesheet';
             link.href = href;
@@ -2413,10 +2415,21 @@ function parseWeights(value: string | null | undefined): string[] {
     return (value || '').split(',').map((weight) => weight.trim()).filter(Boolean);
 }
 
+function googleFontFamilyParam(value: string): string {
+    return value
+        .split(',')[0]
+        .trim()
+        .replace(/^['"]|['"]$/g, '')
+        .replace(/[;"<>]/g, '')
+        .trim()
+        .replace(/\s+/g, '+');
+}
+
 function fontHref(font: BrandFont): string {
     if (font.source_url && /^https?:\/\//.test(font.source_url)) return font.source_url;
     if (!font.font_family) return '';
-    const family = font.font_family.trim().replace(/\s+/g, '+');
+    const family = googleFontFamilyParam(font.font_family);
+    if (!family) return '';
     const weights = parseWeights(font.weight).filter((weight) => /^\d+$/.test(weight));
     return weights.length > 0
         ? `https://fonts.googleapis.com/css2?family=${family}:wght@${weights.join(';')}&display=swap`
