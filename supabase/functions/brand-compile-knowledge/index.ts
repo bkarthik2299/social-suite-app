@@ -53,7 +53,7 @@ const socialLinksFromCustomSections = (value: unknown) => {
 };
 
 const instantModel = () =>
-  'deepseek/deepseek-v4-flash';
+  'google/gemini-3-flash-preview';
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);

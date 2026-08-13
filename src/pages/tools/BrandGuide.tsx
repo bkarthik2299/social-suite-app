@@ -239,6 +239,7 @@ export default function BrandGuidePage() {
     useEffect(() => {
         setDraft(guide || {});
         setHasVisualAnalysis(false);
+        setVisualPatternNotes(null);
     }, [guide?.id]);
 
     useEffect(() => {
@@ -1099,6 +1100,9 @@ export default function BrandGuidePage() {
                                         <GuideTextField label="Icon Style" value={stringValue(draft.iconography_rules)} disabled={false} textarea placeholder="Outline icons, simple filled icons, rounded corners, avoid detailed icons..." onChange={(value) => updateDraft('iconography_rules', value)} onBlur={() => commitGuideField('iconography_rules')} />
                                         <GuideTextField label="Layout & Composition" value={stringValue(draft.layout_composition)} disabled={false} textarea placeholder="Logo placement, footer bars, text hierarchy, CTA zones, overlays, frames, contact details..." onChange={(value) => updateDraft('layout_composition', value)} onBlur={() => commitGuideField('layout_composition')} />
                                     </div>
+                                    {hasVisualAnalysis && visualPatternNotes && (
+                                        <VisualPatternNotes patternNotes={visualPatternNotes} />
+                                    )}
                                     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
                                         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                                             <div className="min-w-0">
@@ -1336,12 +1340,18 @@ function VisualDirectionDraftEditor({
                 <GuideTextField label="Layout & Composition" value={value.layout_composition} textarea onChange={(nextValue) => update('layout_composition', nextValue)} />
             </div>
             {patternNotes && (
-                <div className="grid gap-3 rounded-xl bg-slate-50/80 p-4 md:grid-cols-3">
-                    <PatternNoteList title="Consistent Patterns" values={patternNotes.consistent_patterns} />
-                    <PatternNoteList title="Recurring Patterns" values={patternNotes.recurring_patterns} />
-                    <PatternNoteList title="One-off Treatments" values={patternNotes.one_off_treatments} />
-                </div>
+                <VisualPatternNotes patternNotes={patternNotes} />
             )}
+        </div>
+    );
+}
+
+function VisualPatternNotes({ patternNotes }: { patternNotes: VisualDirectionAnalysis['pattern_notes'] }) {
+    return (
+        <div className="grid gap-3 rounded-xl bg-slate-50/80 p-4 md:grid-cols-3">
+            <PatternNoteList title="Consistent Patterns" values={patternNotes.consistent_patterns} />
+            <PatternNoteList title="Recurring Patterns" values={patternNotes.recurring_patterns} />
+            <PatternNoteList title="One-off Treatments" values={patternNotes.one_off_treatments} />
         </div>
     );
 }
