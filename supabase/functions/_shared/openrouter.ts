@@ -19,6 +19,13 @@ type ChatMessage = {
   content: ChatMessageContent;
 };
 
+type OpenRouterReasoning = {
+  enabled?: boolean;
+  effort?: 'max' | 'xhigh' | 'high' | 'medium' | 'low' | 'minimal' | 'none';
+  max_tokens?: number;
+  exclude?: boolean;
+};
+
 type OpenRouterResponse = Record<string, unknown> & {
   id?: string;
   model?: string;
@@ -176,16 +183,27 @@ export async function openRouterText({
   messages,
   model = 'deepseek/deepseek-v4-flash',
   temperature = 0.3,
+  maxTokens,
+  reasoning,
   timeoutMs = 120_000,
   observability,
 }: {
   messages: ChatMessage[];
   model?: string;
   temperature?: number;
+  maxTokens?: number;
+  reasoning?: OpenRouterReasoning;
   timeoutMs?: number;
   observability?: AiObservabilityContext;
 }) {
-  const body = { model, messages, temperature };
+  const effectiveTemperature = supportsTemperatureParameter(model) ? temperature : undefined;
+  const body = {
+    model,
+    messages,
+    ...(effectiveTemperature !== undefined ? { temperature: effectiveTemperature } : {}),
+    ...(maxTokens ? { max_tokens: maxTokens } : {}),
+    ...(reasoning ? { reasoning } : {}),
+  };
   const attempt = await fetchOpenRouter({
     method: 'POST',
     headers: {
@@ -196,21 +214,21 @@ export async function openRouterText({
     },
     body: JSON.stringify(body),
   }, timeoutMs);
-  assertNetworkAttempt(attempt, { body, messages, model, temperature, observability });
+  assertNetworkAttempt(attempt, { body, messages, model, temperature: effectiveTemperature, maxTokens, observability });
 
   if (!attempt.response.ok) {
     const error = openRouterError(attempt);
-    captureAttempt({ attempt, body, messages, model, temperature, observability, error });
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, observability, error });
     throw new Error(error);
   }
 
   const content = String(attempt.data?.choices?.[0]?.message?.content || '').trim();
   if (!content) {
     const error = 'OpenRouter returned an empty response';
-    captureAttempt({ attempt, body, messages, model, temperature, observability, error });
+    captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, observability, error });
     throw new Error(error);
   }
-  captureAttempt({ attempt, body, messages, model, temperature, observability, output: content, parseSucceeded: true });
+  captureAttempt({ attempt, body, messages, model, temperature: effectiveTemperature, maxTokens, observability, output: content, parseSucceeded: true });
   return content;
 }
 

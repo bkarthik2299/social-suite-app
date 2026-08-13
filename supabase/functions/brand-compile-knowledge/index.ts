@@ -105,6 +105,9 @@ Deno.serve(async (req) => {
 
     const markdown = await openRouterText({
       model,
+      temperature: 1,
+      maxTokens: 6000,
+      reasoning: { effort: 'low', exclude: true },
       observability: {
         distinctId: userId,
         traceId: `brand-knowledge:${guideId}`,
