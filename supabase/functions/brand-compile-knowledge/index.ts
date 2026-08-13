@@ -53,7 +53,7 @@ const socialLinksFromCustomSections = (value: unknown) => {
 };
 
 const instantModel = () =>
-  'google/gemini-3-flash-preview';
+  'google/gemini-3.1-flash-lite';
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
@@ -107,7 +107,6 @@ Deno.serve(async (req) => {
       model,
       temperature: 1,
       maxTokens: 6000,
-      reasoning: { effort: 'low', exclude: true },
       observability: {
         distinctId: userId,
         traceId: `brand-knowledge:${guideId}`,
