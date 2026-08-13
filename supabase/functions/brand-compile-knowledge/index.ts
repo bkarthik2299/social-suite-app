@@ -53,7 +53,7 @@ const socialLinksFromCustomSections = (value: unknown) => {
 };
 
 const instantModel = () =>
-  'deepseek/deepseek-v4-flash-latest';
+  'deepseek/deepseek-v4-flash';
 
 Deno.serve(async (req) => {
   const methodResponse = requireMethod(req);
@@ -105,8 +105,6 @@ Deno.serve(async (req) => {
 
     const markdown = await openRouterText({
       model,
-      temperature: 1,
-      maxTokens: 6000,
       observability: {
         distinctId: userId,
         traceId: `brand-knowledge:${guideId}`,
