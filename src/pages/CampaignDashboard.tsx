@@ -66,6 +66,7 @@ import {
     getCarouselLimit,
     normalizeCampaignMediaAssets,
     normalizeCampaignMediaFormat,
+    prepareGeneratedCampaignMediaAssets,
     removeCampaignMediaAssets,
     revokePendingCampaignMediaAssets,
     uploadCampaignMediaAssets,
@@ -144,12 +145,26 @@ const formatDateLabel = (value: unknown, pattern: string, fallback: string) => {
 
 type SocialPlatform = 'linkedin' | 'twitter' | 'instagram' | 'facebook';
 type SocialAdCta = 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
+type BrandVisualLogo = {
+    id: string;
+    label: string;
+    variant: string;
+    url: string;
+};
 type BrandVisualContext = {
     brandName?: string;
     summary: string;
     styleImageUrls: string[];
     imageUrls: string[];
+    logos: BrandVisualLogo[];
 } | null;
+
+type GeneratedVisualAssetResult = {
+    imageUrls: string[];
+    format: CampaignMediaFormat;
+    slideCount: number;
+    logoUrl?: string;
+};
 
 const IMAGE_ASPECT_RATIOS = [
     { value: '1:1', label: 'Square' },
@@ -415,11 +430,47 @@ const generateVisualAsset = async (
         throw error;
     }
 
-    const payload = data as { imageUrl?: string; error?: string };
+    const payload = data as { imageUrl?: string; imageUrls?: string[]; format?: string; slideCount?: number; logoUrl?: string; error?: string };
     if (payload?.error) throw new Error(payload.error);
-    if (!payload?.imageUrl) throw new Error('Image generation did not return an image.');
+    const imageUrls = uniqueImages([
+        ...(Array.isArray(payload?.imageUrls) ? payload.imageUrls : []),
+        payload?.imageUrl || '',
+    ]);
+    if (!imageUrls.length) throw new Error('Image generation did not return an image.');
 
-    return payload.imageUrl;
+    return {
+        imageUrls,
+        format: payload.format === 'carousel' || imageUrls.length > 1 ? 'carousel' : 'single',
+        slideCount: Math.max(payload.slideCount || imageUrls.length, imageUrls.length),
+        logoUrl: payload.logoUrl,
+    } satisfies GeneratedVisualAssetResult;
+};
+
+const uploadGeneratedVisualAssets = async (
+    campaignId: string,
+    result: GeneratedVisualAssetResult,
+    visualGuide: string,
+) => {
+    const pendingAssets = await prepareGeneratedCampaignMediaAssets(result.imageUrls, {
+        logoUrl: result.logoUrl,
+        visualGuide,
+    });
+
+    try {
+        return await uploadCampaignMediaAssets(campaignId, pendingAssets);
+    } finally {
+        revokePendingCampaignMediaAssets(pendingAssets);
+    }
+};
+
+const latestContentPayload = async (contentItemId: string) => {
+    const { data, error } = await supabase
+        .from('content_items')
+        .select('payload')
+        .eq('id', contentItemId)
+        .single();
+    if (error) throw error;
+    return (data.payload || {}) as Record<string, unknown>;
 };
 
 const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): BrandVisualContext => {
@@ -445,6 +496,14 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
         .map((image) => normalizeBrandAssetUrl(image.image_url))
         .filter((url): url is string => typeof url === 'string' && /^https?:\/\//i.test(url));
     const imageUrls = uniqueImages(styleImageUrls).slice(0, 6);
+    const logos = assets.logos
+        .map((logo) => ({
+            id: logo.id,
+            label: logo.label,
+            variant: logo.variant,
+            url: normalizeBrandAssetUrl(logo.file_url),
+        }))
+        .filter((logo): logo is BrandVisualLogo => !!logo.url);
 
     return {
         brandName: assets.guide.brand_name || undefined,
@@ -453,10 +512,13 @@ const buildBrandVisualContext = (assets: ReturnType<typeof useBrandGuide>): Bran
             colors ? `Colors: ${colors}` : '',
             fonts ? `Typography: ${fonts}` : '',
             styleNotes,
-            'Logo instruction: do not include, recreate, or invent a logo in generated images.',
+            assets.logoRules.length
+                ? `Logo rules: ${assets.logoRules.map((rule) => `${rule.rule_type}: ${rule.caption}`).join('; ')}`
+                : '',
         ].filter(Boolean).join('\n'),
         styleImageUrls: uniqueImages(styleImageUrls).slice(0, 4),
         imageUrls,
+        logos,
     };
 };
 
@@ -640,12 +702,18 @@ const VisualGuideControls = ({
     useBrandGuide,
     onUseBrandGuideChange,
     hasBrandGuide,
+    logos,
+    selectedLogoId,
+    onLogoChange,
 }: {
     selectedAspectRatio: string;
     onAspectRatioChange: (value: string) => void;
     useBrandGuide: boolean;
     onUseBrandGuideChange: (value: boolean) => void;
     hasBrandGuide: boolean;
+    logos: BrandVisualLogo[];
+    selectedLogoId: string;
+    onLogoChange: (value: string) => void;
 }) => (
     <div className="flex flex-wrap items-center gap-2">
         {IMAGE_ASPECT_RATIOS.map((ratio) => (
@@ -677,6 +745,77 @@ const VisualGuideControls = ({
         >
             Use Brand Guide
         </button>
+        <Popover>
+            <PopoverTrigger asChild>
+                <button
+                    type="button"
+                    disabled={!logos.length}
+                    className={cn(
+                        "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                        selectedLogoId
+                            ? "border-violet-200 bg-violet-50 text-violet-700"
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
+                        !logos.length && "cursor-not-allowed opacity-50",
+                    )}
+                >
+                    {selectedLogoId ? (
+                        <img
+                            src={logos.find((logo) => logo.id === selectedLogoId)?.url}
+                            alt=""
+                            className="h-4 w-5 object-contain"
+                        />
+                    ) : <Plus className="h-3.5 w-3.5" />}
+                    {selectedLogoId
+                        ? logos.find((logo) => logo.id === selectedLogoId)?.label || 'Selected logo'
+                        : logos.length ? 'Add Logo' : 'No Logos Available'}
+                    {logos.length ? <ChevronDown className="h-3 w-3 opacity-60" /> : null}
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-2">
+                <p className="px-2 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-slate-500">Brand Guide logos</p>
+                <button
+                    type="button"
+                    onClick={() => onLogoChange('')}
+                    className={cn(
+                        'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm hover:bg-slate-50',
+                        !selectedLogoId && 'bg-slate-50 font-medium',
+                    )}
+                >
+                    <span className="flex h-9 w-12 items-center justify-center rounded-md border border-dashed text-slate-400"><X className="h-3.5 w-3.5" /></span>
+                    No logo
+                </button>
+                {logos.map((logo) => (
+                    <button
+                        key={logo.id}
+                        type="button"
+                        onClick={() => onLogoChange(logo.id)}
+                        className={cn(
+                            'flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-slate-50',
+                            selectedLogoId === logo.id && 'bg-violet-50',
+                        )}
+                    >
+                        <span className="flex h-9 w-12 items-center justify-center overflow-hidden rounded-md border bg-white p-1">
+                            <img src={logo.url} alt="" className="h-full w-full object-contain" />
+                        </span>
+                        <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-slate-800">{logo.label}</span>
+                            <span className="block capitalize text-xs text-slate-500">{logo.variant}</span>
+                        </span>
+                        {selectedLogoId === logo.id ? <Check className="ml-auto h-4 w-4 text-violet-600" /> : null}
+                    </button>
+                ))}
+            </PopoverContent>
+        </Popover>
+    </div>
+);
+
+const ImageGenerationBadge = () => (
+    <div className="absolute left-3 top-3 z-20 flex items-center gap-2 rounded-full border border-blue-100 bg-white/95 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 shadow-sm backdrop-blur-sm">
+        <span className="relative flex h-4 w-4 items-center justify-center">
+            <span className="absolute inset-0 animate-ping rounded-full bg-blue-300/50" />
+            <Sparkles className="relative h-3.5 w-3.5 animate-pulse" />
+        </span>
+        Generating image
     </div>
 );
 
@@ -1112,6 +1251,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             generatedImages: generatedImagesFromPayload(i.payload),
             imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
             useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
+            selectedLogoId: payloadString(i.payload, ['selectedLogoId', 'selected_logo_id']),
             mediaAssets,
             mediaFormat: normalizeCampaignMediaFormat(i.payload.mediaFormat ?? i.payload.media_format, mediaAssets.length),
         };
@@ -1131,8 +1271,10 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
     const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
     const [useBrandGuide, setUseBrandGuide] = useState(false);
+    const [selectedLogoId, setSelectedLogoId] = useState('');
     const [lightboxImage, setLightboxImage] = useState('');
-    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+    const [generatingContentIds, setGeneratingContentIds] = useState<Set<string>>(() => new Set());
+    const editingPostIdRef = useRef('');
     const [isSavingMedia, setIsSavingMedia] = useState(false);
     const [date, setDate] = useState<Date | undefined>(undefined);
     const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(['linkedin']);
@@ -1157,6 +1299,8 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setGeneratedImages(uniqueImages([...(post.generatedImages || []), post.image || '']));
             setSelectedAspectRatio(post.imageAspectRatio || '1:1');
             setUseBrandGuide(post.useBrandGuide === true);
+            setSelectedLogoId(post.selectedLogoId || '');
+            editingPostIdRef.current = post.id;
             setDate(toValidDate(post.scheduledDate));
             setSelectedPlatforms(post.platforms || ['linkedin']);
             setTopic(post.topic || '');
@@ -1171,12 +1315,16 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
             setGeneratedImages([]);
             setSelectedAspectRatio('1:1');
             setUseBrandGuide(false);
+            setSelectedLogoId('');
+            editingPostIdRef.current = '';
             setDate(undefined);
             setSelectedPlatforms(['linkedin']);
             setTopic('');
         }
         setIsDialogOpen(true);
     };
+
+    const isGeneratingImage = generatingContentIds.has(editingPost?.id || 'new-social-post');
 
     const handlePostDialogOpenChange = (open: boolean) => {
         if (!open) revokePendingCampaignMediaAssets(mediaAssets);
@@ -1236,6 +1384,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                 generatedImages,
                 imageAspectRatio: selectedAspectRatio,
                 useBrandGuide,
+                selectedLogoId,
                 platforms: selectedPlatforms,
                 scheduledDate: date ? date.toISOString() : '',
                 topic,
@@ -1369,9 +1518,44 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
     };
 
     const handleGenerateImage = async () => {
-        setIsGeneratingImage(true);
+        let targetId = editingPost?.id || '';
+        let jobKey = targetId || 'new-social-post';
+        setGeneratingContentIds((current) => new Set(current).add(jobKey));
         try {
-            const imageUrl = await generateVisualAsset(campaignId, visualGuide, {
+            if (!targetId) {
+                const draftPayload = {
+                    campaignId,
+                    name,
+                    creativeBrief: topic,
+                    visualGuide,
+                    caption,
+                    hashtags: [],
+                    image: '',
+                    mediaAssets: [],
+                    mediaFormat: 'single' as const,
+                    generatedImages: [],
+                    imageAspectRatio: selectedAspectRatio,
+                    useBrandGuide,
+                    selectedLogoId,
+                    platforms: selectedPlatforms,
+                    scheduledDate: date ? date.toISOString() : '',
+                    topic,
+                    status: 'draft' as const,
+                };
+                const created = await addContentItem.mutateAsync({ type: 'social-post', name, payload: draftPayload });
+                targetId = created.id;
+                jobKey = targetId;
+                editingPostIdRef.current = targetId;
+                setEditingPost(created as unknown as SocialPost);
+                setGeneratingContentIds((current) => {
+                    const next = new Set(current);
+                    next.delete('new-social-post');
+                    next.add(targetId);
+                    return next;
+                });
+            }
+
+            const result = await generateVisualAsset(campaignId, visualGuide, {
                 kind: 'social-post',
                 name,
                 topic,
@@ -1380,12 +1564,38 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                 aspectRatio: selectedAspectRatio,
                 useBrandGuide,
                 brandGuide: useBrandGuide ? brandVisualContext : null,
+                selectedLogoId,
             });
-            handleGeneratedImageSelect(imageUrl);
-            setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
+            const selectedLogoUrl = brandVisualContext?.logos.find((logo) => logo.id === selectedLogoId)?.url;
+            const persistedAssets = await uploadGeneratedVisualAssets(campaignId, {
+                ...result,
+                logoUrl: result.logoUrl || selectedLogoUrl,
+            }, visualGuide);
+            const persistedUrls = persistedAssets.map((asset) => asset.url);
+            const currentPayload = await latestContentPayload(targetId);
+            const nextPayload = {
+                ...currentPayload,
+                image: persistedUrls[0] || '',
+                mediaAssets: persistedAssets,
+                mediaFormat: result.format,
+                generatedImages: uniqueImages([...persistedUrls, ...generatedImagesFromPayload(currentPayload)]),
+                imageAspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                selectedLogoId,
+            };
+            await updateContentItem.mutateAsync({ id: targetId, updates: { payload: nextPayload } });
+
+            if (editingPostIdRef.current === targetId) {
+                setMediaAssets(persistedAssets);
+                setMediaFormat(result.format);
+                setImage(persistedUrls[0] || '');
+                setGeneratedImages(nextPayload.generatedImages);
+            }
             toast({
-                title: 'Image generated',
-                description: 'The generated image has been placed in the media preview.',
+                title: result.format === 'carousel' ? `${result.slideCount} carousel slides generated` : 'Image generated',
+                description: result.format === 'carousel'
+                    ? 'Each slide was generated separately and attached in order.'
+                    : 'The generated image has been placed in the media preview.',
             });
         } catch (error) {
             toast({
@@ -1394,7 +1604,12 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                 variant: 'destructive',
             });
         } finally {
-            setIsGeneratingImage(false);
+            setGeneratingContentIds((current) => {
+                const next = new Set(current);
+                next.delete(jobKey);
+                next.delete('new-social-post');
+                return next;
+            });
         }
     };
 
@@ -1422,6 +1637,7 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                     {posts.map(post => (
                         <Card key={post.id} className="soft-card soft-card-interactive overflow-hidden cursor-pointer group relative" onClick={() => handleOpen(post)}>
                             <div className="h-48 flex items-center justify-center text-muted-foreground relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
+                                {generatingContentIds.has(post.id) ? <ImageGenerationBadge /> : null}
                                 {post.mediaAssets?.[0] ? (
                                     <>
                                         <CampaignMediaContent asset={post.mediaAssets[0]} className="object-cover transition-transform duration-300 group-hover:scale-[1.03]" />
@@ -1621,6 +1837,9 @@ const SocialPostsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisu
                                             useBrandGuide={useBrandGuide}
                                             onUseBrandGuideChange={setUseBrandGuide}
                                             hasBrandGuide={!!brandVisualContext}
+                                            logos={brandVisualContext?.logos || []}
+                                            selectedLogoId={selectedLogoId}
+                                            onLogoChange={setSelectedLogoId}
                                         />
                                         <GeneratedImageStrip
                                             images={generatedImages}
@@ -2547,6 +2766,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             generatedImages: generatedImagesFromPayload(i.payload),
             imageAspectRatio: payloadString(i.payload, ['imageAspectRatio', 'image_aspect_ratio'], '1:1'),
             useBrandGuide: i.payload.useBrandGuide === true || i.payload.use_brand_guide === true,
+            selectedLogoId: payloadString(i.payload, ['selectedLogoId', 'selected_logo_id']),
             mediaAssets,
             mediaFormat: normalizeCampaignMediaFormat(i.payload.mediaFormat ?? i.payload.media_format, mediaAssets.length),
         };
@@ -2573,8 +2793,10 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
     const [generatedImages, setGeneratedImages] = useState<string[]>([]);
     const [selectedAspectRatio, setSelectedAspectRatio] = useState('1:1');
     const [useBrandGuide, setUseBrandGuide] = useState(false);
+    const [selectedLogoId, setSelectedLogoId] = useState('');
     const [lightboxImage, setLightboxImage] = useState('');
-    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+    const [generatingContentIds, setGeneratingContentIds] = useState<Set<string>>(() => new Set());
+    const editingAdIdRef = useRef('');
     const [isSavingMedia, setIsSavingMedia] = useState(false);
     const [cta, setCta] = useState<'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download'>('learn_more');
     const [destinationUrl, setDestinationUrl] = useState('');
@@ -2598,6 +2820,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             setGeneratedImages(uniqueImages([...(ad.generatedImages || []), ad.image || '']));
             setSelectedAspectRatio(ad.imageAspectRatio || '1:1');
             setUseBrandGuide(ad.useBrandGuide === true);
+            setSelectedLogoId(ad.selectedLogoId || '');
+            editingAdIdRef.current = ad.id;
             setCta(normalizeSocialAdCta(ad.cta));
             setDestinationUrl(ad.destinationUrl || '');
             setScheduledDate(toValidDate(ad.scheduledDate));
@@ -2616,6 +2840,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
             setGeneratedImages([]);
             setSelectedAspectRatio('1:1');
             setUseBrandGuide(false);
+            setSelectedLogoId('');
+            editingAdIdRef.current = '';
             setCta('learn_more');
             setDestinationUrl('');
             setScheduledDate(undefined);
@@ -2623,6 +2849,8 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
         }
         setIsDialogOpen(true);
     };
+
+    const isGeneratingImage = generatingContentIds.has(editingAd?.id || 'new-social-ad');
 
     const handleAdDialogOpenChange = (open: boolean) => {
         if (!open) revokePendingCampaignMediaAssets(mediaAssets);
@@ -2674,6 +2902,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                 generatedImages,
                 imageAspectRatio: selectedAspectRatio,
                 useBrandGuide,
+                selectedLogoId,
                 cta,
                 destinationUrl,
                 scheduledDate: scheduledDate ? scheduledDate.toISOString() : undefined,
@@ -2800,9 +3029,46 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
     };
 
     const handleGenerateImage = async () => {
-        setIsGeneratingImage(true);
+        let targetId = editingAd?.id || '';
+        let jobKey = targetId || 'new-social-ad';
+        setGeneratingContentIds((current) => new Set(current).add(jobKey));
         try {
-            const imageUrl = await generateVisualAsset(campaignId, visualGuide, {
+            if (!targetId) {
+                const draftPayload = {
+                    campaignId,
+                    name,
+                    platform,
+                    primaryText,
+                    headline,
+                    description,
+                    visualGuide,
+                    image: '',
+                    mediaAssets: [],
+                    mediaFormat: 'single' as const,
+                    generatedImages: [],
+                    imageAspectRatio: selectedAspectRatio,
+                    useBrandGuide,
+                    selectedLogoId,
+                    cta,
+                    destinationUrl,
+                    scheduledDate: scheduledDate ? scheduledDate.toISOString() : undefined,
+                    topic,
+                    status: 'draft' as const,
+                };
+                const created = await addContentItem.mutateAsync({ type: 'social-ad', name, payload: draftPayload });
+                targetId = created.id;
+                jobKey = targetId;
+                editingAdIdRef.current = targetId;
+                setEditingAd(created as unknown as SocialAd);
+                setGeneratingContentIds((current) => {
+                    const next = new Set(current);
+                    next.delete('new-social-ad');
+                    next.add(targetId);
+                    return next;
+                });
+            }
+
+            const result = await generateVisualAsset(campaignId, visualGuide, {
                 kind: 'social-ad',
                 name,
                 topic,
@@ -2815,12 +3081,38 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                 aspectRatio: selectedAspectRatio,
                 useBrandGuide,
                 brandGuide: useBrandGuide ? brandVisualContext : null,
+                selectedLogoId,
             });
-            handleGeneratedImageSelect(imageUrl);
-            setGeneratedImages((current) => uniqueImages([imageUrl, ...current]));
+            const selectedLogoUrl = brandVisualContext?.logos.find((logo) => logo.id === selectedLogoId)?.url;
+            const persistedAssets = await uploadGeneratedVisualAssets(campaignId, {
+                ...result,
+                logoUrl: result.logoUrl || selectedLogoUrl,
+            }, visualGuide);
+            const persistedUrls = persistedAssets.map((asset) => asset.url);
+            const currentPayload = await latestContentPayload(targetId);
+            const nextPayload = {
+                ...currentPayload,
+                image: persistedUrls[0] || '',
+                mediaAssets: persistedAssets,
+                mediaFormat: result.format,
+                generatedImages: uniqueImages([...persistedUrls, ...generatedImagesFromPayload(currentPayload)]),
+                imageAspectRatio: selectedAspectRatio,
+                useBrandGuide,
+                selectedLogoId,
+            };
+            await updateContentItem.mutateAsync({ id: targetId, updates: { payload: nextPayload } });
+
+            if (editingAdIdRef.current === targetId) {
+                setMediaAssets(persistedAssets);
+                setMediaFormat(result.format);
+                setImage(persistedUrls[0] || '');
+                setGeneratedImages(nextPayload.generatedImages);
+            }
             toast({
-                title: 'Image generated',
-                description: 'The generated image has been placed in the ad preview.',
+                title: result.format === 'carousel' ? `${result.slideCount} carousel slides generated` : 'Image generated',
+                description: result.format === 'carousel'
+                    ? 'Each slide was generated separately and attached in order.'
+                    : 'The generated image has been placed in the ad preview.',
             });
         } catch (error) {
             toast({
@@ -2829,7 +3121,12 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                 variant: 'destructive',
             });
         } finally {
-            setIsGeneratingImage(false);
+            setGeneratingContentIds((current) => {
+                const next = new Set(current);
+                next.delete(jobKey);
+                next.delete('new-social-ad');
+                return next;
+            });
         }
     };
 
@@ -3401,13 +3698,16 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                                                 onChange={(e) => setVisualGuide(e.target.value)}
                                                 className="min-h-[120px] resize-none"
                                             />
-                                            <VisualGuideControls
-                                                selectedAspectRatio={selectedAspectRatio}
-                                                onAspectRatioChange={setSelectedAspectRatio}
-                                                useBrandGuide={useBrandGuide}
-                                                onUseBrandGuideChange={setUseBrandGuide}
-                                                hasBrandGuide={!!brandVisualContext}
-                                            />
+                                                <VisualGuideControls
+                                                    selectedAspectRatio={selectedAspectRatio}
+                                                    onAspectRatioChange={setSelectedAspectRatio}
+                                                    useBrandGuide={useBrandGuide}
+                                                    onUseBrandGuideChange={setUseBrandGuide}
+                                                    hasBrandGuide={!!brandVisualContext}
+                                                    logos={brandVisualContext?.logos || []}
+                                                    selectedLogoId={selectedLogoId}
+                                                    onLogoChange={setSelectedLogoId}
+                                                />
                                             <GeneratedImageStrip
                                                 images={generatedImages}
                                                 selectedImage={image}
@@ -3528,6 +3828,7 @@ const SocialAdsTab = ({ campaignId, autoCreate, targetContentItemId, brandVisual
                         >
                             {/* Media */}
                             <div className="aspect-square flex items-center justify-center relative overflow-hidden bg-gradient-to-br from-blue-50 via-white to-sky-50">
+                                {generatingContentIds.has(ad.id) ? <ImageGenerationBadge /> : null}
                                 {ad.mediaAssets?.[0] ? (
                                     <>
                                         <CampaignMediaContent asset={ad.mediaAssets[0]} className="object-cover transition-transform duration-300 group-hover:scale-[1.03]" />

@@ -97,6 +97,7 @@ export interface SocialPost {
   generatedImages?: string[];
   imageAspectRatio?: string;
   useBrandGuide?: boolean;
+  selectedLogoId?: string;
   platforms: string[]; // e.g. ['instagram', 'facebook', 'linkedin', 'twitter']
   scheduledDate: string;
   status: 'draft' | 'scheduled' | 'published';
@@ -137,6 +138,7 @@ export interface SocialAd {
   generatedImages?: string[];
   imageAspectRatio?: string;
   useBrandGuide?: boolean;
+  selectedLogoId?: string;
   cta: 'learn_more' | 'sign_up' | 'shop_now' | 'contact_us' | 'download';
   destinationUrl: string;
   scheduledDate?: string;
