@@ -52,6 +52,33 @@ const socialLinksFromCustomSections = (value: unknown) => {
     .map((item) => ({ platform: String(item.platform || 'social'), url: String(item.url) }));
 };
 
+const summarizeAssetReference = (value: unknown) => {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const source = value.trim();
+  if (/^data:/i.test(source)) {
+    const mimeType = source.match(/^data:([^;,]+)/i)?.[1] || 'uploaded asset';
+    return `[${mimeType} upload omitted from text prompt; ${source.length} data-url characters]`;
+  }
+  return source.length > 500 ? `${source.slice(0, 500)}...` : source;
+};
+
+const summarizeLogo = (logo: Record<string, unknown>) => ({
+  id: logo.id,
+  label: logo.label,
+  variant: logo.variant,
+  format: logo.format,
+  dimensions: logo.dimensions,
+  sort_order: logo.sort_order,
+  file_url: summarizeAssetReference(logo.file_url),
+});
+
+const summarizeMoodImage = (image: Record<string, unknown>) => ({
+  id: image.id,
+  caption: image.caption,
+  sort_order: image.sort_order,
+  image_url: summarizeAssetReference(image.image_url),
+});
+
 const instantModel = () =>
   'deepseek/deepseek-v4-flash';
 
@@ -94,9 +121,9 @@ Deno.serve(async (req) => {
       guide,
       colors: colors.data || [],
       fonts: fonts.data || [],
-      logos: logos.data || [],
+      logos: (logos.data || []).map((logo) => summarizeLogo(logo as Record<string, unknown>)),
       logoRules: logoRules.data || [],
-      moodImages: moodImages.data || [],
+      moodImages: (moodImages.data || []).map((image) => summarizeMoodImage(image as Record<string, unknown>)),
       socialLinks,
       externalSnippets,
     };
