@@ -3,6 +3,11 @@ type NamedEntity = {
   name: string | null;
 };
 
+type BrandGuideEntity = {
+  id: string;
+  brand_name: string | null;
+};
+
 const DEFAULT_SEGMENT = "untitled";
 
 export function slugify(value: string | null | undefined): string {
@@ -53,4 +58,27 @@ export function campaignPath<P extends NamedEntity, F extends NamedEntity, C ext
   campaigns: C[] = [],
 ): string {
   return `${folderPath(project, folder, projects, folders)}/${slugForEntity(campaign, campaigns)}`;
+}
+
+function brandGuideToNamedEntity(guide: BrandGuideEntity): NamedEntity {
+  return {
+    id: guide.id,
+    name: guide.brand_name,
+  };
+}
+
+export function brandGuidePath<T extends BrandGuideEntity>(guide: T, guides: T[] = []): string {
+  const entity = brandGuideToNamedEntity(guide);
+  const peers = guides.map(brandGuideToNamedEntity);
+  return `/tools/brand-guide/${slugForEntity(entity, peers)}`;
+}
+
+export function findBrandGuideBySlug<T extends BrandGuideEntity>(
+  guides: T[] | undefined,
+  slug: string | undefined,
+): T | undefined {
+  if (!guides || !slug) return undefined;
+  const entities = guides.map(brandGuideToNamedEntity);
+  const match = findBySlug(entities, slug);
+  return match ? guides.find((guide) => guide.id === match.id) : undefined;
 }

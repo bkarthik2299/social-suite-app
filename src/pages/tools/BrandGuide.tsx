@@ -62,8 +62,9 @@ import {
     useProjects,
 } from '@/hooks/useDatabase';
 import { useBrandKnowledge, useBrandResearch, useBrandVisualDirectionAnalysis, VisualDirectionAnalysis } from '@/hooks/useAI';
+import { brandGuidePath, findBrandGuideBySlug } from '@/lib/routes';
 import { cn } from '@/lib/utils';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 type ToneSpectrum = {
     formality?: number;
@@ -159,6 +160,7 @@ const emptyLogoForm: Omit<BrandLogo, 'id' | 'created_at'> = {
 export default function BrandGuidePage() {
     const location = useLocation();
     const navigate = useNavigate();
+    const { guideSlug } = useParams<{ guideSlug?: string }>();
     const { toast } = useToast();
     const { data: projects = [], isLoading: projectsLoading } = useProjects();
     const [selectedGuideId, setSelectedGuideId] = useState('');
@@ -178,7 +180,7 @@ export default function BrandGuidePage() {
             setSelectedGuideId('');
             setOpenSections(['identity']);
             setActiveSection(sections[0].id);
-            navigate(location.pathname, { replace: true, state: null });
+            navigate('/tools/brand-guide', { replace: true, state: null });
             return;
         }
 
@@ -186,8 +188,8 @@ export default function BrandGuidePage() {
         setNewGuideName('');
         setNewGuideProjectId('none');
         setCreateOpen(true);
-        navigate(location.pathname, { replace: true, state: null });
-    }, [location.pathname, location.state, navigate]);
+        navigate('/tools/brand-guide', { replace: true, state: null });
+    }, [location.state, navigate]);
 
     const {
         guides,
@@ -231,10 +233,43 @@ export default function BrandGuidePage() {
     const moodUploadInputRef = useRef<HTMLInputElement | null>(null);
 
     useEffect(() => {
+        if (!guideSlug) return;
+        const routeGuide = findBrandGuideBySlug(guides, guideSlug);
+
+        if (routeGuide) {
+            setSelectedGuideId((current) => {
+                if (current === routeGuide.id) return current;
+                setOpenSections(['identity']);
+                setActiveSection(sections[0].id);
+                return routeGuide.id;
+            });
+            return;
+        }
+
+        if (!isLoading) {
+            navigate('/tools/brand-guide', { replace: true });
+        }
+    }, [guideSlug, guides, isLoading, navigate]);
+
+    useEffect(() => {
+        if (guideSlug || !selectedGuideId) return;
+        setSelectedGuideId('');
+        setOpenSections(['identity']);
+        setActiveSection(sections[0].id);
+    }, [guideSlug, selectedGuideId]);
+
+    useEffect(() => {
         if (selectedGuideId && guides.length > 0 && !guides.some((item) => item.id === selectedGuideId)) {
             setSelectedGuideId('');
         }
     }, [guides, selectedGuideId]);
+
+    useEffect(() => {
+        if (!selectedGuideId || !guide || guides.length === 0) return;
+        const canonicalPath = brandGuidePath(guide, guides);
+        if (location.pathname === canonicalPath) return;
+        navigate(`${canonicalPath}${location.hash}`, { replace: true });
+    }, [guide, guides, location.hash, location.pathname, navigate, selectedGuideId]);
 
     useEffect(() => {
         setDraft(guide || {});
@@ -337,17 +372,19 @@ export default function BrandGuidePage() {
     };
 
     const openGuideFolder = (id: string) => {
+        const selectedGuide = guides.find((item) => item.id === id);
+        if (!selectedGuide) return;
+        navigate(brandGuidePath(selectedGuide, guides));
         setSelectedGuideId(id);
         setOpenSections(['identity']);
         setActiveSection(sections[0].id);
-        window.history.replaceState(null, '', window.location.pathname);
     };
 
     const returnToFolders = () => {
         setSelectedGuideId('');
         setOpenSections(['identity']);
         setActiveSection(sections[0].id);
-        window.history.replaceState(null, '', window.location.pathname);
+        navigate('/tools/brand-guide');
     };
 
     const requestDeleteGuide = (targetGuide: BrandGuide) => {
@@ -426,6 +463,7 @@ export default function BrandGuidePage() {
             const created = await createGuide.mutateAsync({ project_id: projectId, brand_name: brandName });
             setSelectedGuideId(created.id);
             setCreateOpen(false);
+            navigate(brandGuidePath(created, [created, ...guides]));
             toast({ title: 'Brand Guide created', description: `${brandName} is ready for brand details.` });
         } catch (error) {
             toast({ title: 'Could not create Brand Guide', description: errorMessage(error), variant: 'destructive' });
@@ -438,7 +476,7 @@ export default function BrandGuidePage() {
         sectionNavigationLockRef.current = true;
         setActiveSection(sectionId);
         setOpenSections((current) => current.includes(sectionId) ? current : [...current, sectionId]);
-        window.history.replaceState(null, '', `#${sectionId}`);
+        navigate(`${location.pathname}#${sectionId}`, { replace: true });
 
         const scrollIntoView = () => {
             const element = document.getElementById(sectionId);
@@ -466,7 +504,7 @@ export default function BrandGuidePage() {
             sectionNavigationLockRef.current = false;
             setActiveSection(sectionId);
         }, 680));
-    }, []);
+    }, [location.pathname, navigate]);
 
     useEffect(() => {
         if (!hasGuide || !location.hash) return;
