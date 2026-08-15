@@ -109,18 +109,19 @@ const fallbackKnowledgeMarkdown = (sourcePackage: {
   const contentPillars = customSections
     .filter((section) => section.type === 'content_pillar')
     .map((section) => `${textValue(section.title, 'Untitled pillar')}: ${textValue(section.description, '')}`);
+  contentPillars.unshift(...valueList(Array.isArray(guide.content_pillars) ? guide.content_pillars : []));
   const socialLinks = sourcePackage.socialLinks.map((link) => `${link.platform}: ${link.url}`);
   const colors = sourcePackage.colors.map((color) => {
     const name = textValue(color.name, 'Color');
     const hex = textValue(color.hex, '');
-    const usage = textValue(color.usage, '');
+    const usage = textValue(color.usage || color.role, '');
     return [name, hex, usage].filter(Boolean).join(' - ');
   });
   const fonts = sourcePackage.fonts.map((font) => {
-    const role = textValue(font.role, 'Font');
-    const family = textValue(font.family, '');
-    const usage = textValue(font.usage, '');
-    return [role, family, usage].filter(Boolean).join(' - ');
+    const role = textValue(font.role || font.category, 'Font');
+    const family = textValue(font.family || font.font_family, '');
+    const details = textValue(font.usage || font.weight, '');
+    return [role, family, details].filter(Boolean).join(' - ');
   });
   const logos = sourcePackage.logos.map((logo) => {
     const label = textValue(logo.label, 'Logo');
@@ -128,7 +129,7 @@ const fallbackKnowledgeMarkdown = (sourcePackage: {
     const format = textValue(logo.format, '');
     return [label, variant, format].filter(Boolean).join(' - ');
   });
-  const logoRules = sourcePackage.logoRules.map((rule) => textValue(rule.rule || rule.description || rule.title, 'Logo rule'));
+  const logoRules = sourcePackage.logoRules.map((rule) => textValue(rule.rule || rule.description || rule.title || rule.caption, 'Logo rule'));
   const moodImages = sourcePackage.moodImages.map((image) => textValue(image.caption || image.image_url, 'Uploaded visual reference'));
   const visualNotes = [
     `Photography style: ${textValue(guide.photography_style)}`,
@@ -136,20 +137,38 @@ const fallbackKnowledgeMarkdown = (sourcePackage: {
     `Iconography rules: ${textValue(guide.iconography_rules)}`,
     `Layout and composition: ${textValue(guide.layout_composition)}`,
   ];
+  const voiceAttributes = Array.isArray(guide.voice_attributes)
+    ? guide.voice_attributes.map((attribute) => {
+      if (!attribute || typeof attribute !== 'object') return textValue(attribute, '');
+      const item = attribute as Record<string, unknown>;
+      return [item.name || item.attribute, item.description].filter(Boolean).map(String).join(': ');
+    }).filter(Boolean)
+    : [];
+  const tone = guide.tone_spectrum && typeof guide.tone_spectrum === 'object'
+    ? Object.entries(guide.tone_spectrum as Record<string, unknown>)
+      .map(([key, value]) => `${key}: ${String(value)}`)
+      .join(', ')
+    : textValue(guide.tone_spectrum, '');
+  const writingRules = [
+    ...valueList(Array.isArray(guide.writing_dos) ? guide.writing_dos : []).map((item) => `Do: ${item}`),
+    ...valueList(Array.isArray(guide.writing_donts) ? guide.writing_donts : []).map((item) => `Don't: ${item}`),
+    ...valueList(Array.isArray(guide.preferred_terms) ? guide.preferred_terms : []).map((item) => `Prefer: ${item}`),
+    ...valueList(Array.isArray(guide.avoided_terms) ? guide.avoided_terms : []).map((item) => `Avoid: ${item}`),
+  ];
 
   return `# ${textValue(guide.brand_name, 'Brand')} Knowledge
 
 ## Identity
 - Brand name: ${textValue(guide.brand_name)}
 - Website: ${textValue(guide.website_url)}
-- About: ${textValue(guide.description || guide.about)}
-- Positioning: ${textValue(guide.positioning)}
-- Audience: ${textValue(guide.audience)}
+- About: ${textValue(guide.elevator_pitch || guide.mission || guide.vision)}
+- Positioning: ${textValue(guide.tagline || guide.industry)}
+- Audience: ${textValue(guide.target_audience)}
 
 ## Voice And Tone
-- Voice: ${textValue(guide.voice)}
-- Tone: ${textValue(guide.tone)}
-- Writing rules: ${textValue(guide.text_rules)}
+- Voice: ${voiceAttributes.length ? voiceAttributes.join('; ') : textValue(guide.personality)}
+- Tone: ${textValue(tone)}
+- Writing rules: ${writingRules.length ? writingRules.join('; ') : 'Not specified'}
 - Use this when writing: Keep content consistent with the saved brand identity, audience, tone, colors, typography, logo rules, and visual references. Do not invent unsupported claims.
 
 ## Content Pillars
@@ -241,7 +260,7 @@ Deno.serve(async (req) => {
       markdown = await openRouterText({
         model,
         maxTokens: 2600,
-        timeoutMs: 25_000,
+        timeoutMs: 45_000,
         observability: {
           distinctId: userId,
           traceId: `brand-knowledge:${guideId}`,
@@ -266,6 +285,7 @@ Deno.serve(async (req) => {
       });
     } catch (error) {
       generationError = error instanceof Error ? error.message : 'OpenRouter generation failed';
+      console.warn('Brand Knowledge generation used the deterministic fallback', { guideId, generationError });
       markdown = fallbackKnowledgeMarkdown(sourcePackage);
     }
 
@@ -283,7 +303,7 @@ Deno.serve(async (req) => {
         status: 'ready',
         model: generationError ? `${model}+deterministic-fallback` : model,
         manual_edit: false,
-        error: generationError,
+        error: null,
         generated_by: userId,
         generated_at: new Date().toISOString(),
       }, { onConflict: 'guide_id' })

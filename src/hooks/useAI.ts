@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
-import type { BrandGuide } from '@/hooks/useDatabase';
 import type { AiAgent, AiArtifact, AiCreditAccount, AiDraftSelection, AiRun, AiRunEvent, AiRunStep, AiWorkflowStep, BrandKnowledgeDocument } from '@/types/ai';
+import { cancelAiMission, commitAiMission, startAiMission, type CommitAiMissionResult } from '@/services/aiMissions';
+import { compileBrandKnowledge, researchBrandWebsite } from '@/services/brandGuides';
+import { invokeFunction } from '@/services/edgeFunctions';
 
 const db = supabase as unknown as SupabaseClient;
 export const defaultAiAgentFlow = ['planner', 'brand-guide', 'research', 'creative-strategist', 'copywriter', 'platform-specialist', 'qa', 'output-mapper'];
@@ -12,18 +14,7 @@ export const optionalAiAgentFlow = ['humanizer'];
 const AI_RUN_POLL_MS = 1800;
 const AI_RUN_STALE_MS = 4 * 60 * 1000;
 
-export type AiCommitRunResult = {
-  inserted: {
-    contentCount: number;
-    calendarCount: number;
-    campaignIds: Record<string, string>;
-    destination?: {
-      projectId: string | null;
-      folderId: string | null;
-      folderName: string | null;
-    };
-  };
-};
+export type AiCommitRunResult = CommitAiMissionResult;
 
 const isMissingTableError = (error: unknown) => {
   const code = (error as { code?: string })?.code;
@@ -31,41 +22,10 @@ const isMissingTableError = (error: unknown) => {
   return code === '42P01' || message.includes('does not exist') || message.includes('schema cache');
 };
 
-const edgeFunctionErrorMessage = async (error: unknown) => {
-  const fallback = String((error as { message?: string })?.message || 'Edge Function failed');
-  const context = (error as { context?: unknown })?.context;
-  if (context && typeof context === 'object') {
-    const response = context as Response;
-    try {
-      const payload = await response.clone().json() as { error?: string; message?: string };
-      const message = payload?.error || payload?.message;
-      if (message) return message;
-    } catch {
-      try {
-        const text = await response.clone().text();
-        if (text) return text.slice(0, 500);
-      } catch {
-        // Fall through to the Supabase client message.
-      }
-    }
-  }
-  return fallback;
-};
-
-const invokeOrThrow = async <T>(name: string, body: Record<string, unknown>): Promise<T> => {
-  const { data, error } = await supabase.functions.invoke(name, { body });
-  if (error) throw new Error(await edgeFunctionErrorMessage(error));
-  const payload = data as T & { error?: string };
-  if (payload && typeof payload === 'object' && payload.error) {
-    throw new Error(payload.error);
-  }
-  return payload;
-};
-
 type BrandAiAction = 'brand_research' | 'brand_knowledge' | 'visual_analysis';
 
 const chargeBrandAiAction = async (guideId: string, action: BrandAiAction) =>
-  invokeOrThrow<{ balanceAfter: number; charged: number }>('brand-charge-ai-action', { guideId, action });
+  invokeFunction<{ balanceAfter: number; charged: number }>('brand-charge-ai-action', { guideId, action });
 
 export function useBrandKnowledge(guideId: string) {
   const qc = useQueryClient();
@@ -91,9 +51,7 @@ export function useBrandKnowledge(guideId: string) {
 
   const compileKnowledge = useMutation({
     mutationFn: async () => {
-      const result = await invokeOrThrow<{ document: BrandKnowledgeDocument }>('brand-compile-knowledge', { guideId });
-      await chargeBrandAiAction(guideId, 'brand_knowledge');
-      return result;
+      return compileBrandKnowledge({ guideId });
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['brand_knowledge_document', orgId, guideId] });
@@ -130,16 +88,7 @@ export function useBrandResearch(guideId: string) {
 
   return useMutation({
     mutationFn: async ({ brandName, websiteUrl }: { brandName: string; websiteUrl: string }) => {
-      const result = await invokeOrThrow<{
-        guide: BrandGuide;
-        sourceCount: number;
-        fieldsUpdated: string[];
-        colorsInserted?: number;
-        fontsInserted?: number;
-        logosInserted?: number;
-      }>('brand-research-website', { guideId, brandName, websiteUrl });
-      await chargeBrandAiAction(guideId, 'brand_research');
-      return result;
+      return researchBrandWebsite({ guideId, brandName, websiteUrl });
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['brand_guides', orgId] });
@@ -174,7 +123,7 @@ export function useBrandVisualDirectionAnalysis(guideId: string) {
 
   return useMutation({
     mutationFn: async () => {
-      const result = await invokeOrThrow<{
+      const result = await invokeFunction<{
         analysis: VisualDirectionAnalysis;
         imageCount: number;
         model: string;
@@ -202,7 +151,7 @@ export function useAIMission() {
       brandGuideId?: string | null;
       brandKnowledgeDocumentId?: string | null;
       context?: Record<string, unknown>;
-    }) => invokeOrThrow<{ run: AiRun; artifact?: AiArtifact | null }>('ai-start-run', body),
+    }) => startAiMission(body),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
     },
@@ -210,7 +159,7 @@ export function useAIMission() {
 
   const commitRun = useMutation({
     mutationFn: async ({ runId, artifactId, selection }: { runId: string; artifactId?: string; selection?: AiDraftSelection }) =>
-      invokeOrThrow<AiCommitRunResult>('ai-commit-run', { runId, artifactId, selection }),
+      commitAiMission({ runId, artifactId, selection }),
     onSuccess: async () => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['ai_runs', orgId] }),
@@ -225,7 +174,7 @@ export function useAIMission() {
   });
 
   const cancelRun = useMutation({
-    mutationFn: async (runId: string) => invokeOrThrow<{ run: AiRun }>('ai-cancel-run', { runId }),
+    mutationFn: async (runId: string) => cancelAiMission(runId),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['ai_runs', orgId] });
     },

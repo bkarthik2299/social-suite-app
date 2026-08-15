@@ -15,6 +15,7 @@ import {
   expectedSocialAdCta,
   limitCampaignPackToContract,
   repairCampaignPack,
+  repairCampaignSectionCount,
   repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
   reviewFindingFlagsValidSocialAdCta,
@@ -34,6 +35,19 @@ const pack = (): CampaignPack => ({
 });
 
 describe('campaign workflow helpers', () => {
+  it('repairs an underfilled exact-count section before fatal validation', () => {
+    const input = { socialPosts: pack().socialPosts.slice(0, 1) };
+    const repaired = repairCampaignSectionCount(
+      input,
+      'socialPosts',
+      8,
+      'Create exactly 8 social posts for Switch Mobility.',
+    );
+
+    expect(campaignSectionValidationError(repaired, 'socialPosts', 8)).toBeNull();
+    expect((repaired as { socialPosts: unknown[] }).socialPosts).toHaveLength(8);
+  });
+
   it('requires social visual guides to be complete production briefs', () => {
     const incomplete = {
       socialPosts: [{
@@ -132,6 +146,21 @@ describe('campaign workflow helpers', () => {
 
     expect(campaignSectionVisualGuidanceError(repaired, 'socialPosts')).toBeNull();
     expect(JSON.stringify(repaired)).toContain('document post');
+  });
+
+  it('repairs eight social posts into distinct visual structures', () => {
+    const socialPosts = Array.from({ length: 8 }, (_, index) => ({
+      name: `Switch post ${index + 1}`,
+      topic: `Zero-emission mobility angle ${index + 1}`,
+      caption: `A distinct campaign message for fleet and transport buyers ${index + 1}.`,
+      platforms: ['linkedin'],
+      visualGuide: 'Format & placement: LinkedIn single-image post. Content concept: an electric vehicle on a city road. Layout: full-bleed photograph with a lower-third headline. On-creative copy: Move forward. Brand execution: use verified brand colors and logo. Production notes: export at 4:5 with safe margins.',
+    }));
+
+    const repaired = repairCampaignSectionVisualGuidance({ socialPosts }, 'socialPosts');
+
+    expect(campaignSectionVisualGuidanceError(repaired, 'socialPosts')).toBeNull();
+    expect(JSON.stringify(repaired)).toContain('myth-versus-fact carousel');
   });
 
   it('rejects different ad subjects placed into the same finished template', () => {

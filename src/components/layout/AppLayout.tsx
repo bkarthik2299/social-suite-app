@@ -1,6 +1,7 @@
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { cn } from '@/lib/utils';
+import { HarnessCommand } from '@/components/harness/HarnessCommand';
 
 interface Breadcrumb {
   label: string;
@@ -24,6 +25,7 @@ export function AppLayout({ children, breadcrumbs, noPadding = false }: AppLayou
           {children}
         </main>
       </div>
+      <HarnessCommand />
     </div>
   );
 }

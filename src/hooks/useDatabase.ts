@@ -14,6 +14,8 @@ import { sortPortalRowsByCreatedAt } from '@/lib/portalReview';
 import { useAuth } from '@/context/AuthContext';
 import type { Database, Json } from '@/types/supabase';
 import type { Campaign, CampaignType, Folder, Note, Project, Task, TaskComment, TaskStage, TeamMember } from '@/types';
+import { createFolder as createFolderAction, createProject as createProjectAction, updateFolder as updateFolderAction, updateProject as updateProjectAction } from '@/services/projects';
+import { createBrandGuide as createBrandGuideAction, updateBrandGuide as updateBrandGuideAction } from '@/services/brandGuides';
 
 type ProjectRow = Database['public']['Tables']['projects']['Row'];
 type FolderRow = Database['public']['Tables']['folders']['Row'];
@@ -444,22 +446,13 @@ export function useProjects() {
     });
 
     const addProject = useMutation({
-        mutationFn: async (name: string) => {
-            const { data, error } = await supabase
-                .from('projects')
-                .insert({ name, org_id: orgId })
-                .select()
-                .single();
-            if (error) throw error;
-            return mapProject(data);
-        },
+        mutationFn: async (name: string) => createProjectAction({ name, orgId }),
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects(orgId) }),
     });
 
     const updateProject = useMutation({
         mutationFn: async ({ id, updates }: { id: string; updates: { name?: string } }) => {
-            const { error } = await supabase.from('projects').update(updates).eq('id', id);
-            if (error) throw error;
+            await updateProjectAction({ id, updates });
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects(orgId) }),
     });
@@ -512,15 +505,7 @@ export function useFolders(projectId: string) {
     });
 
     const addFolder = useMutation({
-        mutationFn: async (name: string) => {
-            const { data, error } = await supabase
-                .from('folders')
-                .insert({ name, project_id: projectId })
-                .select()
-                .single();
-            if (error) throw error;
-            return mapFolder(data);
-        },
+        mutationFn: async (name: string) => createFolderAction({ name, projectId }),
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: keys.folders(projectId) });
             qc.invalidateQueries({ queryKey: ['all_folders'] });
@@ -529,8 +514,7 @@ export function useFolders(projectId: string) {
 
     const updateFolder = useMutation({
         mutationFn: async ({ id, updates }: { id: string; updates: { name?: string } }) => {
-            const { error } = await supabase.from('folders').update(updates).eq('id', id);
-            if (error) throw error;
+            await updateFolderAction({ id, updates });
         },
         onSuccess: () => qc.invalidateQueries({ queryKey: keys.folders(projectId) }),
     });
@@ -2224,19 +2208,15 @@ export function useBrandGuide(guideId: string) {
 
     const createGuide = useMutation({
         mutationFn: async ({ project_id, brand_name }: { project_id?: string | null; brand_name?: string }) => {
-            const { data, error } = await db
-                .from('brand_guides')
-                .insert({ org_id: orgId, project_id: project_id || null, brand_name: brand_name || 'Untitled Brand' })
-                .select()
-                .single();
-            if (error) {
+            try {
+                return await createBrandGuideAction({ orgId, projectId: project_id, brandName: brand_name });
+            } catch (error) {
                 const code = (error as { code?: string })?.code;
                 if (isMissingBrandTableError(error) || !project_id || code === '23502' || code === '23505') {
                     return createLocalBrandGuide(orgId, project_id || null, brand_name);
                 }
                 throw error;
             }
-            return data as BrandGuide;
         },
         onSuccess: (data) => {
             qc.invalidateQueries({ queryKey: keys.brandGuides(orgId) });
@@ -2250,8 +2230,9 @@ export function useBrandGuide(guideId: string) {
                 updateLocalBrandGuide(orgId, id, updates);
                 return;
             }
-            const { error } = await db.from('brand_guides').update(updates).eq('id', id);
-            if (error) {
+            try {
+                await updateBrandGuideAction({ id, updates });
+            } catch (error) {
                 if (isMissingBrandTableError(error)) {
                     updateLocalBrandGuide(orgId, id, updates);
                     return;

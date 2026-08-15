@@ -37,6 +37,7 @@ import {
   deterministicQualityFindings,
   limitCampaignPackToContract,
   repairCampaignPack,
+  repairCampaignSectionCount,
   repairCampaignSectionVisualGuidance,
   reviewFindingResolvedByPatches,
   reviewFindingFlagsValidSocialAdCta,
@@ -2486,7 +2487,15 @@ async function buildCampaignPackInParts({
           socialsuite_requested_items: requestedItemCount,
         }),
       });
-      const alignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(value), prompt);
+      const countRepairedValue = deliverableContract.explicitCounts
+        ? activeSections.reduce<unknown>((current, section) => repairCampaignSectionCount(
+            current,
+            section.key,
+            section.expectedCount,
+            prompt,
+          ), value)
+        : value;
+      const alignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(countRepairedValue), prompt);
       const visualRepairedValue = activeSections.reduce<unknown>((current, section) => {
         if (!campaignSectionVisualGuidanceError(current, section.key)) return current;
         return {
@@ -2496,7 +2505,7 @@ async function buildCampaignPackInParts({
       }, alignedValue);
       const visuallyAlignedValue = alignCampaignPackToRequestedPlatforms(normalizeCampaignPack(visualRepairedValue), prompt);
       const sectionFailures = activeSections.flatMap((section) => {
-        const validationError = campaignSectionValidationError(value, section.key, section.expectedCount);
+        const validationError = campaignSectionValidationError(countRepairedValue, section.key, section.expectedCount);
         if (validationError) return [{ section: section.label, error: `${models[0]}: ${validationError}` }];
         const alignedValidationError = campaignSectionValidationError(visuallyAlignedValue, section.key, section.expectedCount);
         if (alignedValidationError) return [{ section: section.label, error: `${models[0]}: ${alignedValidationError}` }];
@@ -2730,7 +2739,13 @@ async function generateCampaignSection({
           { role: 'user', content: [retryPrefix, section.user].filter(Boolean).join('\n\n') },
         ],
       });
-      const validationError = campaignSectionValidationError(value, section.key, section.expectedCount);
+      const countRepairedValue = repairCampaignSectionCount(
+        value,
+        section.key,
+        section.expectedCount,
+        section.brief,
+      );
+      const validationError = campaignSectionValidationError(countRepairedValue, section.key, section.expectedCount);
       if (validationError) {
         lastError = `${attempt.model}: ${validationError}`;
         console.warn('[ai-start-run] Copywriter section schema validation failed', {
@@ -2742,7 +2757,7 @@ async function generateCampaignSection({
         });
         continue;
       }
-      const alignedValue = alignCampaignSectionPlatforms(value, section.key, section.brief);
+      const alignedValue = alignCampaignSectionPlatforms(countRepairedValue, section.key, section.brief);
       const initialVisualGuidanceError = campaignSectionVisualGuidanceError(alignedValue, section.key);
       const visuallyAlignedValue = initialVisualGuidanceError
         ? alignCampaignSectionPlatforms(repairCampaignSectionVisualGuidance(alignedValue, section.key), section.key, section.brief)

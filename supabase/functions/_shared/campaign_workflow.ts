@@ -2,6 +2,7 @@ import { normalizeCampaignPack, type CampaignPack } from './campaign_pack.ts';
 import type { BrandInstructions, ContentPatch, InternalBrief, QaFinding } from './agent_contracts.ts';
 import { extractRequestedChannelConstraints, type DeliverableContract } from './deliverable_contract.ts';
 import { formatPublishableCopy } from './publishable_copy.ts';
+import { campaignTopic, safeBlogOutline, safeGoogleAd, safeSocialAd, safeSocialPost } from './campaign_recovery.ts';
 
 type CalendarType = CampaignPack['calendar'][number]['type'];
 export type GeneratedCampaignSectionKey = 'socialPosts' | 'googleAds' | 'socialAds' | 'blogOutlines';
@@ -292,6 +293,48 @@ export function campaignSectionValidationError(
   return `Expected at least ${expectedCount} ${campaignSectionLabel(key)} but generated ${actualCount}.`;
 }
 
+export function repairCampaignSectionCount(
+  input: unknown,
+  key: GeneratedCampaignSectionKey,
+  expectedCount: number,
+  prompt: string,
+) {
+  if (expectedCount <= 0) return input;
+  const record = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : null;
+  const sectionInput = record && key in record ? record[key] : input;
+  const sectionPack = normalizeCampaignPack({ [key]: sectionInput });
+  const actualCount = sectionPack[key].length;
+  if (actualCount === 0 || actualCount >= expectedCount) return input;
+
+  console.warn('[campaign-workflow] Repairing underfilled exact-count section', {
+    section: key,
+    actualCount,
+    expectedCount,
+  });
+
+  const topic = campaignTopic(prompt);
+  if (key === 'socialPosts') {
+    const items = [...sectionPack.socialPosts];
+    while (items.length < expectedCount) items.push(safeSocialPost(items.length, topic));
+    return { [key]: items };
+  }
+  if (key === 'googleAds') {
+    const items = [...sectionPack.googleAds];
+    while (items.length < expectedCount) items.push(safeGoogleAd(items.length, topic));
+    return { [key]: items };
+  }
+  if (key === 'socialAds') {
+    const items = [...sectionPack.socialAds];
+    while (items.length < expectedCount) items.push(safeSocialAd(items.length, topic));
+    return { [key]: items };
+  }
+  const items = [...sectionPack.blogOutlines];
+  while (items.length < expectedCount) items.push(safeBlogOutline(items.length, topic));
+  return { [key]: items };
+}
+
 export function campaignSectionVisualGuidanceError(
   input: unknown,
   key: GeneratedCampaignSectionKey,
@@ -417,6 +460,11 @@ function repairedVisualGuide(
     'infographic post',
     'document post',
     'two-column explainer card',
+    'timeline swipe deck',
+    'annotated product feature card',
+    'myth-versus-fact carousel',
+    'route-map process graphic',
+    'quote-led proof card',
   ];
   const adFormats = [
     'carousel ad with a clear end card',
@@ -455,6 +503,21 @@ function visualLayoutPlan(format: string, index: number) {
   if (format.includes('two-column')) {
     return 'Use a split explainer: left column shows the common messy workflow, right column shows the calmer organized version. Keep the CTA below the columns with a clear visual divider.';
   }
+  if (format.includes('timeline')) {
+    return 'Use a left-to-right timeline across three swipe panels: starting condition, transition point, and operational outcome. Give each stage its own marker and keep the CTA on a separate closing panel.';
+  }
+  if (format.includes('annotated product')) {
+    return 'Use one clean product view with three numbered annotation callouts tied to item-specific benefits. Put the headline above the product, keep labels outside the silhouette, and reserve a narrow footer for the CTA.';
+  }
+  if (format.includes('myth-versus-fact')) {
+    return 'Use alternating myth and fact panels with clearly different headers, a simple correction device, and a final takeaway slide. Keep each panel focused on one claim and place the CTA only on the closing card.';
+  }
+  if (format.includes('route-map')) {
+    return 'Use a route-map composition with four connected stops, each representing one stage of the topic. Anchor the headline at the origin, use short labels at each stop, and finish with the CTA at the destination.';
+  }
+  if (format.includes('quote-led')) {
+    return 'Use a large item-specific proof statement as the focal point, supported by one concise context line and a restrained product or fleet detail. Place the logo and CTA on separate edges to avoid a generic lower-third template.';
+  }
   if (format.includes('comparison')) {
     return 'Use a side-by-side comparison grid with a problem column and a better-path column. Reserve the bottom band for the CTA and keep the headline above the grid.';
   }
@@ -471,6 +534,11 @@ function visualLayoutPlan(format: string, index: number) {
 }
 
 function visualProductionPlan(format: string) {
+  if (format.includes('timeline')) return 'export a coordinated swipe sequence, keep the stage markers in identical positions across panels, use a directional cue between stages, and test every label at mobile feed size.';
+  if (format.includes('annotated product')) return 'use a high-resolution approved product asset, keep annotation leaders clear of the vehicle silhouette, avoid unsupported technical labels, and export in a 4:5 feed-safe crop.';
+  if (format.includes('myth-versus-fact')) return 'export the alternating panels as a swipeable set, use accessible contrast to distinguish myth from fact, and keep each correction short enough to read without zooming.';
+  if (format.includes('route-map')) return 'build the path and stop markers as vector elements, keep route labels short, preserve generous spacing around the destination CTA, and export in a vertical 4:5 ratio.';
+  if (format.includes('quote-led')) return 'use a square or 4:5 typographic composition, keep the proof statement dominant, use imagery only as supporting context, and verify the CTA remains readable at thumbnail size.';
   if (format.includes('carousel')) return 'export all slides in a platform-native square or 4:5 ratio, keep slide numbers and CTA inside safe zones, and preserve readable text at mobile feed size.';
   if (format.includes('document post')) return 'export as a multi-page document-style social asset, keep margins generous, repeat only essential navigation cues, and avoid dense body text.';
   if (format.includes('checklist')) return 'use a square or 4:5 crop, keep checklist rows tall enough for tap-size legibility, and maintain strong contrast for tick marks and row labels.';

@@ -649,7 +649,15 @@ export function AIAssistant() {
         variant="ghost"
         size="sm"
         className="soft-card ai-trigger-card h-9 gap-2 rounded-full px-3 text-primary hover:bg-white hover:text-primary"
-        onClick={() => setPanelOpen(true)}
+        onClick={() => {
+          if (!missionOpen) {
+            startRun.reset();
+            compileKnowledge.reset();
+            setCurrentRun(null);
+            setCurrentArtifact(null);
+          }
+          setPanelOpen(true);
+        }}
       >
         <Sparkles className="h-4 w-4" />
         Create with AI
@@ -918,7 +926,19 @@ export function AIAssistant() {
           </div>
 
           <DialogFooter className="flex-row flex-wrap justify-end gap-2 bg-white px-4 py-3 shadow-[0_-8px_28px_-30px_rgba(37,99,235,0.45),0_-1px_3px_rgba(15,23,42,0.04)] sm:space-x-0 sm:px-6 sm:py-4">
-            <Button variant="outline" className="tool-surface tool-surface-interactive rounded-xl" onClick={() => setPanelOpen(true)}>
+            <Button
+              variant="outline"
+              className="tool-surface tool-surface-interactive rounded-xl"
+              onClick={() => {
+                if (!running) {
+                  startRun.reset();
+                  compileKnowledge.reset();
+                  setCurrentRun(null);
+                  setCurrentArtifact(null);
+                }
+                setPanelOpen(true);
+              }}
+            >
               Back to Prompt
             </Button>
             {currentRun && ['queued', 'running'].includes(currentRun.status) ? (
