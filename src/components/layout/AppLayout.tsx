@@ -16,11 +16,11 @@ interface AppLayoutProps {
 
 export function AppLayout({ children, breadcrumbs, noPadding = false }: AppLayoutProps) {
   return (
-    <div className="flex h-screen w-full bg-background overflow-hidden">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       <Sidebar />
-      <div className="flex-1 flex flex-col">
+      <div className="flex min-h-0 flex-1 flex-col">
         <Header breadcrumbs={breadcrumbs} />
-        <main className={cn("flex-1 overflow-auto", !noPadding && "p-6")}>
+        <main className={cn("min-h-0 flex-1 overflow-auto", !noPadding && "p-6")}>
           {children}
         </main>
       </div>
