@@ -32,8 +32,7 @@ export default function SocialSuiteMcp() {
   const [keyName, setKeyName] = useState('Hermes MCP');
   const [keyPermission, setKeyPermission] = useState<AccountApiKeyPermission>('write');
   const [newApiSecret, setNewApiSecret] = useState('');
-  const installScript = useMemo(() => buildPowerShellInstaller(newApiSecret || PLACEHOLDER_KEY), [newApiSecret]);
-  const mcpCommand = 'node FULL_PATH_TO_REPO/mcp/socialsuite/dist/api-key-index.js';
+  const setupPrompt = useMemo(() => buildSetupPrompt(newApiSecret || PLACEHOLDER_KEY), [newApiSecret]);
 
   const getErrorMessage = (error: unknown) => (
     error instanceof Error ? error.message : 'Something went wrong. Please try again.'
@@ -171,19 +170,19 @@ export default function SocialSuiteMcp() {
 
             <Card className="border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>One-Click Installer</CardTitle>
-                <CardDescription>Copy this into Windows PowerShell after creating a key.</CardDescription>
+                <CardTitle>Setup Prompt</CardTitle>
+                <CardDescription>Copy this into Hermes, OpenClaw, or another agent that can set up local MCP tools.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <Textarea
-                  value={installScript}
+                  value={setupPrompt}
                   readOnly
-                  className="min-h-[310px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
+                  className="min-h-[220px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
                 />
                 <div className="flex flex-wrap gap-2">
-                  <Button type="button" className="bg-[#007AFF] text-white hover:bg-blue-600" onClick={() => copyText(installScript, 'Installer copied')}>
+                  <Button type="button" className="bg-[#007AFF] text-white hover:bg-blue-600" onClick={() => copyText(setupPrompt, 'Setup prompt copied')}>
                     <Copy className="mr-2 h-4 w-4" />
-                    Copy Installer
+                    Copy Setup Prompt
                   </Button>
                   <Button type="button" variant="outline" onClick={() => copyText(REPO_URL, 'Repo copied')}>
                     <Copy className="mr-2 h-4 w-4" />
@@ -197,16 +196,16 @@ export default function SocialSuiteMcp() {
           <div className="space-y-6">
             <Card className="border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>What Gets Installed</CardTitle>
-                <CardDescription>The script prepares the local connector and skill.</CardDescription>
+                <CardTitle>What To Set Up</CardTitle>
+                <CardDescription>The copied prompt tells your agent what it needs.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-slate-600">
                 {[
                   'Clones socialsuite-agent-tools from GitHub',
                   'Installs and builds the SocialSuite MCP server',
-                  'Writes the API key into the MCP .env file',
+                  'Adds the API key to the MCP .env file',
                   'Copies the Hermes SocialSuite skill locally',
-                  'Adds the MCP through Hermes CLI when available',
+                  'Connects the local MCP server to the agent',
                 ].map((item) => (
                   <div key={item} className="flex gap-2">
                     <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
@@ -215,28 +214,12 @@ export default function SocialSuiteMcp() {
                 ))}
               </CardContent>
             </Card>
-
-            <Card className="border-slate-200 shadow-sm">
-              <CardHeader>
-                <CardTitle>MCP Command</CardTitle>
-                <CardDescription>Use this command manually in agents that support custom MCP servers.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-800">
-                  {mcpCommand}
-                </div>
-                <Button type="button" variant="outline" onClick={() => copyText(mcpCommand, 'MCP command copied')}>
-                  <Copy className="mr-2 h-4 w-4" />
-                  Copy Command
-                </Button>
-              </CardContent>
-            </Card>
           </div>
         </div>
 
         <Card className="border-slate-200 shadow-sm">
           <CardHeader>
-            <CardTitle>Existing MCP Keys</CardTitle>
+            <CardTitle>API Keys</CardTitle>
             <CardDescription>Created keys are shown once, so revoke and recreate a key if you need a fresh secret.</CardDescription>
           </CardHeader>
           <CardContent>
@@ -289,17 +272,17 @@ export default function SocialSuiteMcp() {
       <Dialog open={!!newApiSecret} onOpenChange={(open) => !open && setNewApiSecret('')}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>Copy Your MCP Installer</DialogTitle>
-            <DialogDescription>This API key is shown once. Copy the installer now to include it automatically.</DialogDescription>
+            <DialogTitle>Copy Your MCP Setup Prompt</DialogTitle>
+            <DialogDescription>This API key is shown once. Copy the setup prompt now to include it automatically.</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 font-mono text-sm break-all text-slate-800">
               {newApiSecret}
             </div>
             <Textarea
-              value={installScript}
+              value={setupPrompt}
               readOnly
-              className="min-h-[220px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
+              className="min-h-[200px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
             />
           </div>
           <DialogFooter>
@@ -307,9 +290,9 @@ export default function SocialSuiteMcp() {
               <Copy className="mr-2 h-4 w-4" />
               Copy Key
             </Button>
-            <Button type="button" className="bg-[#007AFF] text-white hover:bg-blue-600" onClick={() => copyText(installScript, 'Installer copied')}>
+            <Button type="button" className="bg-[#007AFF] text-white hover:bg-blue-600" onClick={() => copyText(setupPrompt, 'Setup prompt copied')}>
               <Copy className="mr-2 h-4 w-4" />
-              Copy Installer
+              Copy Setup Prompt
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -318,28 +301,16 @@ export default function SocialSuiteMcp() {
   );
 }
 
-function buildPowerShellInstaller(apiKey: string) {
+function buildSetupPrompt(apiKey: string) {
   return [
-    '$ErrorActionPreference = "Stop"',
-    `$apiKey = "${apiKey}"`,
-    '$repo = Join-Path $env:USERPROFILE "socialsuite-agent-tools"',
-    `if (Test-Path $repo) { Set-Location $repo; git pull } else { git clone ${REPO_URL}.git $repo }`,
-    'Set-Location (Join-Path $repo "mcp\\socialsuite")',
-    'npm install',
-    'npm run build',
-    'Copy-Item ".env.example" ".env" -Force',
-    '"SOCIALSUITE_API_KEY=$apiKey" | Set-Content ".env"',
-    '$skillTarget = Join-Path $env:LOCALAPPDATA "hermes\\skills\\social-media\\socialsuite"',
-    'New-Item -ItemType Directory -Force (Split-Path $skillTarget) | Out-Null',
-    'if (Test-Path $skillTarget) { Remove-Item $skillTarget -Recurse -Force }',
-    'Copy-Item (Join-Path $repo "skills\\hermes\\socialsuite") $skillTarget -Recurse',
-    'if (Get-Command hermes -ErrorAction SilentlyContinue) {',
-    '  hermes mcp add socialsuite --command node --args (Join-Path $repo "mcp\\socialsuite\\dist\\api-key-index.js")',
-    '} else {',
-    '  Write-Host "Hermes CLI not found. Add this MCP command manually:"',
-    '  Write-Host ("node " + (Join-Path $repo "mcp\\socialsuite\\dist\\api-key-index.js"))',
-    '}',
-    'Write-Host "SocialSuite MCP installed. Restart your agent app."',
+    'Set up Social Suite MCP for this agent.',
+    '',
+    `GitHub repo: ${REPO_URL}`,
+    `Social Suite API key: ${apiKey}`,
+    '',
+    'Please clone the repo, install and build the MCP package in mcp/socialsuite, install the SocialSuite skill from skills/hermes/socialsuite, and configure the MCP server to run dist/api-key-index.js with the API key above in its .env file.',
+    '',
+    'After setup, restart the agent app and test it by asking: "Use SocialSuite MCP and tell me which Social Suite account is connected."',
   ].join('\n');
 }
 
