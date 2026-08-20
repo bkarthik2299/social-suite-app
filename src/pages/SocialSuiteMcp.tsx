@@ -17,11 +17,13 @@ import {
   type AccountApiKey,
   type AccountApiKeyPermission,
 } from '@/services/accountApiKeys';
-import { Bot, CheckCircle2, Copy, Github, KeyRound, Loader2, Terminal, Trash2 } from 'lucide-react';
+import { CheckCircle2, Copy, Github, KeyRound, Loader2, Terminal, Trash2 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/bkarthik2299/socialsuite-agent-tools';
 const PLACEHOLDER_KEY = '<paste_your_socialsuite_api_key_here>';
 const setupPromptBoxClass = 'min-h-[220px] resize-none rounded-lg border-slate-200 bg-white font-mono text-xs leading-5 text-slate-800 shadow-inner focus-visible:border-slate-300';
+const HERMES_ICON = '/integrations/hermes.png';
+const OPENCLAW_ICON = '/integrations/openclaw.png';
 
 export default function SocialSuiteMcp() {
   const { organization } = useAuth();
@@ -125,7 +127,7 @@ export default function SocialSuiteMcp() {
                     <KeyRound className="h-4 w-4" />
                   </div>
                   <div>
-                    <CardTitle>Create MCP API Key</CardTitle>
+                    <CardTitle>Create API Key</CardTitle>
                     <CardDescription>Use write access for the full Social Suite app experience from your agent.</CardDescription>
                   </div>
                 </div>
@@ -168,10 +170,10 @@ export default function SocialSuiteMcp() {
             <Card className="border-slate-200 shadow-sm">
               <CardHeader>
                 <CardTitle>Setup Prompt</CardTitle>
-                <CardDescription>Copy this into Hermes, OpenClaw, or another agent that can set up local MCP tools.</CardDescription>
+                <CardDescription>Copy this into Hermes, OpenClaw, or any agent that can set up local MCP tools.</CardDescription>
                 <div className="flex flex-wrap items-center gap-4 pt-2 text-xs font-medium text-slate-500">
-                  <span className="inline-flex items-center gap-1.5"><Bot className="h-3.5 w-3.5 text-blue-600" />Hermes</span>
-                  <span className="inline-flex items-center gap-1.5"><Terminal className="h-3.5 w-3.5 text-slate-700" />OpenClaw</span>
+                  <span className="inline-flex items-center gap-1.5"><img src={HERMES_ICON} alt="" className="h-4 w-4 rounded-sm object-cover" />Hermes</span>
+                  <span className="inline-flex items-center gap-1.5"><img src={OPENCLAW_ICON} alt="" className="h-4 w-4 object-contain" />OpenClaw</span>
                   <span className="inline-flex items-center gap-1.5"><Github className="h-3.5 w-3.5 text-slate-900" />GitHub</span>
                 </div>
               </CardHeader>
@@ -198,7 +200,7 @@ export default function SocialSuiteMcp() {
           <div className="space-y-6">
             <Card className="border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>What To Set Up</CardTitle>
+                <CardTitle>Here's what happens</CardTitle>
                 <CardDescription>The copied prompt tells your agent what it needs.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-slate-600">
@@ -206,14 +208,20 @@ export default function SocialSuiteMcp() {
                   { icon: Github, text: 'Clones socialsuite-agent-tools from GitHub' },
                   { icon: Terminal, text: 'Installs and builds the SocialSuite MCP server' },
                   { icon: KeyRound, text: 'Adds the API key to the MCP .env file' },
-                  { icon: Bot, text: 'Copies the Hermes SocialSuite skill locally' },
-                  { icon: CheckCircle2, text: 'Connects the local MCP server to the agent' },
                 ].map(({ icon: Icon, text }) => (
                   <div key={text} className="flex gap-2">
                     <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" />
                     <span>{text}</span>
                   </div>
                 ))}
+                <div className="flex gap-2">
+                  <img src={HERMES_ICON} alt="" className="mt-0.5 h-4 w-4 shrink-0 rounded-sm object-cover" />
+                  <span>Copies the Hermes SocialSuite skill locally</span>
+                </div>
+                <div className="flex gap-2">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" />
+                  <span>Connects the local MCP server to the agent</span>
+                </div>
               </CardContent>
             </Card>
           </div>
