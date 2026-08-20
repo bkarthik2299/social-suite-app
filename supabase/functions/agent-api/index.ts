@@ -27,6 +27,7 @@ const writeActions = new Set([
   'update_folder',
   'update_campaign',
   'update_content_item',
+  'generate_content_image',
   'delete_content_item',
   'setup_brand_from_website',
   'create_content_item',
@@ -91,6 +92,7 @@ const contentTypes = new Set(['social-post', 'google-ad', 'social-ad', 'blog']);
 const workModes = new Set(['instant', 'deep']);
 const modelPreferences = new Set(['deepseek', 'anthropic']);
 const researchProviders = new Set(['tavily', 'perplexity']);
+const imageAspectRatios = new Set(['1:1', '4:5', '9:16', '16:9']);
 const genericFilterOps = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'in']);
 const genericTables = [
   'organizations',
@@ -262,6 +264,8 @@ async function dispatch(service: ServiceClient, context: AgentContext, action: s
       return createContentItem(service, context, input);
     case 'update_content_item':
       return updateContentItem(service, context, input);
+    case 'generate_content_image':
+      return generateContentImage(service, context, input);
     case 'delete_content_item':
       return deleteContentItem(service, context, stringInput(input.contentItemId || input.id, 'contentItemId'));
     case 'create_task':
@@ -771,6 +775,110 @@ async function updateContentItem(service: ServiceClient, context: AgentContext, 
   const { data, error } = await service.from('content_items').update(updates).eq('id', contentItemId).select('*').single();
   if (error) throw error;
   return { contentItem: compactRow(data) };
+}
+
+async function generateContentImage(service: ServiceClient, context: AgentContext, input: JsonObject) {
+  const contentItemId = stringInput(input.contentItemId || input.id, 'contentItemId');
+  const contentItem = await requireContentItemInOrg(service, context, contentItemId) as JsonObject;
+  const type = String(contentItem.type || '');
+  if (!['social-post', 'social-ad'].includes(type)) {
+    throw new Error('Image generation is available only for social posts and social ads');
+  }
+
+  const campaignId = stringInput(contentItem.campaign_id, 'campaignId');
+  const campaign = await requireCampaignInOrg(service, context, campaignId) as JsonObject;
+  const projectId = nullableString(campaignProjectId(campaign));
+  const payload = objectInput(contentItem.payload || {});
+  const visualGuide = (
+    nullableString(input.visualGuide || input.visual_guide)
+    || nullableString(payload.visualGuide || payload.visual_guide)
+    || (type === 'social-post' ? nullableString(payload.creativeBrief || payload.creative_brief) : null)
+    || ''
+  ).trim();
+  if (visualGuide.length < 12) throw new Error('Visual Guide must be at least 12 characters');
+
+  const aspectRatio = enumInput(
+    input.aspectRatio || input.aspect_ratio || payload.imageAspectRatio || payload.image_aspect_ratio || '1:1',
+    imageAspectRatios,
+    'aspectRatio',
+  );
+  const useBrandGuide = input.useBrandGuide !== false && input.use_brand_guide !== false;
+  const brandGuide = useBrandGuide
+    ? await loadBrandVisualContext(service, context, nullableString(input.brandGuideId || input.brand_guide_id), projectId)
+    : null;
+  const selectedLogoId = nullableString(input.selectedLogoId || input.selected_logo_id || payload.selectedLogoId || payload.selected_logo_id);
+  if (selectedLogoId) await requireBrandChildInOrg(service, context, 'brand_logos', selectedLogoId);
+
+  const generationContext = {
+    ...contentImageContext(type, contentItem, payload),
+    ...objectInput(input.context || input.contextOverrides || {}),
+    aspectRatio,
+    useBrandGuide,
+    brandGuide,
+    selectedLogoId,
+  };
+  const generation = await invokeInternalFunction<{
+    imageUrl?: string;
+    imageUrls?: string[];
+    format?: string;
+    slideCount?: number;
+    logoUrl?: string;
+    predictionIds?: string[];
+    predictionUrls?: string[];
+  }>('generate-visual-asset', context, {
+    campaignId,
+    visualGuide,
+    context: generationContext,
+  });
+
+  const generatedUrls = uniqueStrings([
+    ...(Array.isArray(generation.imageUrls) ? generation.imageUrls : []),
+    generation.imageUrl || '',
+  ]);
+  if (!generatedUrls.length) throw new Error('Image generation did not return an image');
+
+  const assets = await uploadGeneratedCampaignMedia(service, campaignId, generatedUrls);
+  const persistedUrls = assets.map((asset) => String(asset.url || '')).filter(Boolean);
+  const replaceExistingImages = input.replaceExistingImages === true || input.replace_existing_images === true;
+  const updateVisualGuide = input.updateVisualGuide !== false && input.update_visual_guide !== false;
+  const nextPayload: JsonObject = {
+    ...payload,
+    image: persistedUrls[0] || '',
+    mediaAssets: assets,
+    mediaFormat: generation.format === 'carousel' || assets.length > 1 ? 'carousel' : 'single',
+    generatedImages: replaceExistingImages
+      ? persistedUrls
+      : uniqueStrings([...persistedUrls, ...stringArray(payload.generatedImages || payload.generated_images)]),
+    imageAspectRatio: aspectRatio,
+    useBrandGuide,
+    selectedLogoId: selectedLogoId || null,
+  };
+  if (updateVisualGuide) nextPayload.visualGuide = visualGuide;
+
+  const { data, error } = await service
+    .from('content_items')
+    .update({ payload: nextPayload })
+    .eq('id', contentItemId)
+    .select('*')
+    .single();
+  if (error) throw error;
+
+  return {
+    contentItem: compactRow(data),
+    generated: {
+      imageUrls: persistedUrls,
+      mediaAssets: assets,
+      format: nextPayload.mediaFormat,
+      slideCount: Math.max(Number(generation.slideCount || 0), assets.length),
+      aspectRatio,
+      visualGuide,
+      useBrandGuide,
+      brandGuideId: brandGuide ? brandGuide.guideId : null,
+      selectedLogoId: selectedLogoId || null,
+      predictionIds: generation.predictionIds || [],
+      predictionUrls: generation.predictionUrls || [],
+    },
+  };
 }
 
 async function deleteContentItem(service: ServiceClient, context: AgentContext, contentItemId: string) {
@@ -1721,6 +1829,226 @@ async function chargeBrandVisualAction(service: ServiceClient, orgId: string, gu
   });
   if (error) throw error;
   return { balanceAfter: data, charged: 1 };
+}
+
+async function loadBrandVisualContext(
+  service: ServiceClient,
+  context: AgentContext,
+  guideId: string | null,
+  projectId: string | null,
+): Promise<JsonObject | null> {
+  let resolvedGuideId = guideId;
+  if (resolvedGuideId) {
+    await requireBrandGuideInOrg(service, context, resolvedGuideId);
+  } else if (projectId) {
+    const { data, error } = await service
+      .from('brand_guides')
+      .select('id')
+      .eq('org_id', context.orgId)
+      .eq('project_id', projectId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    resolvedGuideId = nullableString(data?.id);
+  }
+
+  if (!resolvedGuideId) {
+    const { data, error } = await service
+      .from('brand_guides')
+      .select('id')
+      .eq('org_id', context.orgId)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    resolvedGuideId = nullableString(data?.id);
+  }
+
+  if (!resolvedGuideId) return null;
+  const bundle = await getBrandBundle(service, context, resolvedGuideId) as JsonObject;
+  const guide = objectInput(bundle.guide);
+  const colors = arrayOfObjects(bundle.colors);
+  const fonts = arrayOfObjects(bundle.fonts);
+  const logoRules = arrayOfObjects(bundle.logoRules);
+  const logos = arrayOfObjects(bundle.logos)
+    .map((logo) => ({
+      id: nullableString(logo.id) || '',
+      label: nullableString(logo.label) || 'Brand logo',
+      variant: nullableString(logo.variant) || 'approved',
+      url: normalizeBrandAssetUrl(logo.file_url),
+    }))
+    .filter((logo) => logo.id && logo.url);
+  const knowledge = objectInput(bundle.knowledgeDocument);
+  const styleNotes = [
+    guide.photography_style ? `Photography: ${guide.photography_style}` : '',
+    guide.illustration_style ? `Illustration: ${guide.illustration_style}` : '',
+    guide.iconography_rules ? `Iconography: ${guide.iconography_rules}` : '',
+    guide.layout_composition ? `Layout & composition: ${guide.layout_composition}` : '',
+    guide.social_rules ? `Social rules: ${guide.social_rules}` : '',
+    guide.ad_rules ? `Ad rules: ${guide.ad_rules}` : '',
+  ].filter(Boolean).join('; ');
+
+  return {
+    guideId: resolvedGuideId,
+    brandName: nullableString(guide.brand_name) || undefined,
+    summary: [
+      guide.brand_name ? `Brand: ${guide.brand_name}` : '',
+      colors.length ? `Colors: ${colors.slice(0, 8).map((color) => `${color.name || color.role}: ${color.hex}`).join('; ')}` : '',
+      fonts.length ? `Typography: ${fonts.slice(0, 5).map((font) => `${font.category}: ${font.font_family}${font.weight ? ` ${font.weight}` : ''}`).join('; ')}` : '',
+      styleNotes,
+      logoRules.length ? `Logo rules: ${logoRules.map((rule) => `${rule.rule_type}: ${rule.caption}`).join('; ')}` : '',
+      knowledge.markdown ? `Brand Knowledge:\n${String(knowledge.markdown).slice(0, 1200)}` : '',
+    ].filter(Boolean).join('\n').slice(0, 2400),
+    logos,
+  };
+}
+
+function contentImageContext(type: string, contentItem: JsonObject, payload: JsonObject) {
+  if (type === 'social-ad') {
+    return {
+      kind: 'social-ad',
+      name: nullableString(contentItem.name) || nullableString(payload.name),
+      topic: nullableString(payload.topic),
+      platform: nullableString(payload.platform),
+      primaryText: nullableString(payload.primaryText || payload.primary_text),
+      headline: nullableString(payload.headline),
+      description: nullableString(payload.description),
+      cta: nullableString(payload.cta),
+      destinationUrl: nullableString(payload.destinationUrl || payload.destination_url),
+    };
+  }
+
+  return {
+    kind: 'social-post',
+    name: nullableString(contentItem.name) || nullableString(payload.name),
+    topic: nullableString(payload.topic),
+    caption: nullableString(payload.caption),
+    platforms: stringArray(payload.platforms),
+    creativeBrief: nullableString(payload.creativeBrief || payload.creative_brief),
+  };
+}
+
+async function uploadGeneratedCampaignMedia(service: ServiceClient, campaignId: string, urls: string[]) {
+  const uploadedPaths: string[] = [];
+  const assets: JsonObject[] = [];
+
+  try {
+    for (let index = 0; index < urls.length; index += 1) {
+      const file = await imageBytes(urls[index], index);
+      if (file.bytes.byteLength > 10 * 1024 * 1024) {
+        throw new Error(`Generated image ${index + 1} is larger than 10 MB`);
+      }
+      const id = crypto.randomUUID();
+      const path = `${campaignId}/${id}-${safeStorageFilename(file.name)}`;
+      const { error } = await service.storage
+        .from('campaign-media')
+        .upload(path, file.bytes, {
+          cacheControl: '3600',
+          contentType: file.mimeType,
+          upsert: false,
+        });
+      if (error) throw error;
+      uploadedPaths.push(path);
+
+      const { data } = service.storage.from('campaign-media').getPublicUrl(path);
+      assets.push({
+        id,
+        url: data.publicUrl,
+        kind: 'image',
+        name: file.name,
+        mimeType: file.mimeType,
+        size: file.bytes.byteLength,
+        storagePath: path,
+      });
+    }
+  } catch (error) {
+    if (uploadedPaths.length) await service.storage.from('campaign-media').remove(uploadedPaths);
+    throw error;
+  }
+
+  return assets;
+}
+
+async function imageBytes(url: string, index: number) {
+  if (/^data:/i.test(url)) return dataUrlBytes(url, index);
+
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Generated image ${index + 1} could not be downloaded`);
+  const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png';
+  if (!mimeType.startsWith('image/')) throw new Error(`Generated asset ${index + 1} is not an image`);
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    mimeType,
+    name: `generated-slide-${index + 1}.${extensionForMime(mimeType)}`,
+  };
+}
+
+function dataUrlBytes(url: string, index: number) {
+  const match = url.match(/^data:([^;,]+)?(;base64)?,(.*)$/i);
+  if (!match) throw new Error(`Generated image ${index + 1} was not a valid data URL`);
+  const mimeType = match[1] || 'image/png';
+  if (!mimeType.startsWith('image/')) throw new Error(`Generated asset ${index + 1} is not an image`);
+  const raw = match[2]
+    ? atob(match[3])
+    : decodeURIComponent(match[3]);
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+  return {
+    bytes,
+    mimeType,
+    name: `generated-slide-${index + 1}.${extensionForMime(mimeType)}`,
+  };
+}
+
+function campaignProjectId(campaign: JsonObject) {
+  const folder = objectInput(campaign.folders);
+  return nullableString(folder.project_id);
+}
+
+function arrayOfObjects(value: unknown) {
+  return Array.isArray(value) ? value.map(objectInput).filter((item) => Object.keys(item).length) : [];
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map((item) => typeof item === 'string' ? item.trim() : '').filter(Boolean) : [];
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function normalizeBrandAssetUrl(value: unknown) {
+  const url = nullableString(value) || '';
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.pathname === '/_next/image') {
+      const source = parsed.searchParams.get('url');
+      if (source) return new URL(source, parsed.origin).toString();
+    }
+  } catch {
+    return '';
+  }
+  return /^https?:\/\//i.test(url) || /^data:image\//i.test(url) ? url : '';
+}
+
+function safeStorageFilename(filename: string) {
+  const lastDot = filename.lastIndexOf('.');
+  const extension = lastDot >= 0 ? filename.slice(lastDot).toLowerCase() : '';
+  const base = (lastDot >= 0 ? filename.slice(0, lastDot) : filename)
+    .normalize('NFKD')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64) || 'asset';
+  return `${base}${extension.replace(/[^a-z0-9.]/g, '')}`;
+}
+
+function extensionForMime(mimeType: string) {
+  if (mimeType.includes('jpeg') || mimeType.includes('jpg')) return 'jpg';
+  if (mimeType.includes('webp')) return 'webp';
+  if (mimeType.includes('gif')) return 'gif';
+  return 'png';
 }
 
 async function requireProjectInOrg(service: ServiceClient, context: AgentContext, projectId: string) {
