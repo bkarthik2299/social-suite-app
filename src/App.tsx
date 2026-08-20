@@ -23,6 +23,7 @@ import SocialPreview from '@/pages/tools/SocialPreview';
 import Notes from './pages/tools/Notes';
 import AuthPage from "./pages/Auth";
 import Settings from "./pages/Settings";
+import SocialSuiteMcp from "./pages/SocialSuiteMcp";
 import InviteAccept from "./pages/InviteAccept";
 import PostHogIdentity from "@/components/PostHogIdentity";
 
@@ -110,6 +111,7 @@ const App = () => {
                 <Route path="/tools/sm-preview" element={<ProtectedRoute><SocialPreview /></ProtectedRoute>} />
                 <Route path="/tools/notes" element={<ProtectedRoute><Notes /></ProtectedRoute>} />
                 <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+                <Route path="/socialsuite-mcp" element={<ProtectedRoute><SocialSuiteMcp /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>

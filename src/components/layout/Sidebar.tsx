@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Blocks, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Sparkles, Trash2 } from 'lucide-react';
+import { FolderOpen, CheckSquare, Calendar, Users, ChevronDown, Blocks, LogOut, User as UserIcon, MessageSquareText, MoreVertical, Sparkles, Trash2, KeyRound } from 'lucide-react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -210,6 +210,10 @@ export function Sidebar() {
             <DropdownMenuItem onClick={() => navigate('/settings')} className="cursor-pointer">
               <UserIcon className="mr-2 h-4 w-4" />
               <span>My Account</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate('/socialsuite-mcp')} className="cursor-pointer">
+              <KeyRound className="mr-2 h-4 w-4" />
+              <span>Social Suite MCP</span>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
