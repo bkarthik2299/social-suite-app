@@ -17,10 +17,11 @@ import {
   type AccountApiKey,
   type AccountApiKeyPermission,
 } from '@/services/accountApiKeys';
-import { CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, ShieldCheck, Trash2 } from 'lucide-react';
+import { Bot, CheckCircle2, Copy, Github, KeyRound, Loader2, Terminal, Trash2 } from 'lucide-react';
 
 const REPO_URL = 'https://github.com/bkarthik2299/socialsuite-agent-tools';
 const PLACEHOLDER_KEY = '<paste_your_socialsuite_api_key_here>';
+const setupPromptBoxClass = 'min-h-[220px] resize-none rounded-lg border-slate-200 bg-white font-mono text-xs leading-5 text-slate-800 shadow-inner focus-visible:border-slate-300';
 
 export default function SocialSuiteMcp() {
   const { organization } = useAuth();
@@ -77,7 +78,7 @@ export default function SocialSuiteMcp() {
       setNewApiSecret(result.secret);
       setKeyName('Hermes MCP');
       setKeyPermission('write');
-      toast({ title: 'MCP API key created', description: 'Copy the installer before closing the key window.' });
+      toast({ title: 'MCP API key created', description: 'Copy the setup prompt before closing the key window.' });
     } catch (error: unknown) {
       toast({ variant: 'destructive', title: 'Could not create API key', description: getErrorMessage(error) });
     } finally {
@@ -104,17 +105,13 @@ export default function SocialSuiteMcp() {
       <div className="mx-auto max-w-5xl space-y-6 px-4 py-6 pb-12">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
           <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              Agent access
-            </div>
             <h1 className="text-2xl font-bold tracking-tight text-slate-900">Social Suite MCP</h1>
             <p className="max-w-2xl text-sm leading-6 text-slate-600">
               Connect Hermes, OpenClaw, or another local agent to your Social Suite workspace with one API key and the SocialSuite Agent Tools MCP.
             </p>
           </div>
           <Button type="button" variant="outline" onClick={() => window.open(REPO_URL, '_blank', 'noopener,noreferrer')}>
-            <ExternalLink className="mr-2 h-4 w-4" />
+            <Github className="mr-2 h-4 w-4" />
             GitHub Repo
           </Button>
         </div>
@@ -172,12 +169,17 @@ export default function SocialSuiteMcp() {
               <CardHeader>
                 <CardTitle>Setup Prompt</CardTitle>
                 <CardDescription>Copy this into Hermes, OpenClaw, or another agent that can set up local MCP tools.</CardDescription>
+                <div className="flex flex-wrap items-center gap-4 pt-2 text-xs font-medium text-slate-500">
+                  <span className="inline-flex items-center gap-1.5"><Bot className="h-3.5 w-3.5 text-blue-600" />Hermes</span>
+                  <span className="inline-flex items-center gap-1.5"><Terminal className="h-3.5 w-3.5 text-slate-700" />OpenClaw</span>
+                  <span className="inline-flex items-center gap-1.5"><Github className="h-3.5 w-3.5 text-slate-900" />GitHub</span>
+                </div>
               </CardHeader>
               <CardContent className="space-y-3">
                 <Textarea
                   value={setupPrompt}
                   readOnly
-                  className="min-h-[220px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
+                  className={setupPromptBoxClass}
                 />
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" className="bg-[#007AFF] text-white hover:bg-blue-600" onClick={() => copyText(setupPrompt, 'Setup prompt copied')}>
@@ -201,15 +203,15 @@ export default function SocialSuiteMcp() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm text-slate-600">
                 {[
-                  'Clones socialsuite-agent-tools from GitHub',
-                  'Installs and builds the SocialSuite MCP server',
-                  'Adds the API key to the MCP .env file',
-                  'Copies the Hermes SocialSuite skill locally',
-                  'Connects the local MCP server to the agent',
-                ].map((item) => (
-                  <div key={item} className="flex gap-2">
-                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-                    <span>{item}</span>
+                  { icon: Github, text: 'Clones socialsuite-agent-tools from GitHub' },
+                  { icon: Terminal, text: 'Installs and builds the SocialSuite MCP server' },
+                  { icon: KeyRound, text: 'Adds the API key to the MCP .env file' },
+                  { icon: Bot, text: 'Copies the Hermes SocialSuite skill locally' },
+                  { icon: CheckCircle2, text: 'Connects the local MCP server to the agent' },
+                ].map(({ icon: Icon, text }) => (
+                  <div key={text} className="flex gap-2">
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" />
+                    <span>{text}</span>
                   </div>
                 ))}
               </CardContent>
@@ -282,7 +284,7 @@ export default function SocialSuiteMcp() {
             <Textarea
               value={setupPrompt}
               readOnly
-              className="min-h-[200px] resize-none bg-slate-950 font-mono text-xs leading-5 text-slate-100"
+              className={setupPromptBoxClass}
             />
           </div>
           <DialogFooter>
